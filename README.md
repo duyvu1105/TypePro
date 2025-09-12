@@ -48,16 +48,17 @@ This is the tool released in the paper *TypePro: Boosting LLM-Based Type Inferen
 ```
 
 
-1. Prompt and Generation
+3. Prompt and Generation
     The slicing process includes the first type recommendation. You need to replace the `base_url` and `api_key` in `LLMAgent` with your correct values, create an LLMAgent class, and call the `GenerationType` method.
 
 ## Run In dataset
 
-   When you need to run the program on the dataset,You need to first download the repos of the dataset to the repos folder in the root directory, and then you can use the correct `dataset_path` in Test.ts, download the relevant repositories to the correct location, and specify the repositories root directory in the code.
+When you need to run the program on the dataset,You need to first download the repos of the dataset to the repos folder in the root directory, and then you can use the correct `dataset_path` in Test.ts, download the relevant repositories to the correct location, and specify the repositories root directory in the code.
 
 
 ## Evaluation
-    All results are saved in `RQ Results`. Run `compute_metrics_py.py` to obtain Python evaluation results, and `compute_metrics_ts.py` to obtain TypeScript evaluation results.
+
+All results are saved in `RQ Results`. Run `compute_metrics_py.py` to obtain Python evaluation results, and `compute_metrics_ts.py` to obtain TypeScript evaluation results.
 
 ```bash
     python compute_metrics_py.py
@@ -65,4 +66,5 @@ This is the tool released in the paper *TypePro: Boosting LLM-Based Type Inferen
 ```
    
 ## RQ Rsults
-    We store all experimental results in `RQ Results`.
+
+We store all experimental results in `RQ Results`.
