@@ -88,7 +88,7 @@ The code you need to make a prediction is:\n
 
         logger.debug(f"total prompt:{total_prompt}")
         res = cls.client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model="gpt-4",
             # model="deepseek-chat",
             # model = "gpt-4o-mini",
             # model="",

@@ -1,4 +1,3 @@
-// 入口文件，读取项目切片
 import {Logger, LogLevel} from "./Util/logMethods" 
 import {TSSlicer} from "./Slicing/SlicingClass"
 import {Project, SyntaxKind} from "ts-morph"
@@ -17,7 +16,6 @@ const needFixType = ["any","unknown"]
 function getFileDataNode(filePath:string){
     const project = new Project();
     const sourceFile = project.addSourceFileAtPath(filePath);
-    // 全部变量
     let allVarNodes = sourceFile.getDescendantsOfKind(SyntaxKind.VariableDeclaration);
     allVarNodes = []
     for(const vNode of allVarNodes){

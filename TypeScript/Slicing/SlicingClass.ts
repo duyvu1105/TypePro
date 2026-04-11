@@ -16,7 +16,7 @@ const logger = new Logger({
 });
 
 const mask = "mask"
-const limitBlockLength = 512
+const limitBlockLength = 1024
 var slicingFuncName = "";
 var needFindFunction: Set<string> = new Set()
 export class TSSlicer {

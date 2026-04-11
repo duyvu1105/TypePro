@@ -32,7 +32,7 @@ export class LLMAgent {
         this.total_prompt = totalPrompt
         const completion = await this.openai.chat.completions.create({
             messages: [{ role: "user", content: totalPrompt }],
-            model: "gpt-3.5-turbo",
+            model: "gpt-4",
             // model: "deepseek-chat",
             // model: "gpt-4o-mini",
             // model: "claude-3-haiku-20240307",
