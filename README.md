@@ -5,11 +5,11 @@ This is the tool released in the paper *TypePro: Boosting LLM-Based Type Inferen
 ## Requirements
 - Python:
     Python >= 3.9
-    Required packages: hityper, Openai, textdistance
+    Required packages: hityper, Openai, textdistance, loguru
 
 - TypeScript:
     Node.js >= 16.0.0
-    Required packages: ts-morph, stringSimilarity
+    Required packages: ts-morph, stringSimilarity, ts-node
 
 ## Usage
 1. Download the processed datasets based on TypeGen from the released [resources](https://) for python and Manytypes4Typescript [resources](https://huggingface.co/datasets/kevinjesse/ManyTypes4TypeScript).
@@ -51,10 +51,44 @@ This is the tool released in the paper *TypePro: Boosting LLM-Based Type Inferen
 3. Prompt and Generation
     The slicing process includes the first type recommendation. You need to replace the `base_url` and `api_key` in `LLMAgent` with your correct values, create an LLMAgent class, and call the `GenerationType` method.
 
-## Run In dataset
+## Run
 
-When you need to run the program on the dataset,You need to first download the repos of the dataset to the repos folder in the root directory, and then you can use the correct `dataset_path` in Test.ts, download the relevant repositories to the correct location, and specify the repositories root directory in the code.
+When you need to run the program on the dataset,You need to first download the repos of the dataset to the repos folder in the root directory, and then you can use the correct `dataset_path` in `Test.ts`, download the relevant repositories to the correct location, and specify the repositories root directory in the code.
 
+### python
+
+- To run the Python experiment, please execute `run.py`.
+
+Before running, please prepare the dataset and `api_key`.
+
+1. Replace `api_key` and `dataset_path` in `run.py`. The format of `dataset` is as follows:
+
+```json
+    [{
+        "cat": "builtins",
+        "file": "repos/Alissonrgs/honeydock/src/email.py",
+        "generic": false,
+        "gttype": "int",
+        "loc": "send_email_alert@global",
+        "name": "option",
+        "origttype": "builtins.int",
+        "processed_gttype": "int",
+        "scope": "arg",
+        "type_depth": 0
+    },
+    ...
+    ]
+```
+
+2. Create a `repos` directory under your Python directory and place the corresponding `project` folder for your dataset in this directory.
+
+### typescript
+ - If you don't want to run the entire dataset, you can try this.
+```bash
+ts-node run.ts InputProjectPath Out.json
+```
+- This will run and output the files in the folder corresponding to InputProjectPath to out.json.
+- If you encounter errors at runtime, you can try modifying configurations in `tsconfig.json` such as `module` and `forceConsistentCasingInFileNames`.
 
 ## Evaluation
 
