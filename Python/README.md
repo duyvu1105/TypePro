@@ -1,7 +1,5 @@
 - To run the Python experiment, please execute `run.py`.
 
-To run the Python experiment, please execute `run.text`.
-
 Before running, please prepare the dataset and `api_key`.
 
 1. Replace `api_key` and `dataset_path` in `run.py`. The format of `dataset` is as follows:
