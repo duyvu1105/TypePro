@@ -1,6 +1,6 @@
 from typing import NamedTuple
 from typing import List, Union, Iterable, Type
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import ast
 
 stmt_types = (ast.Assign, ast.AugAssign, ast.AnnAssign, ast.Expr, ast.Global, ast.Return)
@@ -30,6 +30,11 @@ class ClassInfo:
     name: str
     fields: List[str]
     methods: List[str]
+    package: str = ""
+    module: str = ""
+    qualified_name: str = ""
+    bases: List[str] = field(default_factory=list)
+    definition: str = ""
 
 OTHER_PROMPTS ={
     "init_type": "The type that initially passes static analysis is {}",

@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import ast
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -18,6 +19,15 @@ from slicing_code_class import Slicer
 
 FUNCTION_NODES = (ast.FunctionDef, ast.AsyncFunctionDef)
 ASSIGNMENT_NODES = (ast.Assign, ast.AnnAssign, ast.AugAssign)
+BUILTIN_TYPE_NAMES = {
+    "bool", "bytearray", "bytes", "classmethod", "complex", "dict", "enumerate",
+    "filter", "float", "frozenset", "int", "list", "map", "memoryview", "object",
+    "property", "range", "reversed", "set", "slice", "staticmethod", "str", "super",
+    "tuple", "type", "zip", "none", "nonetype",
+}
+CLASS_NAME_RE = re.compile(r"(?m)^\s*class\s+([A-Za-z_]\w*)\b")
+PACKAGE_RE = re.compile(r"(?m)^\s*#\s*package:\s*(\S+)")
+MODULE_RE = re.compile(r"(?m)^\s*#\s*module:\s*(\S+)")
 
 
 def parse_args() -> argparse.Namespace:
@@ -27,8 +37,51 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", required=True, help="Output JSONL")
     parser.add_argument("--rebuild-index", action="store_true", help="Run run_read_data.py once per project")
     parser.add_argument("--limit", type=int, default=0)
+    parser.add_argument("--parameters-only", action="store_true")
+    parser.add_argument("--exclude-builtins", action="store_true")
     parser.add_argument("--log-every", type=int, default=100, help="Print progress every N annotations; 0 disables")
     return parser.parse_args()
+
+
+def is_builtin_row(row: dict[str, Any]) -> bool:
+    category = str(row.get("cat") or "").strip().casefold()
+    if category in {"builtin", "builtins"}:
+        return True
+    original = str(row.get("origttype") or "").strip().casefold()
+    if original.startswith("builtins."):
+        return True
+    if category or original:
+        return False
+    label = str(row.get("gttype") or row.get("processed_gttype") or "").strip()
+    base = re.split(r"[\[<|, .]", label.replace("typing.", ""), maxsplit=1)[0].casefold()
+    return base in BUILTIN_TYPE_NAMES
+
+
+def recommendation_objects(definitions: Iterable[str]) -> list[dict[str, str]]:
+    result = []
+    seen = set()
+    for definition in definitions:
+        match = CLASS_NAME_RE.search(definition)
+        if not match:
+            continue
+        name = match.group(1)
+        package_match = PACKAGE_RE.search(definition)
+        module_match = MODULE_RE.search(definition)
+        package = package_match.group(1) if package_match else ""
+        module = module_match.group(1) if module_match else ""
+        qualified_name = f"{module}.{name}" if module else name
+        key = qualified_name.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append({
+            "name": name,
+            "qualified_name": qualified_name,
+            "package": package,
+            "source": "third_party" if package else "project",
+            "definition": definition,
+        })
+    return result
 
 
 def read_rows(path: Path) -> list[dict[str, Any]]:
@@ -174,7 +227,7 @@ def export_one(row: dict[str, Any], file_path: Path) -> dict[str, Any] | None:
     result["file"] = str(row.get("file") or row.get("path") or file_path)
     result["language"] = "python"
     result["interprocedural_slice"] = code_slice
-    result["recommendation_types"] = list(slicer.get_type_recommend())
+    result["recommendation_types"] = recommendation_objects(slicer.get_type_recommend())
     result["other_prompt"] = list(slicer.get_other_prompt())
     return result
 
@@ -185,6 +238,11 @@ def main() -> None:
     Path("data").mkdir(parents=True, exist_ok=True)
     Path("Third-party-data/dataset").mkdir(parents=True, exist_ok=True)
     rows = read_rows(Path(args.dataset))
+    original_count = len(rows)
+    if args.parameters_only:
+        rows = [row for row in rows if str(row.get("scope") or "").casefold() == "arg"]
+    if args.exclude_builtins:
+        rows = [row for row in rows if not is_builtin_row(row)]
     if args.limit:
         rows = rows[: args.limit]
     repos_root = Path(args.repos_root).resolve()
@@ -216,7 +274,14 @@ def main() -> None:
                     f"written={written:,} failed={failed:,}",
                     flush=True,
                 )
-    print(json.dumps({"input": len(rows), "written": written, "failed": failed, "output": str(output)}))
+    print(json.dumps({
+        "input": original_count,
+        "eligible": len(rows),
+        "filtered": original_count - len(rows),
+        "written": written,
+        "failed": failed,
+        "output": str(output),
+    }))
 
 
 if __name__ == "__main__":

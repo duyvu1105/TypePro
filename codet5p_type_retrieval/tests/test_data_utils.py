@@ -7,6 +7,7 @@ from data_utils import (
     JsonlDataset,
     canonical_type_name,
     get_project,
+    is_builtin_annotation,
     json_preview,
     normalize_recommendations,
     print_jsonl_samples,
@@ -36,6 +37,25 @@ def test_reads_direct_recommendation_objects_and_deduplicates():
     })
     assert len(result) == 1
     assert canonical_type_name("typing.pkg.Response") == "response"
+
+
+def test_preserves_detailed_third_party_candidate_metadata():
+    result = normalize_recommendations({
+        "recommendation_types": [{
+            "name": "Tensor",
+            "qualified_name": "torch.Tensor",
+            "package": "torch",
+            "source": "third_party",
+            "definition": "class Tensor:\n    # package: torch",
+        }]
+    })
+    assert result[0]["qualified_name"] == "torch.Tensor"
+    assert result[0]["package"] == "torch"
+
+
+def test_builtin_filter_prefers_dataset_category():
+    assert is_builtin_annotation({"scope": "arg", "cat": "builtins", "gttype": "list[int]"})
+    assert not is_builtin_annotation({"scope": "arg", "cat": "user-defined", "gttype": "Tensor"})
 
 
 def test_project_keeps_github_owner_and_repository():

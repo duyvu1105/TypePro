@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
-from data_utils import iter_records, json_preview, print_jsonl_samples
+from data_utils import is_builtin_annotation, iter_records, json_preview, print_jsonl_samples
 from tqdm.auto import tqdm
 
 
@@ -36,7 +36,7 @@ TYPEGEN_FILES = (
     "data/testset_randomsampled.json",
 )
 PROJECT_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
-SCHEMA_VERSION = "typepro-codet5p-contrastive-v1"
+SCHEMA_VERSION = "typepro-codet5p-parameter-third-party-v2"
 
 
 def parse_args() -> argparse.Namespace:
@@ -55,6 +55,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-projects", type=int, default=0, help="Smoke test only; 0 processes all")
     parser.add_argument("--repos-root", help="Optional existing repos root containing owner/repository")
     parser.add_argument("--third-party-kb", help="Optional TypePro third-party JSON knowledge-base directory")
+    parser.add_argument(
+        "--build-import-kb", action=argparse.BooleanOptionalAction, default=True,
+        help="Build third-party class JSON from packages imported by each cloned project",
+    )
+    parser.add_argument(
+        "--download-missing-imports", action=argparse.BooleanOptionalAction, default=True,
+        help="Download a wheel without dependencies when an imported package is not installed",
+    )
+    parser.add_argument("--kb-max-files-per-package", type=int, default=3000)
     parser.add_argument("--keep-repos", action="store_true")
     parser.add_argument("--force-metadata", action="store_true")
     parser.add_argument("--force-projects", action="store_true")
@@ -157,10 +166,32 @@ def deduplicate(rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
     return list(result.values())
 
 
+def eligible_parameter_rows(rows: Iterable[dict[str, Any]]) -> tuple[list[dict[str, Any]], Counter]:
+    result = []
+    stats = Counter()
+    for row in rows:
+        stats["input"] += 1
+        if str(row.get("scope") or "").strip().casefold() != "arg":
+            stats["non_parameter"] += 1
+            continue
+        if is_builtin_annotation(row):
+            stats["builtin"] += 1
+            continue
+        if not str(row.get("gttype") or "").strip():
+            stats["missing_ground_truth"] += 1
+            continue
+        result.append(row)
+        stats["eligible"] += 1
+    return result, stats
+
+
 def build_splits(args: argparse.Namespace, data_dir: Path) -> tuple[dict[str, list[dict[str, Any]]], dict[str, Any]]:
-    train_source = read_json(data_dir / "trainset.json")
-    test_source = read_json(data_dir / "testset.json")
-    sampled_source = read_json(data_dir / "testset_randomsampled.json")
+    train_raw = read_json(data_dir / "trainset.json")
+    test_raw = read_json(data_dir / "testset.json")
+    sampled_raw = read_json(data_dir / "testset_randomsampled.json")
+    train_source, train_filter = eligible_parameter_rows(train_raw)
+    test_source, test_filter = eligible_parameter_rows(test_raw)
+    sampled_source, sampled_filter = eligible_parameter_rows(sampled_raw)
     warnings: list[str] = []
 
     if args.split_profile == "paper_project":
@@ -211,14 +242,25 @@ def build_splits(args: argparse.Namespace, data_dir: Path) -> tuple[dict[str, li
             row.setdefault("url", f"https://github.com/{project}")
 
     metadata = {
+        "schema_version": SCHEMA_VERSION,
         "split_profile": args.split_profile,
         "seed": args.seed,
         "validation_project_ratio": args.validation_project_ratio,
         "requested_test_projects": args.test_projects,
         "source_counts": {
-            "trainset.json": len(train_source),
-            "testset.json": len(test_source),
-            "testset_randomsampled.json": len(sampled_source),
+            "trainset.json": len(train_raw),
+            "testset.json": len(test_raw),
+            "testset_randomsampled.json": len(sampled_raw),
+        },
+        "eligibility": {
+            "scope": "arg",
+            "exclude_builtins": True,
+            "positive": "gttype",
+            "files": {
+                "trainset.json": dict(train_filter),
+                "testset.json": dict(test_filter),
+                "testset_randomsampled.json": dict(sampled_filter),
+            },
         },
         "prepared_counts": {split: len(rows) for split, rows in split_rows.items()},
         "prepared_projects": {
@@ -236,9 +278,9 @@ def prepare_metadata(args: argparse.Namespace, work_dir: Path) -> dict[str, Any]
     if not args.force_metadata and manifest_path.exists() and all(path.exists() for path in split_paths.values()):
         with manifest_path.open(encoding="utf-8") as handle:
             existing = json.load(handle)
-        requested = (args.split_profile, args.seed, args.validation_project_ratio, args.test_projects)
+        requested = (SCHEMA_VERSION, args.split_profile, args.seed, args.validation_project_ratio, args.test_projects)
         cached = (
-            existing.get("split_profile"), existing.get("seed"),
+            existing.get("schema_version"), existing.get("split_profile"), existing.get("seed"),
             existing.get("validation_project_ratio"), existing.get("requested_test_projects"),
         )
         if requested != cached:
@@ -345,8 +387,11 @@ def load_prepared_annotations(work_dir: Path) -> list[dict[str, Any]]:
 def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path) -> dict[str, Any]:
     python_dir = typepro_root / "Python"
     exporter = python_dir / "export_slices.py"
+    kb_builder = python_dir / "build_third_party_kb.py"
     if not exporter.exists():
         raise FileNotFoundError(exporter)
+    if args.build_import_kb and not kb_builder.exists():
+        raise FileNotFoundError(kb_builder)
     rows_by_project: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in load_prepared_annotations(work_dir):
         rows_by_project[project_from_row(row)].append(row)
@@ -359,17 +404,32 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
     raw_dir = work_dir / "raw_slices"
     task_dir = work_dir / "tasks"
     status_dir = work_dir / "project_status"
+    generated_kb = work_dir / "third_party_kb" / "dataset"
+    # Wheels/extracted sources are transient and intentionally live outside the
+    # shard build directory so Kaggle archives only retain compact JSON KB data.
+    download_cache = work_dir.parent / f".{work_dir.name}_package_downloads"
     clone_root = Path(args.repos_root).resolve() if args.repos_root else work_dir / "repository_cache"
-    for directory in (raw_dir, task_dir, status_dir, clone_root, python_dir / "data", python_dir / "Third-party-data/dataset"):
+    for directory in (
+        raw_dir, task_dir, status_dir, clone_root, generated_kb, download_cache,
+        python_dir / "data", python_dir / "Third-party-data/dataset",
+    ):
         directory.mkdir(parents=True, exist_ok=True)
+    knowledge_base_paths = []
+    if args.build_import_kb:
+        knowledge_base_paths.append(generated_kb)
     if args.third_party_kb:
         knowledge_base = Path(args.third_party_kb).resolve()
         if not knowledge_base.is_dir():
             raise FileNotFoundError(knowledge_base)
-        os.environ["TYPEPRO_THIRD_PARTY_DATASET"] = str(knowledge_base)
+        knowledge_base_paths.append(knowledge_base)
+    if knowledge_base_paths:
+        os.environ["TYPEPRO_THIRD_PARTY_DATASET"] = os.pathsep.join(map(str, knowledge_base_paths))
     write_json(work_dir / "runtime_manifest.json", {
         "third_party_knowledge_base_provided": bool(args.third_party_kb),
         "third_party_knowledge_base_path": str(Path(args.third_party_kb).resolve()) if args.third_party_kb else None,
+        "import_knowledge_base_built": bool(args.build_import_kb),
+        "import_knowledge_base_path": str(generated_kb) if args.build_import_kb else None,
+        "download_missing_imports": bool(args.download_missing_imports),
         "repos_root_provided": bool(args.repos_root),
     })
 
@@ -400,6 +460,21 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
         tqdm.write(f"[{position}/{len(projects)}] {project} ({len(rows_by_project[project])} annotations)")
         try:
             commit = clone_project(project, repository_path)
+            kb_summary = None
+            if args.build_import_kb:
+                kb_summary_path = status_dir / f"{slug}.kb-summary"
+                kb_command = [
+                    sys.executable, str(kb_builder),
+                    "--project-root", str(repository_path),
+                    "--output-dir", str(generated_kb),
+                    "--download-cache", str(download_cache),
+                    "--max-files-per-package", str(args.kb_max_files_per_package),
+                    "--summary-output", str(kb_summary_path),
+                ]
+                if not args.download_missing_imports:
+                    kb_command.append("--no-download-missing")
+                run_logged(kb_command, python_dir, status_dir / f"{slug}.kb.log")
+                kb_summary = json.loads(kb_summary_path.read_text(encoding="utf-8"))
             project_rows = []
             for row in rows_by_project[project]:
                 item = dict(row)
@@ -411,6 +486,7 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
             command = [
                 sys.executable, str(exporter), "--dataset", str(task_path),
                 "--repos-root", str(clone_root), "--output", str(temporary_output), "--rebuild-index",
+                "--parameters-only", "--exclude-builtins",
                 "--log-every", str(args.slice_log_every),
             ]
             exporter_tail = run_logged(command, python_dir, status_dir / f"{slug}.log")
@@ -422,6 +498,7 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
                 "annotations": len(project_rows),
                 "exported": exported,
                 "failed_annotations": len(project_rows) - exported,
+                "third_party_kb": kb_summary,
                 "completed_at": datetime.now(timezone.utc).isoformat(),
                 "exporter_tail": exporter_tail,
             }
@@ -490,7 +567,8 @@ def finalize_dataset(args: argparse.Namespace, work_dir: Path, output_dir: Path,
         sys.executable, str(preprocess_script), "--input", str(raw_dir),
         "--output-dir", str(output_dir), "--label-field", "gttype",
         "--max-negatives", str(args.max_negatives), "--missing-positive", args.missing_positive,
-        "--missing-positive-eval", "drop", "--seed", str(args.seed),
+        "--missing-positive-eval", "append", "--positive-policy", "ground-truth",
+        "--seed", str(args.seed),
         "--preview-samples", str(args.preview_samples),
         "--preview-max-chars", str(args.preview_max_chars),
         "--log-every", str(args.log_every),
@@ -532,10 +610,14 @@ def finalize_dataset(args: argparse.Namespace, work_dir: Path, output_dir: Path,
         "split": split_manifest,
         "preprocessing": {
             "max_negatives": args.max_negatives,
-            "missing_positive_train": args.missing_positive,
-            "missing_positive_eval": "drop",
+            "positive_policy": "ground-truth",
+            "positive_field": "gttype",
+            "scope": "arg",
+            "exclude_builtins": True,
             "stats": preprocess_stats,
             "third_party_knowledge_base_provided": bool(runtime_manifest.get("third_party_knowledge_base_provided")),
+            "import_knowledge_base_built": bool(runtime_manifest.get("import_knowledge_base_built")),
+            "download_missing_imports": bool(runtime_manifest.get("download_missing_imports")),
         },
         "output": {
             split: {
@@ -561,6 +643,10 @@ Generated once by `prepare_dataset.py`; fine-tuning must consume these immutable
 
 - schema: `{SCHEMA_VERSION}`
 - language: Python
+- target scope: function parameters only
+- positive: `gttype`
+- built-in annotations: excluded
+- third-party recommendations: structural definitions built from project imports
 - split profile: `{split_manifest['split_profile']}`
 - train rows: {manifest['output']['train']['rows']}
 - validation rows: {manifest['output']['validation']['rows']}

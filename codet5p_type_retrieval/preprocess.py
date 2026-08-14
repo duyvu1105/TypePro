@@ -43,6 +43,10 @@ def parse_args() -> argparse.Namespace:
         "--missing-positive-eval", choices=("append", "drop"), default="drop",
         help="Validation/test behavior; drop avoids injecting gold into evaluation candidates",
     )
+    parser.add_argument(
+        "--positive-policy", choices=("recommendation", "ground-truth"), default="recommendation",
+        help="ground-truth always creates the positive from the label; recommendations remain negatives",
+    )
     return parser.parse_args()
 
 
@@ -119,14 +123,23 @@ def main() -> None:
             recommendations = normalize_recommendations(record)
             key = canonical_type_name(label)
             positive = next((item for item in recommendations if canonical_type_name(item["name"]) == key), None)
-            if positive is None:
-                stats[f"{split}_gold_not_recommended"] += 1
-                missing_mode = args.missing_positive if split == "train" else args.missing_positive_eval
-                if missing_mode == "drop":
-                    continue
-                positive = catalogs[split].get(key, {"name": label, "definition": label})
-            else:
+            gold_was_recommended = positive is not None
+            if gold_was_recommended:
                 stats[f"{split}_gold_recommended"] += 1
+            else:
+                stats[f"{split}_gold_not_recommended"] += 1
+                if args.positive_policy == "recommendation":
+                    missing_mode = args.missing_positive if split == "train" else args.missing_positive_eval
+                    if missing_mode == "drop":
+                        continue
+            if args.positive_policy == "ground-truth" or positive is None:
+                catalog_positive = positive or catalogs[split].get(key)
+                positive = {
+                    **(catalog_positive or {}),
+                    "name": label,
+                    "definition": (catalog_positive or {}).get("definition", label),
+                    "source": "ground_truth",
+                }
 
             negatives = [item for item in recommendations if canonical_type_name(item["name"]) != key]
             # TypePro recommendations are already ranked: retain the hardest ones first.
@@ -165,7 +178,12 @@ def main() -> None:
                         "name": item["name"],
                         "text": format_candidate(item["name"], item["definition"]),
                         "is_positive": candidate_index == 0,
-                        "source": "gold" if candidate_index == 0 else "recommendation_negative",
+                        "source": (
+                            "ground_truth" if candidate_index == 0
+                            else str(item.get("source") or "recommendation_negative")
+                        ),
+                        **({"package": item["package"]} if item.get("package") else {}),
+                        **({"qualified_name": item["qualified_name"]} if item.get("qualified_name") else {}),
                     }
                     for candidate_index, item in enumerate(selected)
                 ],

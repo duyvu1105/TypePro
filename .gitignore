@@ -1,0 +1,10 @@
+kaggle.json
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local outputs from the TypePro/Kaggle pipeline
+typepro_build*/
+typepro_python_contrastive/
+codet5p-typepro*/
+test_predictions.jsonl

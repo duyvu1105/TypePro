@@ -21,6 +21,18 @@ class Slicer:
         self.other_prompts = []
         self.type_recommend = []
 
+    def add_type_recommendations(self, definitions: Iterable[str], prepend: bool = False):
+        values = [definition for definition in definitions if definition]
+        if prepend:
+            for definition in reversed(values):
+                if definition in self.type_recommend:
+                    self.type_recommend.remove(definition)
+                self.type_recommend.insert(0, definition)
+            return
+        for definition in values:
+            if definition not in self.type_recommend:
+                self.type_recommend.append(definition)
+
     def is_simple_op_assign(self,node: ast.AST,
                             ops: Iterable[Type[ast.operator]] = SIMPLE_BINOPS
                             ) -> bool:
@@ -555,8 +567,10 @@ class Slicer:
         if may_cls_data!="":
             total_code_list.append(may_cls_data)
         if len(may_cls_data)>0:
-            for i in may_cls_data2:
-                self.type_recommend.append(i)
+            self.add_type_recommendations(may_cls_data2)
+        self.add_type_recommendations(
+            self.import_analyzer.get_class_recommendations(target_var_name)
+        )
         res, sigs = self.find_statements_for_var(file_path, target_var_name, is_for_defined=True,
                                             Domain=(root1, source))
 
@@ -572,6 +586,9 @@ class Slicer:
             if i[0] not in total_code_list:
                 total_code_list.append(i[0])
         total_code = "\n".join(total_code_list)
+        self.add_type_recommendations(
+            self.import_analyzer.calculate_similarity_for_class(total_code), prepend=True
+        )
         return total_code
 
     def slicing_func(self,func_node: ast.AST, root: str, file_path: str):
@@ -613,8 +630,10 @@ class Slicer:
             if may_class!="":
                 total_code_list.append(may_class)
             if len(may_class_2)>0:
-                for i in may_class_2:
-                    self.type_recommend.append(i)
+                self.add_type_recommendations(may_class_2)
+            self.add_type_recommendations(
+                self.import_analyzer.get_class_recommendations(param_name)
+            )
 
             res, sigs = self.find_statements_for_var(file_path, param_name, is_for_defined=True, Domain=(func_node, ast.unparse(func_node)))
             for fs in sigs:
@@ -637,6 +656,9 @@ class Slicer:
                     total_code_list.append(fu)
 
             total_code = "\n".join(total_code_list)
+            self.add_type_recommendations(
+                self.import_analyzer.calculate_similarity_for_class(total_code), prepend=True
+            )
             return total_code
 
     def get_type_recommend(self):

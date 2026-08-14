@@ -67,7 +67,8 @@ python prepare_dataset.py \
   --test-projects 100 \
   --validation-project-ratio 0.10 \
   --max-negatives 7 \
-  --missing-positive drop \
+  --build-import-kb \
+  --download-missing-imports \
   --preview-samples 2 \
   --preview-max-chars 1600 \
   --log-every 10000 \
@@ -93,13 +94,14 @@ Mỗi project hoàn tất tạo một shard trong `typepro_build/raw_slices` và
 Toàn bộ corpus có hàng nghìn repository và có thể vượt thời lượng một Kaggle session. Khi đó, tạo N notebook build giống nhau và đổi `shard-index` từ `0` đến `N-1`:
 
 ```bash
-# Ví dụ notebook shard 3/10
+# Ví dụ notebook shard 3/5
 python prepare_dataset.py --stage metadata \
   --split-profile paper_project --test-projects 100 --seed 13
 
 python prepare_dataset.py --stage slice \
   --split-profile paper_project --test-projects 100 --seed 13 \
-  --shard-count 10 --shard-index 3
+  --shard-count 5 --shard-index 3 \
+  --build-import-kb --download-missing-imports
 ```
 
 Save output `typepro_build` của mỗi notebook thành một Kaggle Dataset. Trong notebook merge, attach tất cả shard datasets rồi chạy:
@@ -189,7 +191,7 @@ Từ lần fine-tune thứ hai, chỉ thay hyperparameters và `--output-dir`; d
 
 ### Giới hạn dữ liệu công khai
 
-TypeGen release công khai không chứa `commit_hash`; builder ghi SHA thực tế của HEAD đã clone vào từng record và manifest. TypePro cũng không phát hành knowledge base top 5.000 pip packages trong repository hiện tại. Vì thế `paper_project` tái tạo protocol không leakage và toàn bộ slicing workflow, nhưng không thể byte-for-byte giống private processed data của paper. Không truyền `--third-party-kb` thì candidate recommendations chủ yếu đến từ class definitions trong chính project; `--missing-positive drop` giữ đúng yêu cầu positive/negative đều thuộc recommendation candidates.
+TypeGen release công khai không chứa `commit_hash`; builder ghi SHA thực tế của HEAD đã clone vào từng record và manifest. TypePro cũng không phát hành knowledge base top 5.000 pip packages trong repository hiện tại. Builder này thay thế bằng KB theo nhu cầu: đọc imports của từng project, quét `.py`/`.pyi` đã cài hoặc wheel tải về mà không import/thực thi package, rồi lưu class name, qualified name, bases, fields và public method signatures. Dataset chỉ giữ function parameters không phải built-in; positive luôn là `gttype`, recommendation types còn lại là negatives.
 
 ## 1. Dữ liệu
 
@@ -235,7 +237,9 @@ python export_slices.py \
   --dataset /kaggle/input/manytypes4py/processed_train.json \
   --repos-root /kaggle/input/manytypes4py-repositories \
   --output /kaggle/working/typepro_train_slices.jsonl \
-  --rebuild-index
+  --rebuild-index \
+  --parameters-only \
+  --exclude-builtins
 ```
 
 `--rebuild-index` chạy `run_read_data.py` một lần cho mỗi project. Exporter không import/call OpenAI. Với TypeScript, dùng `TSSlicer.Slicing(...)` như `TypeScript/Test.ts` và lưu cả `ans.code` lẫn `ans.typeRecommended`; preprocessor bên dưới đọc được cùng schema.
@@ -250,6 +254,7 @@ python preprocess.py \
   --output-dir /kaggle/working/typepro_pairs \
   --label-field gttype \
   --max-negatives 7 \
+  --positive-policy ground-truth \
   --preview-samples 2 \
   --preview-max-chars 1600 \
   --log-every 10000
@@ -257,7 +262,7 @@ python preprocess.py \
 
 Nếu record đã có `split`, script giữ nguyên. Nếu chưa có, script chia deterministically theo project. Recommendation list vốn đã được TypePro sắp theo structural similarity nên các item sai đầu danh sách là hard negatives tốt.
 
-Mặc định `--missing-positive drop`: chỉ tạo contrastive sample khi gold thực sự nằm trong recommendation list. Cách này đúng với yêu cầu “positive/negative đều từ recommendation types” và tránh dạy mô hình bằng candidate mà recommender không thể tạo lúc infer. Nếu muốn tăng coverage như một ablation, dùng `--missing-positive append`; script sẽ thêm gold candidate, ưu tiên definition tìm thấy trong catalog cùng split và nếu không thì name-only. Với validation/test, mặc định luôn là `--missing-positive-eval drop`, nên không chèn đáp án vào candidate set. File `preprocess_stats.json` ghi `*_gold_recommended`; tỷ lệ này là candidate recall và cũng là trần của top-1 inference nếu chỉ cho phép chọn recommendation types. `top1`/`mrr` trong log train là **conditional metrics** trên các validation record còn lại; end-to-end top-1 xấp xỉ `candidate_recall × conditional_top1` và nên được đo chính xác lại bằng `infer.py` trên toàn test set.
+Với dataset parameter-only mới, dùng `--positive-policy ground-truth`: candidate đầu tiên luôn là `gttype`; nếu KB có structural definition tương ứng thì tái sử dụng definition đó, nếu không thì dùng name-only. Các recommendation khác là hard negatives. Chế độ cũ `--positive-policy recommendation` vẫn hỗ trợ `--missing-positive drop|append` cho ablation candidate-recall. File `preprocess_stats.json` vẫn ghi `*_gold_recommended` để đo khả năng KB tự tìm thấy gold, nhưng metric trên processed test là supervised ranking vì gold đã được đưa vào candidate set.
 
 ## 3. Train trên Kaggle
 

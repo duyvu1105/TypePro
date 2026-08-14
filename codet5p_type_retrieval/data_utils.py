@@ -33,6 +33,12 @@ NAME_RE = re.compile(
     r"(?mi)(?:^|\n)\s*(?:export\s+)?(?:default\s+)?(?:declare\s+)?"
     r"(?:abstract\s+)?(?:class|interface|type|enum)\s+([A-Za-z_$][\w$\.]*)\b"
 )
+BUILTIN_TYPE_NAMES = {
+    "bool", "bytearray", "bytes", "classmethod", "complex", "dict", "enumerate",
+    "filter", "float", "frozenset", "int", "list", "map", "memoryview", "none",
+    "nonetype", "object", "property", "range", "reversed", "set", "slice",
+    "staticmethod", "str", "super", "tuple", "type", "zip",
+}
 
 
 def iter_records(path: str | Path):
@@ -111,6 +117,21 @@ def canonical_type_name(value: str) -> str:
     return value.casefold()
 
 
+def is_builtin_annotation(record: dict[str, Any], label_field: str = "gttype") -> bool:
+    category = str(record.get("cat") or "").strip().casefold()
+    if category in {"builtin", "builtins"}:
+        return True
+    original = str(record.get("origttype") or "").strip().casefold()
+    if original.startswith("builtins."):
+        return True
+    # Dataset categories are authoritative; name fallback supports lean custom inputs.
+    if category or original:
+        return False
+    label = str(record.get(label_field) or record.get("processed_gttype") or "").strip()
+    base = re.split(r"[\[<|, .]", label.replace("typing.", ""), maxsplit=1)[0].casefold()
+    return base in BUILTIN_TYPE_NAMES
+
+
 def type_name_from_definition(definition: str) -> str:
     match = NAME_RE.search(definition or "")
     if match:
@@ -170,7 +191,11 @@ def normalize_recommendations(record: dict[str, Any]) -> list[dict[str, str]]:
                 definition = str(item.get("definition") or item.get("code") or item.get("signature") or "")
                 name = str(item.get("name") or type_name_from_definition(definition))
                 if name:
-                    result.append({"name": name, "definition": definition or name})
+                    normalized = {"name": name, "definition": definition or name}
+                    for key in ("qualified_name", "package", "module", "source"):
+                        if item.get(key):
+                            normalized[key] = str(item[key])
+                    result.append(normalized)
 
     if not result:
         prompt = str(record.get("total_prompt") or record.get("totalPrompt") or "")
@@ -179,7 +204,7 @@ def normalize_recommendations(record: dict[str, Any]) -> list[dict[str, str]]:
     deduped: list[dict[str, str]] = []
     seen = set()
     for item in result:
-        key = canonical_type_name(item["name"])
+        key = str(item.get("qualified_name") or canonical_type_name(item["name"])).casefold()
         if key and key not in seen:
             seen.add(key)
             deduped.append(item)

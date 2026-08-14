@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from prepare_dataset import build_splits, project_from_row
+from prepare_dataset import build_splits, eligible_parameter_rows, project_from_row
 
 
 class Args:
@@ -19,8 +19,9 @@ def row(project: str, number: int):
         "file": f"repos/{project}/module_{number}.py",
         "loc": "global@global",
         "name": f"value_{number}",
-        "scope": "local",
-        "gttype": "str",
+        "scope": "arg",
+        "cat": "user-defined",
+        "gttype": "Response",
     }
 
 
@@ -40,3 +41,15 @@ def test_paper_split_has_no_project_overlap():
     assert project_sets[0].isdisjoint(project_sets[1])
     assert project_sets[0].isdisjoint(project_sets[2])
     assert project_sets[1].isdisjoint(project_sets[2])
+
+
+def test_only_non_builtin_parameters_are_eligible():
+    rows = [
+        row("owner/repository", 1),
+        {**row("owner/repository", 2), "scope": "return"},
+        {**row("owner/repository", 3), "cat": "builtins", "gttype": "int"},
+    ]
+    eligible, stats = eligible_parameter_rows(rows)
+    assert [item["name"] for item in eligible] == ["value_1"]
+    assert stats["non_parameter"] == 1
+    assert stats["builtin"] == 1
