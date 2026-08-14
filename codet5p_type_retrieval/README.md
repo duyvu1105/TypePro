@@ -168,11 +168,11 @@ python verify_dataset.py \
 python train.py \
   --data-dir /kaggle/input/typepro-codet5p-contrastive \
   --output-dir /kaggle/working/codet5p-typepro \
-  --model-name Salesforce/codet5p-220m \
-  --batch-size 4 \
-  --gradient-accumulation-steps 4 \
-  --query-length 512 \
-  --candidate-length 192 \
+  --model-name Salesforce/codet5p-220m-py \
+  --batch-size 2 \
+  --gradient-accumulation-steps 8 \
+  --query-length 768 \
+  --candidate-length 256 \
   --epochs 3 \
   --learning-rate 2e-5 \
   --mixed-precision fp16 \
@@ -269,11 +269,11 @@ pip install -q -r requirements.txt
 python train.py \
   --data-dir /kaggle/working/typepro_pairs \
   --output-dir /kaggle/working/codet5p-typepro \
-  --model-name Salesforce/codet5p-220m \
-  --batch-size 4 \
-  --gradient-accumulation-steps 4 \
-  --query-length 512 \
-  --candidate-length 192 \
+  --model-name Salesforce/codet5p-220m-py \
+  --batch-size 2 \
+  --gradient-accumulation-steps 8 \
+  --query-length 768 \
+  --candidate-length 256 \
   --epochs 3 \
   --learning-rate 2e-5 \
   --mixed-precision fp16 \
@@ -286,17 +286,24 @@ Nếu T4 bị OOM, giảm `--batch-size 2` hoặc `--query-length 384`. Checkpoi
 
 ## 4. Infer
 
-Input infer phải có slice và recommendation list/definitions, nhưng không cần label:
+`infer.py` đọc trực tiếp `test.jsonl` đã preprocess hoặc raw TypePro records. Nếu
+input có label, script tự tính Top-1, MRR, candidate recall và end-to-end metric:
 
 ```bash
 python infer.py \
   --checkpoint /kaggle/working/codet5p-typepro/best \
-  --input /kaggle/input/typepro-slices/infer.jsonl \
+  --input /kaggle/input/typepro-codet5p-contrastive/test.jsonl \
   --output /kaggle/working/predictions.jsonl \
-  --top-k 5
+  --query-length 768 \
+  --candidate-length 256 \
+  --batch-size 4 \
+  --top-k 5 \
+  --preview-samples 3
 ```
 
-Mỗi output chứa `prediction` và ranking cosine similarity. Khi đánh giá trên test, không thêm gold vào candidate list; nếu làm vậy sẽ gây label leakage và báo accuracy quá cao.
+Mỗi output chứa `prediction`, gold label, gold rank và ranking cosine similarity.
+Với processed test, script đọc thêm `preprocess_stats.json` cùng thư mục để tính
+end-to-end metric trên cả những mẫu bị loại vì gold không nằm trong candidates.
 
 ## Ghi chú thực nghiệm
 
