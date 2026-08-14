@@ -1,0 +1,2 @@
+loguru>=0.7
+kaggle>=1.6

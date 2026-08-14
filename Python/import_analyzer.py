@@ -13,7 +13,9 @@ DefinitionInfo = Union[FunctionInfo, ClassInfo]
 class importAnalyzer:
 
     def __init__(self, file_path:str):
-        self.datasets_path = "./Third-party-data/dataset/"
+        self.datasets_path = os.environ.get("TYPEPRO_THIRD_PARTY_DATASET", "./Third-party-data/dataset/")
+        if not self.datasets_path.endswith(("/", "\\")):
+            self.datasets_path += os.sep
         self.file_path = file_path
         self.packages = self.analyze_imports(file_path)
         self.detail_import_data = self.analyze_imports_detail(file_path)
