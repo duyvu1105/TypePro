@@ -27,6 +27,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", required=True, help="Output JSONL")
     parser.add_argument("--rebuild-index", action="store_true", help="Run run_read_data.py once per project")
     parser.add_argument("--limit", type=int, default=0)
+    parser.add_argument("--log-every", type=int, default=100, help="Print progress every N annotations; 0 disables")
     return parser.parse_args()
 
 
@@ -203,12 +204,18 @@ def main() -> None:
                 result = export_one(row, resolve_file(row, repos_root))
                 if result is None:
                     failed += 1
-                    continue
-                handle.write(json.dumps(result, ensure_ascii=False) + "\n")
-                written += 1
+                else:
+                    handle.write(json.dumps(result, ensure_ascii=False) + "\n")
+                    written += 1
             except Exception as error:  # Continue a long dataset export and retain actionable diagnostics.
                 failed += 1
                 print(f"[{index}] {row.get('file')}: {type(error).__name__}: {error}", file=sys.stderr)
+            if args.log_every and ((index + 1) % args.log_every == 0 or index + 1 == len(rows)):
+                print(
+                    f"[export:progress] annotations={index + 1:,}/{len(rows):,} "
+                    f"written={written:,} failed={failed:,}",
+                    flush=True,
+                )
     print(json.dumps({"input": len(rows), "written": written, "failed": failed, "output": str(output)}))
 
 

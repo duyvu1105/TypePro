@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from data_utils import iter_records, json_preview, print_jsonl_samples
+from tqdm.auto import tqdm
 
 
 TYPEGEN_URL = "https://github.com/JohnnyPeng18/TypeGen/releases/download/data/data.zip"
@@ -65,6 +66,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--preview-samples", type=int, default=2, help="Samples printed per split/stage; 0 disables")
     parser.add_argument("--preview-max-chars", type=int, default=1600, help="Maximum characters per sample; 0 prints all")
     parser.add_argument("--log-every", type=int, default=10000, help="Preprocess progress interval; 0 disables")
+    parser.add_argument("--slice-log-every", type=int, default=100, help="Print progress every N annotations within a project")
     return parser.parse_args()
 
 
@@ -286,12 +288,27 @@ def run(command: list[str], cwd: Path | None = None, capture: bool = False) -> s
 
 def run_logged(command: list[str], cwd: Path, log_path: Path) -> str:
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    with log_path.open("wb") as log_handle:
-        subprocess.run(command, cwd=cwd, check=True, stdout=log_handle, stderr=subprocess.STDOUT)
-    with log_path.open("rb") as log_handle:
-        size = log_handle.seek(0, os.SEEK_END)
-        log_handle.seek(max(0, size - 4000))
-        return log_handle.read().decode("utf-8", errors="replace")
+    tail = ""
+    with log_path.open("w", encoding="utf-8") as log_handle:
+        process = subprocess.Popen(
+            command,
+            cwd=cwd,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            bufsize=1,
+        )
+        assert process.stdout is not None
+        for line in process.stdout:
+            log_handle.write(line)
+            log_handle.flush()
+            tail = (tail + line)[-4000:]
+            if line.startswith("[export:progress]"):
+                tqdm.write(line.rstrip())
+        return_code = process.wait()
+        if return_code:
+            raise subprocess.CalledProcessError(return_code, command, output=tail)
+    return tail
 
 
 def clone_project(project: str, destination: Path) -> str:
@@ -358,17 +375,29 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
 
     counters = Counter(selected_projects=len(projects))
     raw_previews_printed = 0
-    for position, project in enumerate(projects, start=1):
+    project_progress = tqdm(
+        enumerate(projects, start=1),
+        total=len(projects),
+        desc=f"TypePro slicing shard {args.shard_index + 1}/{args.shard_count}",
+        unit="project",
+        dynamic_ncols=True,
+        mininterval=1.0,
+    )
+    for position, project in project_progress:
         slug = project.replace("/", "__")
         output_path = raw_dir / f"{slug}.jsonl"
         status_path = status_dir / f"{slug}.json"
         repository_path = clone_root.joinpath(*project.split("/"))
+        project_progress.set_postfix_str(
+            f"current={project} annotations={len(rows_by_project[project]):,} "
+            f"done={counters['completed_projects']:,} failed={counters['failed_projects']:,}"
+        )
         if output_path.exists() and status_path.exists() and not args.force_projects:
             counters["skipped_complete"] += 1
             if not args.keep_repos and not args.repos_root:
                 safe_remove_repo(repository_path, clone_root)
             continue
-        print(f"[{position}/{len(projects)}] {project} ({len(rows_by_project[project])} annotations)", flush=True)
+        tqdm.write(f"[{position}/{len(projects)}] {project} ({len(rows_by_project[project])} annotations)")
         try:
             commit = clone_project(project, repository_path)
             project_rows = []
@@ -382,6 +411,7 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
             command = [
                 sys.executable, str(exporter), "--dataset", str(task_path),
                 "--repos-root", str(clone_root), "--output", str(temporary_output), "--rebuild-index",
+                "--log-every", str(args.slice_log_every),
             ]
             exporter_tail = run_logged(command, python_dir, status_dir / f"{slug}.log")
             os.replace(temporary_output, output_path)
@@ -401,18 +431,16 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
             if raw_previews_printed < args.preview_samples:
                 for sample in iter_records(output_path):
                     raw_previews_printed += 1
-                    print(
+                    tqdm.write(
                         f"\n[slice:sample] raw #{raw_previews_printed} ({project})\n"
-                        f"{json_preview(sample, args.preview_max_chars)}",
-                        flush=True,
+                        f"{json_preview(sample, args.preview_max_chars)}"
                     )
                     if raw_previews_printed >= args.preview_samples:
                         break
-            print(
-                f"[slice:progress] projects={position:,}/{len(projects):,} "
-                f"completed_this_run={counters['completed_projects']:,} "
-                f"exported_this_run={counters['exported_records']:,}",
-                flush=True,
+            project_progress.set_postfix_str(
+                f"current={project} annotations={len(rows_by_project[project]):,} "
+                f"done={counters['completed_projects']:,} failed={counters['failed_projects']:,} "
+                f"exported={counters['exported_records']:,}"
             )
         except Exception as error:
             counters["failed_projects"] += 1
@@ -421,7 +449,7 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
                 "error": f"{type(error).__name__}: {error}",
                 "completed_at": datetime.now(timezone.utc).isoformat(),
             })
-            print(f"FAILED {project}: {error}", file=sys.stderr, flush=True)
+            tqdm.write(f"FAILED {project}: {error}", file=sys.stderr)
         finally:
             if not args.keep_repos and not args.repos_root:
                 safe_remove_repo(repository_path, clone_root)
