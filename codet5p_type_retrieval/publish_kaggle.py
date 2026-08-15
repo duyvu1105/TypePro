@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 import argparse
-import json
-import shutil
-import subprocess
 from pathlib import Path
+
+from kaggle_dataset_utils import publish_dataset
 
 
 def parse_args() -> argparse.Namespace:
@@ -24,27 +23,13 @@ def main() -> None:
     missing = [str(path) for path in required if not path.exists()]
     if missing:
         raise FileNotFoundError(f"Missing processed dataset files: {missing}")
-    if shutil.which("kaggle") is None:
-        raise RuntimeError("Install the Kaggle CLI first: pip install kaggle")
-    metadata_path = data_dir / "dataset-metadata.json"
-    metadata_path.write_text(json.dumps({
-        "title": args.title,
-        "id": args.dataset_id,
-        "licenses": [{"name": "CC-BY-4.0"}],
-    }, indent=2), encoding="utf-8")
-    common = ["-p", str(data_dir), "--dir-mode", "zip"]
-    # Query first: create only on a 404/non-zero result; otherwise add a version.
-    exists = subprocess.run(
-        ["kaggle", "datasets", "files", args.dataset_id],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-    ).returncode == 0
-    if exists:
-        command = ["kaggle", "datasets", "version", *common, "-m", args.message]
-    else:
-        if args.public:
-            common.append("--public")
-        command = ["kaggle", "datasets", "create", *common]
-    subprocess.run(command, check=True)
+    publish_dataset(
+        data_dir,
+        args.dataset_id,
+        args.title,
+        args.message,
+        public=args.public,
+    )
 
 
 if __name__ == "__main__":

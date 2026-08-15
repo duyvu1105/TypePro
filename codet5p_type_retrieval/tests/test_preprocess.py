@@ -9,7 +9,7 @@ sys.path.insert(0, str(PIPELINE_DIR))
 import preprocess
 
 
-def test_ground_truth_policy_keeps_missing_recommendation_as_positive(tmp_path, monkeypatch):
+def test_ground_truth_policy_keeps_missing_recommendation_as_positive(tmp_path, monkeypatch, capsys):
     raw = tmp_path / "raw.jsonl"
     rows = [
         {
@@ -64,3 +64,28 @@ def test_ground_truth_policy_keeps_missing_recommendation_as_positive(tmp_path, 
     assert first["candidates"][0]["name"] == "Tensor"
     assert first["candidates"][0]["is_positive"] is True
     assert first["candidates"][0]["source"] == "ground_truth"
+    output_text = capsys.readouterr().out
+    assert "[ground-truth-in-recommendation-types]" in output_text
+    assert "train: 1/2 samples (50.00%)" in output_text
+    assert "validation: 0/0 samples (0.00%)" in output_text
+    assert "test: 0/0 samples (0.00%)" in output_text
+
+
+def test_recommendation_coverage_uses_all_checked_samples_as_denominator():
+    stats = preprocess.Counter({
+        "train_gold_recommended": 3,
+        "train_gold_not_recommended": 1,
+        "validation_gold_recommended": 1,
+        "validation_gold_not_recommended": 2,
+    })
+
+    coverage = preprocess.recommendation_coverage(stats)
+
+    assert coverage["train"] == {
+        "total_samples": 4,
+        "ground_truth_in_recommendation_types": 3,
+        "ground_truth_not_in_recommendation_types": 1,
+        "percentage": 75.0,
+    }
+    assert coverage["validation"]["percentage"] == 33.33
+    assert coverage["test"]["percentage"] == 0.0

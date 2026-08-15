@@ -100,7 +100,7 @@ python prepare_dataset.py --stage metadata \
 
 python prepare_dataset.py --stage slice \
   --split-profile paper_project --test-projects 100 --seed 13 \
-  --shard-count 5 --shard-index 3 \
+  --shard-count 10 --shard-index 3 \
   --build-import-kb --download-missing-imports
 ```
 

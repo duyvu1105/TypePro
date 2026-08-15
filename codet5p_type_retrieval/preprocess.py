@@ -22,6 +22,25 @@ from data_utils import (
 )
 
 
+SPLITS = ("train", "validation", "test")
+
+
+def recommendation_coverage(stats: Counter) -> dict[str, dict[str, int | float]]:
+    """Summarize whether each eligible sample's gold type was recommended."""
+    coverage = {}
+    for split in SPLITS:
+        found = stats[f"{split}_gold_recommended"]
+        missing = stats[f"{split}_gold_not_recommended"]
+        total = found + missing
+        coverage[split] = {
+            "total_samples": total,
+            "ground_truth_in_recommendation_types": found,
+            "ground_truth_not_in_recommendation_types": missing,
+            "percentage": round(100.0 * found / total, 2) if total else 0.0,
+        }
+    return coverage
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Convert TypePro slices to contrastive CodeT5+ data")
     parser.add_argument("--input", nargs="+", required=True, help="TypePro JSON/JSONL outputs")
@@ -204,8 +223,7 @@ def main() -> None:
     for split, temporary in temporary_paths.items():
         os.replace(temporary, output_dir / f"{split}.jsonl")
 
-    splits = ("train", "validation", "test")
-    stats["usable_records"] = sum(stats[f"{split}_written"] for split in splits)
+    stats["usable_records"] = sum(stats[f"{split}_written"] for split in SPLITS)
     with (output_dir / "preprocess_stats.json").open("w", encoding="utf-8") as handle:
         json.dump(dict(stats), handle, indent=2, ensure_ascii=False)
     summary = {
@@ -220,11 +238,19 @@ def main() -> None:
                 "gold_not_recommended": stats[f"{split}_gold_not_recommended"],
                 "written": stats[f"{split}_written"],
             }
-            for split in splits
+            for split in SPLITS
         },
+        "recommendation_coverage": recommendation_coverage(stats),
     }
     print(f"\n[preprocess:final-counts]\n{json.dumps(summary, indent=2, ensure_ascii=False)}", flush=True)
-    for split in splits:
+    print("\n[ground-truth-in-recommendation-types]", flush=True)
+    for split, values in summary["recommendation_coverage"].items():
+        print(
+            f"{split}: {values['ground_truth_in_recommendation_types']:,}/"
+            f"{values['total_samples']:,} samples ({values['percentage']:.2f}%)",
+            flush=True,
+        )
+    for split in SPLITS:
         print_jsonl_samples(
             output_dir / f"{split}.jsonl",
             args.preview_samples,
