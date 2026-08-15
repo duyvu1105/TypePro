@@ -46,8 +46,11 @@ def validate_dataset_id(dataset_id: str) -> tuple[str, str]:
             f"Dataset owner {owner!r} does not match authenticated account "
             f"KAGGLE_USERNAME={credential_owner!r}"
         )
-    if not os.environ.get("KAGGLE_KEY", "").strip():
-        raise RuntimeError("KAGGLE_KEY is missing or empty")
+    # Do not require KAGGLE_KEY here. Kaggle notebooks can authenticate the
+    # CLI with their host identity/access token and intentionally have no
+    # legacy key in the environment. KAGGLE_USERNAME is still set by the
+    # notebook as an explicit owner guard; the Kaggle API performs the actual
+    # credential/permission check.
     return owner, slug
 
 

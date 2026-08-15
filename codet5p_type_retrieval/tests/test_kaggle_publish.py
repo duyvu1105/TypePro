@@ -58,6 +58,17 @@ def test_dataset_id_uses_authenticated_owner(tmp_path, monkeypatch):
     )
 
 
+def test_dataset_id_accepts_kaggle_notebook_host_auth(monkeypatch):
+    monkeypatch.setenv("KAGGLE_USERNAME", "another-account")
+    monkeypatch.delenv("KAGGLE_KEY", raising=False)
+    monkeypatch.delenv("KAGGLE_API_TOKEN", raising=False)
+
+    assert validate_dataset_id("another-account/typepro-build-shard-00") == (
+        "another-account",
+        "typepro-build-shard-00",
+    )
+
+
 def test_dataset_id_rejects_null_or_mismatched_owner(monkeypatch):
     monkeypatch.setenv("KAGGLE_USERNAME", "another-account")
     monkeypatch.setenv("KAGGLE_KEY", "secret")
