@@ -1,7 +1,7 @@
 """Generate upload-ready Kaggle notebooks for TypePro sharding and training.
 
-The generated notebooks never contain a literal Kaggle credential. They read
-KAGGLE_USERNAME and KAGGLE_KEY from Kaggle Secrets at runtime.
+Generated notebooks never contain API credentials. Same-account jobs use the
+Kaggle host identity; optional explicit credentials come from Kaggle Secrets.
 """
 from __future__ import annotations
 
@@ -10,7 +10,6 @@ import json
 import re
 from pathlib import Path
 from textwrap import dedent
-from uuid import uuid4
 
 
 OWNER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{1,49}$")
@@ -30,7 +29,6 @@ else:
 def markdown(source: str) -> dict:
     return {
         "cell_type": "markdown",
-        "id": uuid4().hex[:8],
         "metadata": {},
         "source": dedent(source).strip() + "\n",
     }
@@ -40,7 +38,6 @@ def code(source: str) -> dict:
     return {
         "cell_type": "code",
         "execution_count": None,
-        "id": uuid4().hex[:8],
         "metadata": {},
         "outputs": [],
         "source": dedent(source).strip() + "\n",
@@ -48,6 +45,8 @@ def code(source: str) -> dict:
 
 
 def notebook(cells: list[dict], gpu: bool = False) -> dict:
+    for index, cell in enumerate(cells):
+        cell["id"] = f"cell-{index:03d}"
     return {
         "cells": cells,
         "metadata": {
@@ -403,10 +402,11 @@ def shard_notebook(
         `{("public" if public_dataset else "private")}` Dataset under
         `{expected_dataset_owner or 'the authenticated publish owner'}`.
 
-        Add target-owner Secrets `TYPEPRO_PUBLISH_USERNAME` and
-        `TYPEPRO_PUBLISH_KEY`. Legacy Secret names `KAGGLE_USERNAME` and
-        `KAGGLE_KEY` remain supported as a fallback. The notebook refuses to run
-        when the effective publish owner is not the expected owner.
+        The notebook uses its same-account Kaggle host identity by default.
+        Optional target-owner Secrets `TYPEPRO_PUBLISH_USERNAME` and
+        `TYPEPRO_PUBLISH_KEY` (or legacy `KAGGLE_USERNAME` and `KAGGLE_KEY`)
+        override it. The notebook refuses to run when the effective publish
+        owner is not the expected owner.
         """),
         code(f"""
         # This tagged cell is rewritten once per Kaggle version by
@@ -444,9 +444,9 @@ def shard_notebook(
         markdown("""
         ## Authenticate safely
 
-        Values are read from Kaggle Secrets and are never printed. A separate
-        config directory prevents the notebook-hosting account's automatic
-        credential from overriding the target Dataset owner's credential.
+        Optional values are read from Kaggle Secrets and are never printed. If
+        supplied, a separate config directory prevents the notebook host's
+        automatic credential from overriding the explicit credential.
         """),
         code("""
         import json
@@ -764,11 +764,12 @@ def merge_notebook(
         markdown(f"""
         # Merge {count} TypePro shards and publish the final dataset
 
-        Settings: **Internet ON**, accelerator **None/CPU**. Add
-        `TYPEPRO_FINAL_USERNAME/KEY` for `{expected_dataset_owner}`. Shards owned
-        by the final account remain private; shards owned by the second account
-        are public so this credential can download both groups. Run only after
-        all `{count}` shard Datasets have completed successfully.
+        Settings: **Internet ON**, accelerator **None/CPU**. Run under
+        `{expected_dataset_owner}` so the automatic host identity can publish
+        the final Dataset. Optional `TYPEPRO_FINAL_USERNAME/KEY` Secrets may
+        override it. Shards owned by the final account remain private; shards
+        owned by the second account are public so this identity can download
+        both groups. Run only after all `{count}` shard Datasets complete.
         """),
         code(f"""
         SHARD_COUNT = {count}

@@ -83,13 +83,13 @@ under any other owner. The split is therefore:
 
 Kaggle rejected private cross-account downloads using the available `duymign`
 legacy credential, while a live public-dataset download succeeded. Therefore
-shards 05-09 are intentionally public. The merge notebook runs with only the
-final owner's Secrets:
+shards 05-09 are intentionally public. The merge notebook can use
+`duyvu1105`'s automatic host identity. Optional explicit overrides are:
 
 - `TYPEPRO_FINAL_USERNAME=duyvu1105`;
 - `TYPEPRO_FINAL_KEY` from `kaggle.json`.
 
-That credential reads its own private shards 00-04 and the public `duymign`
+That identity reads its own private shards 00-04 and the public `duymign`
 shards 05-09. After validating all ten manifests, it publishes the final
 private `duyvu1105/typepro-python-contrastive` Dataset.
 

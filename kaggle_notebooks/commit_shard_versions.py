@@ -2,8 +2,8 @@
 
 Two remote notebook slugs are used, one per runner account.  Each push embeds a
 single immutable ``SHARD_INDEX`` so every Kaggle version builds exactly one
-shard.  Host-account credentials are used only for ``kernels push``; the
-generated notebooks publish Datasets with target-owner Secrets at runtime.
+shard. Host-account credentials are used only for ``kernels push``; each
+generated notebook validates and uses its same-account Kaggle host identity.
 """
 
 from __future__ import annotations
@@ -180,7 +180,7 @@ def kernel_metadata(plan: AccountPlan, code_file: str) -> dict[str, Any]:
         "is_private": True,
         "enable_gpu": False,
         "enable_internet": True,
-        "keywords": ["typepro"],
+        "keywords": [],
         "dataset_sources": [],
         "kernel_sources": [],
         "competition_sources": [],
