@@ -11,6 +11,7 @@ sys.path.insert(0, str(NOTEBOOK_DIR))
 
 import commit_shard_versions
 import generate_notebooks
+import recover_shard_version
 
 
 def source_with_tag(notebook, tag):
@@ -215,3 +216,43 @@ def test_merge_notebook_switches_private_dataset_credentials_by_owner():
     assert "use_credential(FINAL_SOURCE)" in serialized
     assert "source['owner']" in serialized
     assert "FINAL_SOURCE['owner']" in serialized
+
+
+def test_recovery_notebook_only_restores_and_publishes_completed_shard():
+    notebook = generate_notebooks.recovery_notebook(
+        8,
+        10,
+        "https://github.com/duyvu1105/TypePro.git",
+        "main",
+        expected_dataset_owner="duymign",
+        public_dataset=True,
+        source_kernel="duymign/typepro-shards-05-09/9",
+    )
+    serialized = json.dumps(notebook)
+
+    assert 'SHARD_INDEX = 8' in serialized
+    assert 'expected_archive = f\\"typepro_build_shard_' in serialized
+    assert "publish_shard.py" in serialized
+    assert "prepare_dataset.py" not in serialized
+    assert "kernels" in serialized
+    assert "source_handle" in serialized
+    assert 'os.environ[\\"KAGGLE_USERNAME\\"] = EXPECTED_DATASET_OWNER' in serialized
+    assert "PUBLISH_PUBLIC = True" in serialized
+
+
+def test_recovery_metadata_pins_exact_source_version():
+    plan = commit_shard_versions.AccountPlan(
+        runner_account="duymign",
+        dataset_owner="duymign",
+        public_dataset=True,
+        notebook_path=Path("template.ipynb"),
+        kernel_slug="typepro-shards-05-09",
+        assigned_shards=(5, 6, 7, 8, 9),
+    )
+    metadata = recover_shard_version.recovery_metadata(
+        plan, 8, 9, "recover_shard.ipynb"
+    )
+
+    assert metadata["id"] == "duymign/typepro-recover-shard-08-from-v9"
+    assert metadata["kernel_sources"] == []
+    assert metadata["enable_gpu"] is False

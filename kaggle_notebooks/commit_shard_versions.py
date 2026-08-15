@@ -26,7 +26,11 @@ CONFIG_TAG = "typepro-shard-config"
 OWNER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{1,49}$")
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{2,49}$")
 SHARD_LINE_RE = re.compile(r"^SHARD_INDEX = \d+$", re.MULTILINE)
-PUSH_ERROR_MARKERS = ("kernel push error:", "notebook not found")
+PUSH_ERROR_MARKERS = (
+    "kernel push error:",
+    "notebook not found",
+    "not valid kernel sources",
+)
 
 
 @dataclass(frozen=True)

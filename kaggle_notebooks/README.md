@@ -113,6 +113,21 @@ accumulate five shard-specific versions each.
 To retry only selected shards, repeat `--shard`, for example
 `--shard 0 --shard 5 --push`.
 
+### Recovery after a publish-only failure
+
+`recover_shard_version.py --source-version SHARD=VERSION --push` creates a
+Kaggle-side, publish-only recovery notebook and never rebuilds projects. It can
+recover only when `kaggle kernels output owner/slug/version` exposes the saved
+archive or completed work directory. Kaggle may expose an empty output for a
+committed run that ends in `ERROR`, even if the archive existed in
+`/kaggle/working` immediately before the exception. In that case the closed
+session cannot be recovered and the safe fallback is to rerun only that shard:
+
+```bash
+uv run --with kaggle==1.7.4.2 python \
+  kaggle_notebooks/commit_shard_versions.py --shard 8 --push
+```
+
 ## Run order
 
 1. Optionally configure the target-owner Secrets in both Kaggle runner accounts;

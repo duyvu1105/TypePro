@@ -728,6 +728,197 @@ def shard_notebook(
     return result
 
 
+def recovery_notebook(
+    index: int,
+    count: int,
+    repository: str,
+    branch: str,
+    *,
+    expected_dataset_owner: str,
+    public_dataset: bool,
+    source_kernel: str,
+) -> dict:
+    """Create a publish-only notebook backed by one saved kernel version."""
+    if not 0 <= index < count:
+        raise ValueError(f"Shard index must be within 0..{count - 1}: {index}")
+    if not OWNER_RE.fullmatch(expected_dataset_owner):
+        raise ValueError(f"Invalid Dataset owner: {expected_dataset_owner!r}")
+    if not re.fullmatch(r"[A-Za-z0-9_-]+/[A-Za-z0-9_-]+/\d+", source_kernel):
+        raise ValueError(f"Invalid versioned source kernel: {source_kernel!r}")
+    return notebook([
+        markdown(f"""
+        # Recover completed TypePro shard {index:02d}
+
+        This notebook does not rebuild projects. It downloads the exact saved
+        output of `{source_kernel}` directly inside Kaggle, validates its
+        manifest, repackages it, and publishes
+        `{expected_dataset_owner}/typepro-build-shard-{index:02d}`.
+        """),
+        code(f"""
+        SHARD_INDEX = {index}
+        SHARD_COUNT = {count}
+        EXPECTED_DATASET_OWNER = {expected_dataset_owner!r}
+        PUBLISH_PUBLIC = {public_dataset!r}
+        SOURCE_KERNEL = {source_kernel!r}
+        REPOSITORY = {repository!r}
+        BRANCH = {branch!r}
+
+        import json
+        import os
+        import re
+        import shutil
+        import subprocess
+        import sys
+        import zipfile
+        from pathlib import Path, PurePosixPath
+
+        os.environ["KAGGLE_USERNAME"] = EXPECTED_DATASET_OWNER
+        os.environ["PYTHONUNBUFFERED"] = "1"
+
+        def run(command, cwd=None):
+            print("+", " ".join(map(str, command)), flush=True)
+            subprocess.run([str(value) for value in command], cwd=cwd, check=True)
+
+        print({{
+            "shard_index": SHARD_INDEX,
+            "shard_count": SHARD_COUNT,
+            "dataset_owner": EXPECTED_DATASET_OWNER,
+            "public_dataset": PUBLISH_PUBLIC,
+            "source_kernel": SOURCE_KERNEL,
+            "credentials_printed": False,
+        }})
+        """),
+        markdown("## Verify the automatic host identity and clone the fixed publisher"),
+        code("""
+        run([sys.executable, "-m", "pip", "install", "-q", "-U", "kaggle"])
+        identity_code = "\\n".join([
+            "import json",
+            "import kaggle",
+            "values = getattr(kaggle.api, 'config_values', {})",
+            "print('TYPEPRO_KAGGLE_IDENTITY=' + json.dumps({",
+            "    'username': values.get('username'),",
+            "    'auth_method': values.get('auth_method'),",
+            "}))",
+        ])
+        identity_result = subprocess.run(
+            [sys.executable, "-c", identity_code],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+        identity_prefix = "TYPEPRO_KAGGLE_IDENTITY="
+        identity_line = next(
+            (
+                line for line in (identity_result.stdout or "").splitlines()
+                if line.startswith(identity_prefix)
+            ),
+            None,
+        )
+        if identity_result.returncode or identity_line is None:
+            raise RuntimeError(
+                f"Kaggle host authentication failed: {identity_result.stdout}"
+            )
+        identity = json.loads(identity_line[len(identity_prefix):])
+        authenticated_username = (identity.get("username") or "").strip()
+        if authenticated_username.casefold() != EXPECTED_DATASET_OWNER.casefold():
+            raise RuntimeError(
+                f"Kaggle authenticated as {authenticated_username!r}, expected "
+                f"{EXPECTED_DATASET_OWNER!r}"
+            )
+        print({
+            "authenticated_owner": authenticated_username,
+            "authentication_method": identity.get("auth_method"),
+        })
+
+        REPO_DIR = Path("/kaggle/working/TypePro")
+        if not REPO_DIR.exists():
+            run(["git", "clone", "--branch", BRANCH, "--single-branch", REPOSITORY, REPO_DIR])
+        PIPELINE_DIR = REPO_DIR / "codet5p_type_retrieval"
+        """),
+        markdown("## Download, locate, and validate the completed shard output"),
+        code("""
+        source_owner, source_slug, source_version = SOURCE_KERNEL.split("/")
+        source_handle = f"{source_owner}/{source_slug}/{source_version}"
+        DOWNLOAD_ROOT = Path(
+            f"/kaggle/working/recover_source_{SHARD_INDEX:02d}_v{source_version}"
+        )
+        print("Downloading exact saved output inside Kaggle:", source_handle)
+        DOWNLOAD_ROOT.mkdir(parents=True, exist_ok=True)
+        run([
+            "kaggle", "kernels", "output", source_handle,
+            "-p", DOWNLOAD_ROOT, "--force",
+        ])
+        INPUT_ROOT = DOWNLOAD_ROOT
+        if not INPUT_ROOT.exists():
+            raise RuntimeError(f"Downloaded output path does not exist: {INPUT_ROOT}")
+        EXTRACT_ROOT = Path(f"/kaggle/working/recover_extract_{SHARD_INDEX:02d}")
+        expected_archive = f"typepro_build_shard_{SHARD_INDEX:02d}.zip"
+        archives = sorted(INPUT_ROOT.rglob(expected_archive))
+        for position, archive in enumerate(archives):
+            target = EXTRACT_ROOT / f"archive_{position:02d}"
+            target.mkdir(parents=True, exist_ok=True)
+            with zipfile.ZipFile(archive) as bundle:
+                for member in bundle.infolist():
+                    relative = PurePosixPath(member.filename)
+                    if relative.is_absolute() or ".." in relative.parts:
+                        raise RuntimeError(
+                            f"Unsafe path in saved shard archive: {member.filename!r}"
+                        )
+                bundle.extractall(target)
+
+        marker_paths = sorted(INPUT_ROOT.rglob("shard_manifest.json"))
+        marker_paths.extend(sorted(EXTRACT_ROOT.rglob("shard_manifest.json")))
+        candidates = []
+        errors = []
+        for marker_path in marker_paths:
+            try:
+                marker = json.loads(marker_path.read_text(encoding="utf-8"))
+                if (
+                    marker.get("shard_index") == SHARD_INDEX
+                    and marker.get("shard_count") == SHARD_COUNT
+                    and marker.get("missing_projects") == []
+                    and isinstance(marker.get("selected_projects"), int)
+                    and marker["selected_projects"] > 0
+                    and marker.get("attempted_projects") == marker["selected_projects"]
+                ):
+                    candidates.append(marker_path.parent)
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+                errors.append(f"{marker_path}: {exc}")
+        unique_candidates = sorted({path.resolve() for path in candidates})
+        if not unique_candidates:
+            raise RuntimeError(
+                f"No completed shard {SHARD_INDEX:02d}/{SHARD_COUNT} in attached "
+                f"output {source_handle}; archives={archives}, errors={errors}"
+            )
+        WORK_DIR = unique_candidates[0]
+        print({
+            "recovered_work_dir": str(WORK_DIR),
+            "candidate_count": len(unique_candidates),
+            "saved_archives": [str(path) for path in archives],
+        })
+        """),
+        markdown("## Repackage and publish without rebuilding"),
+        code("""
+        PUBLISH_DIR = Path(f"/kaggle/working/recover_publish_{SHARD_INDEX:02d}")
+        dataset_id = f"{EXPECTED_DATASET_OWNER}/typepro-build-shard-{SHARD_INDEX:02d}"
+        publish_command = [
+            sys.executable, "-u", PIPELINE_DIR / "publish_shard.py",
+            "--work-dir", WORK_DIR,
+            "--payload-dir", PUBLISH_DIR,
+            "--dataset-id", dataset_id,
+            "--title", f"TypePro Python shard {SHARD_INDEX:02d} of {SHARD_COUNT}",
+            "--message", f"Recover completed shard {SHARD_INDEX:02d} from {SOURCE_KERNEL}",
+            "--expected-shard-index", SHARD_INDEX,
+            "--expected-shard-count", SHARD_COUNT,
+        ]
+        if PUBLISH_PUBLIC:
+            publish_command.append("--public")
+        run(publish_command)
+        print({"recovered": True, "dataset_id": dataset_id})
+        """),
+    ])
+
+
 def merge_notebook(
     count: int,
     repository: str,
