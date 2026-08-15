@@ -20,7 +20,8 @@ The contrastive positive is always the annotation's `gttype`.
 ## Before uploading
 
 1. Commit and push the current code to the repository/branch configured in the notebooks.
-2. In each runner account's Kaggle Settings > Secrets, create
+2. Each shard notebook normally uses its own Kaggle host account automatically.
+   Optionally, in each runner account's Kaggle Settings > Secrets, create
    `TYPEPRO_PUBLISH_USERNAME` and `TYPEPRO_PUBLISH_KEY` using that runner's own
    credential: `duyvu1105` for shards 00-04 and `duymign` for shards 05-09.
    The fallback names `KAGGLE_USERNAME` and `KAGGLE_KEY` are supported.
@@ -98,8 +99,8 @@ Dry-run and validate all ten rendered versions without contacting Kaggle:
 python kaggle_notebooks/commit_shard_versions.py
 ```
 
-After both accounts have the target-owner Secrets, push five versions to each
-account:
+Push five versions to each account (Secrets are optional when each notebook is
+hosted by the same account that owns its shard Datasets):
 
 ```bash
 uv run --with kaggle==1.7.4.2 python kaggle_notebooks/commit_shard_versions.py --push
@@ -109,9 +110,13 @@ uv run --with kaggle==1.7.4.2 python kaggle_notebooks/commit_shard_versions.py -
 CLI treats an existing kernel ID as a new version, so the two fixed kernel slugs
 accumulate five shard-specific versions each.
 
+To retry only selected shards, repeat `--shard`, for example
+`--shard 0 --shard 5 --push`.
+
 ## Run order
 
-1. Configure the target-owner Secrets in both Kaggle runner accounts.
+1. Optionally configure the target-owner Secrets in both Kaggle runner accounts;
+   otherwise the notebooks validate and use their automatic host identity.
 2. Dry-run `commit_shard_versions.py` and inspect its ten-version manifest.
 3. Run it with `--push` to commit/start five versions per account.
 4. Confirm shards 00-04 are ready under `duyvu1105` and shards 05-09 are ready under `duymign`.

@@ -270,18 +270,34 @@ def main(argv: list[str] | None = None) -> None:
         default=REPO_ROOT / "typepro_kernel_versions",
         help="Dry-run output; ignored when --push is used",
     )
+    parser.add_argument(
+        "--shard",
+        type=int,
+        action="append",
+        default=[],
+        help="Render/push only this shard; repeat for multiple shards",
+    )
     parser.add_argument("--push", action="store_true")
     args = parser.parse_args(argv)
 
     plan_path = args.plan.resolve()
     final_dataset_owner, _, plans = load_plan(plan_path)
     credential_paths = parse_credentials(args.credential, plans)
+    planned_shards = {
+        index for plan in plans for index in plan.assigned_shards
+    }
+    requested_shards = set(args.shard) if args.shard else planned_shards
+    invalid_shards = requested_shards - planned_shards
+    if invalid_shards:
+        raise ValueError(f"Requested shards are outside the plan: {sorted(invalid_shards)}")
     summaries = []
     for plan in plans:
         template = json.loads(plan.notebook_path.read_text(encoding="utf-8"))
         credential_path = credential_paths[plan.runner_account.casefold()]
         credential = load_credential(credential_path, plan.runner_account)
         for version_number, shard_index in enumerate(plan.assigned_shards, start=1):
+            if shard_index not in requested_shards:
+                continue
             rendered = render_shard_version(
                 template,
                 shard_index,

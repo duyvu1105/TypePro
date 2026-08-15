@@ -476,10 +476,12 @@ def shard_notebook(
             raise RuntimeError("KAGGLE_USERNAME and KAGGLE_KEY must both be present")
         publish_username = target_username or legacy_username
         publish_key = target_key or legacy_key
-        if not publish_username or not publish_key:
-            raise RuntimeError(
-                "Add TYPEPRO_PUBLISH_USERNAME and TYPEPRO_PUBLISH_KEY to Kaggle Secrets"
-            )
+        use_explicit_credential = bool(publish_username and publish_key)
+        if not use_explicit_credential:
+            # The notebook is pushed to the same account that owns its shard
+            # Datasets. Kaggle supplies that host identity automatically, so
+            # Secrets are optional for this normal same-account path.
+            publish_username = EXPECTED_DATASET_OWNER
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{1,49}", publish_username):
             raise ValueError(f"Invalid publish username: {publish_username!r}")
         if (
@@ -491,16 +493,21 @@ def shard_notebook(
                 f"Datasets must belong to {EXPECTED_DATASET_OWNER!r}"
             )
 
-        auth_config_dir = Path("/kaggle/working/typepro_publish_auth")
-        auth_config_dir.mkdir(parents=True, exist_ok=True)
-        os.environ["KAGGLE_CONFIG_DIR"] = str(auth_config_dir)
-        os.environ["KAGGLE_USERNAME"] = publish_username
-        os.environ["KAGGLE_KEY"] = publish_key
-        os.environ.pop("KAGGLE_API_TOKEN", None)
+        if use_explicit_credential:
+            auth_config_dir = Path("/kaggle/working/typepro_publish_auth")
+            auth_config_dir.mkdir(parents=True, exist_ok=True)
+            os.environ["KAGGLE_CONFIG_DIR"] = str(auth_config_dir)
+            os.environ["KAGGLE_USERNAME"] = publish_username
+            os.environ["KAGGLE_KEY"] = publish_key
+            os.environ.pop("KAGGLE_API_TOKEN", None)
+            authentication_source = "explicit Kaggle Secret"
+        else:
+            authentication_source = "Kaggle notebook host"
         os.environ["PYTHONUNBUFFERED"] = "1"
         print({
             "publish_owner": publish_username,
             "expected_owner": EXPECTED_DATASET_OWNER or publish_username,
+            "authentication_source": authentication_source,
             "credentials_printed": False,
         })
         """),
@@ -521,9 +528,13 @@ def shard_notebook(
 
         PIPELINE_DIR = REPO_DIR / "codet5p_type_retrieval"
         run([sys.executable, "-m", "pip", "install", "-q", "-U", "-r", PIPELINE_DIR / "requirements-build.txt"])
-        # Force legacy-key-only authentication. Newer Kaggle CLI releases may
-        # prefer the notebook host account's automatic access token.
-        run([sys.executable, "-m", "pip", "install", "-q", "--force-reinstall", "kaggle==1.7.4.2"])
+        if use_explicit_credential:
+            # This release always honors the explicit legacy username/key pair.
+            run([sys.executable, "-m", "pip", "install", "-q", "--force-reinstall", "kaggle==1.7.4.2"])
+        else:
+            # Current Kaggle releases understand the notebook host's automatic
+            # access token. No credential value is copied into this notebook.
+            run([sys.executable, "-m", "pip", "install", "-q", "-U", "kaggle"])
 
         identity_code = "\\n".join([
             "import json",
@@ -789,8 +800,13 @@ def merge_notebook(
 
         final_username = optional_secret("TYPEPRO_FINAL_USERNAME")
         final_key = optional_secret("TYPEPRO_FINAL_KEY")
-        if not final_username or not final_key:
-            raise RuntimeError("Missing TYPEPRO_FINAL_USERNAME/KEY Secrets")
+        if bool(final_username) != bool(final_key):
+            raise RuntimeError(
+                "TYPEPRO_FINAL_USERNAME and TYPEPRO_FINAL_KEY must both be present"
+            )
+        use_explicit_credential = bool(final_username and final_key)
+        if not use_explicit_credential:
+            final_username = EXPECTED_DATASET_OWNER
         if final_username.casefold() != EXPECTED_DATASET_OWNER.casefold():
             raise RuntimeError(
                 f"Final credential belongs to {{final_username!r}}, expected "
@@ -807,6 +823,8 @@ def merge_notebook(
         AUTH_ROOT.mkdir(parents=True, exist_ok=True)
 
         def use_credential(source):
+            if not use_explicit_credential:
+                return
             auth_config_dir = AUTH_ROOT / source["label"]
             auth_config_dir.mkdir(parents=True, exist_ok=True)
             os.environ["KAGGLE_CONFIG_DIR"] = str(auth_config_dir)
@@ -821,6 +839,11 @@ def merge_notebook(
                 for source in SHARD_SOURCES
             ],
             "final_dataset_owner": EXPECTED_DATASET_OWNER,
+            "authentication_source": (
+                "explicit Kaggle Secret"
+                if use_explicit_credential
+                else "Kaggle notebook host"
+            ),
             "credentials_printed": False,
         }})
 
@@ -839,8 +862,49 @@ def merge_notebook(
             run(["git", "clone", "--branch", BRANCH, "--single-branch", REPOSITORY, REPO_DIR])
         PIPELINE_DIR = REPO_DIR / "codet5p_type_retrieval"
         run([sys.executable, "-m", "pip", "install", "-q", "-U", "-r", PIPELINE_DIR / "requirements-build.txt"])
-        # Force legacy-key-only authentication for cross-account publishing.
-        run([sys.executable, "-m", "pip", "install", "-q", "--force-reinstall", "kaggle==1.7.4.2"])
+        if use_explicit_credential:
+            run([sys.executable, "-m", "pip", "install", "-q", "--force-reinstall", "kaggle==1.7.4.2"])
+        else:
+            run([sys.executable, "-m", "pip", "install", "-q", "-U", "kaggle"])
+
+        identity_code = "\\n".join([
+            "import json",
+            "import kaggle",
+            "values = getattr(kaggle.api, 'config_values', {})",
+            "print('TYPEPRO_KAGGLE_IDENTITY=' + json.dumps({",
+            "    'username': values.get('username'),",
+            "    'auth_method': values.get('auth_method') or 'LEGACY_API_KEY',",
+            "}))",
+        ])
+        identity_result = subprocess.run(
+            [sys.executable, "-c", identity_code],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+        identity_prefix = "TYPEPRO_KAGGLE_IDENTITY="
+        identity_line = next(
+            (
+                line for line in (identity_result.stdout or "").splitlines()
+                if line.startswith(identity_prefix)
+            ),
+            None,
+        )
+        if identity_result.returncode or identity_line is None:
+            raise RuntimeError(
+                f"Kaggle final-owner authentication failed: {identity_result.stdout}"
+            )
+        identity = json.loads(identity_line[len(identity_prefix):])
+        authenticated_username = (identity.get("username") or "").strip()
+        if authenticated_username.casefold() != EXPECTED_DATASET_OWNER.casefold():
+            raise RuntimeError(
+                f"Kaggle authenticated as {authenticated_username!r}, expected "
+                f"final owner {EXPECTED_DATASET_OWNER!r}"
+            )
+        print({
+            "authenticated_final_owner": authenticated_username,
+            "authentication_method": identity.get("auth_method"),
+        })
         """),
         markdown("## Download and extract every shard dataset"),
         code("""
