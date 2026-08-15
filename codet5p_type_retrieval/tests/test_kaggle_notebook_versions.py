@@ -42,6 +42,7 @@ def test_account_notebook_locks_publish_owner_and_assigned_shards():
     assert "TYPEPRO_PUBLISH_KEY" in serialized
     assert "Kaggle notebook host" in serialized
     assert "use_explicit_credential" in serialized
+    assert 'os.environ[\\"KAGGLE_USERNAME\\"] = publish_username' in serialized
     assert "credentials_printed" in serialized
     assert notebook["metadata"]["typepro"] == {
         "assigned_shards": [0, 1, 2, 3, 4],
@@ -210,6 +211,7 @@ def test_merge_notebook_switches_private_dataset_credentials_by_owner():
     assert "TYPEPRO_FINAL_USERNAME" in serialized
     assert "TYPEPRO_FINAL_KEY" in serialized
     assert "Kaggle notebook host" in serialized
+    assert 'os.environ[\\"KAGGLE_USERNAME\\"] = final_username' in serialized
     assert "use_credential(FINAL_SOURCE)" in serialized
     assert "source['owner']" in serialized
     assert "FINAL_SOURCE['owner']" in serialized

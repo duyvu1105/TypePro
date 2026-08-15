@@ -503,6 +503,9 @@ def shard_notebook(
             authentication_source = "explicit Kaggle Secret"
         else:
             authentication_source = "Kaggle notebook host"
+        # publish_shard.py validates the requested Dataset owner against this
+        # non-secret value. Keep the host access token untouched.
+        os.environ["KAGGLE_USERNAME"] = publish_username
         os.environ["PYTHONUNBUFFERED"] = "1"
         print({
             "publish_owner": publish_username,
@@ -820,6 +823,10 @@ def merge_notebook(
             "username": final_username,
             "key": final_key,
         }}
+        # The publisher validates Dataset ownership using KAGGLE_USERNAME.
+        # This is safe to set for host-token authentication: it contains only
+        # the public username and does not replace Kaggle's access token.
+        os.environ["KAGGLE_USERNAME"] = final_username
         AUTH_ROOT = Path("/kaggle/working/typepro_merge_auth")
         AUTH_ROOT.mkdir(parents=True, exist_ok=True)
 
