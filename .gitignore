@@ -1,4 +1,6 @@
-kaggle.json
+# Local Kaggle API credentials. Never commit these files.
+/kaggle.json
+/kaggle[0-9]*.json
 **/__pycache__/
 *.py[cod]
 .pytest_cache/
@@ -8,3 +10,4 @@ typepro_build*/
 typepro_python_contrastive/
 codet5p-typepro*/
 test_predictions.jsonl
+typepro_kernel_versions/

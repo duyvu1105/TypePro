@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import csv
+import io
 import json
 import os
 import re
@@ -101,6 +103,56 @@ def _raise_for_publish_error(
         )
 
 
+def _owned_dataset_exists(dataset_id: str) -> bool:
+    """Return whether the exact Dataset ref appears in the owner's Datasets.
+
+    Kaggle can return HTTP 403 for both a private Dataset that is still being
+    registered and a Dataset slug that does not exist.  The authenticated
+    owner's Dataset listing is therefore the existence check; status and file
+    endpoints are only used after existence has been established.
+    """
+    slug = dataset_id.rsplit("/", 1)[-1]
+    result = _run(
+        [
+            "kaggle",
+            "datasets",
+            "list",
+            "--mine",
+            "--search",
+            slug,
+            "--csv",
+        ]
+    )
+    output = (result.stdout or "").strip()
+    if result.returncode:
+        raise RuntimeError(
+            f"Cannot list Datasets owned by the authenticated Kaggle account "
+            f"(exit {result.returncode}): {output}"
+        )
+    if not output or "no datasets found" in output.casefold():
+        return False
+
+    rows = list(csv.reader(io.StringIO(output)))
+    header_index = next(
+        (
+            index
+            for index, row in enumerate(rows)
+            if row and row[0].strip().casefold() in {"ref", "reference"}
+        ),
+        None,
+    )
+    if header_index is None:
+        raise RuntimeError(
+            "Cannot parse `kaggle datasets list --mine --csv` output; refusing "
+            f"to guess whether {dataset_id} exists: {output}"
+        )
+    expected = dataset_id.casefold()
+    return any(
+        row and row[0].strip().casefold() == expected
+        for row in rows[header_index + 1 :]
+    )
+
+
 def _status(dataset_id: str) -> tuple[str, str]:
     result = _run(["kaggle", "datasets", "status", dataset_id])
     output = (result.stdout or "").strip()
@@ -122,6 +174,9 @@ def _status(dataset_id: str) -> tuple[str, str]:
             if any(marker in files_lowered for marker in MISSING_MARKERS):
                 return "missing", files_output
             if any(marker in files_lowered for marker in FORBIDDEN_MARKERS):
+                # This path is reached only after the owner listing proved the
+                # Dataset exists, or after create/version was accepted.  In
+                # those contexts a temporary 403 is safe to treat as pending.
                 return "pending", files_output
             raise RuntimeError(
                 f"Cannot list Kaggle Dataset files for {dataset_id} "
@@ -197,10 +252,19 @@ def publish_dataset(
     if not payloads:
         raise RuntimeError(f"No Dataset payload files in {data_dir}")
 
-    state, _ = _status(dataset_id)
-    if state == "pending":
-        wait_for_status(dataset_id)
+    dataset_exists = _owned_dataset_exists(dataset_id)
+    state = "missing"
+    if dataset_exists:
         state, _ = _status(dataset_id)
+        if state == "missing":
+            raise RuntimeError(
+                f"Kaggle owner listing contains {dataset_id}, but its status/file "
+                "endpoints report it missing; refusing to guess between create "
+                "and version"
+            )
+        if state == "pending":
+            wait_for_status(dataset_id)
+            state, _ = _status(dataset_id)
 
     common = ["-p", str(data_dir), "--dir-mode", "skip"]
     if state == "missing":

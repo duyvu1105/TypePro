@@ -1,0 +1,35 @@
+{
+  "schema_version": "typepro-shard-account-plan-v2",
+  "final_dataset_owner": "duyvu1105",
+  "shard_count": 10,
+  "accounts": [
+    {
+      "runner_account": "duyvu1105",
+      "dataset_owner": "duyvu1105",
+      "public_dataset": false,
+      "notebook": "01_typepro_account_duyvu1105_shards_00_04.ipynb",
+      "assigned_shards": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "kernel_slug": "typepro-shards-00-04"
+    },
+    {
+      "runner_account": "duymign",
+      "dataset_owner": "duymign",
+      "public_dataset": true,
+      "notebook": "02_typepro_account_duymign_shards_05_09.ipynb",
+      "assigned_shards": [
+        5,
+        6,
+        7,
+        8,
+        9
+      ],
+      "kernel_slug": "typepro-shards-05-09"
+    }
+  ]
+}

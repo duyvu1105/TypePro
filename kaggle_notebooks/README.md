@@ -1,12 +1,16 @@
 # TypePro Kaggle notebooks
 
-This folder contains upload-ready notebooks for the Python parameter-only dataset:
+This folder contains a two-account, ten-shard workflow for the Python
+parameter-only dataset:
 
 - `00_test_dataset_owner.ipynb`: create a tiny private Dataset to verify cross-account credentials and ownership.
-- `01_typepro_shard_00.ipynb` through `10_typepro_shard_09.ipynb`: build ten private shards.
-- `11_merge_finalize.ipynb`: verify, merge, finalize, and publish the processed dataset.
-- `12_train_and_infer.ipynb`: fine-tune CodeT5+ and evaluate the processed test split.
-- `generate_notebooks.py`: regenerate the ten-shard workflow.
+- `01_typepro_account_duyvu1105_shards_00_04.ipynb`: template committed as five versions under `duyvu1105`, one version per shard 00-04.
+- `02_typepro_account_duymign_shards_05_09.ipynb`: template committed as five versions under `duymign`, one version per shard 05-09.
+- `03_merge_finalize.ipynb`: verify, merge, finalize, and publish the processed dataset.
+- `04_train_and_infer.ipynb`: fine-tune CodeT5+ and evaluate the processed test split.
+- `shard_account_plan.json`: exact account, notebook, kernel-slug, and shard mapping.
+- `commit_shard_versions.py`: render and optionally push five immutable shard versions per account.
+- `generate_notebooks.py`: regenerate the complete workflow.
 
 Each build shard keeps only non-built-in function parameters. It builds a cached
 third-party KB from imports in each project and stores detailed class structure
@@ -16,8 +20,14 @@ The contrastive positive is always the annotation's `gttype`.
 ## Before uploading
 
 1. Commit and push the current code to the repository/branch configured in the notebooks.
-2. In Kaggle **Settings > Secrets**, create `KAGGLE_USERNAME` and `KAGGLE_KEY`.
+2. In each runner account's Kaggle Settings > Secrets, create
+   `TYPEPRO_PUBLISH_USERNAME` and `TYPEPRO_PUBLISH_KEY` using that runner's own
+   credential: `duyvu1105` for shards 00-04 and `duymign` for shards 05-09.
+   The fallback names `KAGGLE_USERNAME` and `KAGGLE_KEY` are supported.
 3. Never paste either secret into a notebook or commit `kaggle.json`.
+4. Keep the two local runner credentials as ignored files `kaggle.json`
+   (`duyvu1105`) and `kaggle2.json` (`duymign`). They are used only to push
+   notebook versions to the correct runner accounts.
 
 ## Cross-account owner test
 
@@ -45,21 +55,74 @@ token temporarily shared with another account after testing.
 The legacy `datasets status` endpoint may return HTTP 403 after a successful
 creation. The notebooks therefore use `datasets files` as the compatibility
 fallback and only declare success once the uploaded payload is listable.
+Before publishing a fixed shard slug, the publisher checks the authenticated
+owner's Dataset listing for an exact ref. This distinguishes a new Dataset from
+the ambiguous HTTP 403 returned by status/file endpoints for a missing or
+not-yet-ready private Dataset.
+
+## Two-account version contract
+
+Each remote notebook receives five pushes. Before every push,
+`commit_shard_versions.py` rewrites the single tagged config cell with one
+hard-coded `SHARD_INDEX`. It validates that the two account groups cover shards
+0-9 exactly once and that each group contains exactly five shards. The ten
+versions are therefore independent Kaggle CPU jobs:
+
+| Runner account | Remote notebook | Version shards | Dataset owner | Visibility |
+| --- | --- | --- | --- | --- |
+| `duyvu1105` | `duyvu1105/typepro-shards-00-04` | `00,01,02,03,04` | `duyvu1105` | private |
+| `duymign` | `duymign/typepro-shards-05-09` | `05,06,07,08,09` | `duymign` | public |
+
+Each version authenticates with its runner's own Secret, isolates that
+credential from Kaggle's automatic host authentication, and refuses to publish
+under any other owner. The split is therefore:
+
+- `duyvu1105/typepro-build-shard-00` through `...-04`;
+- `duymign/typepro-build-shard-05` through `...-09`.
+
+Kaggle rejected private cross-account downloads using the available `duymign`
+legacy credential, while a live public-dataset download succeeded. Therefore
+shards 05-09 are intentionally public. The merge notebook runs with only the
+final owner's Secrets:
+
+- `TYPEPRO_FINAL_USERNAME=duyvu1105`;
+- `TYPEPRO_FINAL_KEY` from `kaggle.json`.
+
+That credential reads its own private shards 00-04 and the public `duymign`
+shards 05-09. After validating all ten manifests, it publishes the final
+private `duyvu1105/typepro-python-contrastive` Dataset.
+
+Dry-run and validate all ten rendered versions without contacting Kaggle:
+
+```bash
+python kaggle_notebooks/commit_shard_versions.py
+```
+
+After both accounts have the target-owner Secrets, push five versions to each
+account:
+
+```bash
+uv run --with kaggle==1.7.4.2 python kaggle_notebooks/commit_shard_versions.py --push
+```
+
+`kaggle kernels push` uploads and starts a run for every version. The official
+CLI treats an existing kernel ID as a new version, so the two fixed kernel slugs
+accumulate five shard-specific versions each.
 
 ## Run order
 
-1. Upload and run the ten shard notebooks with Internet enabled and CPU/None accelerator.
-2. Each shard publishes `KAGGLE_USERNAME/typepro-build-shard-XX` privately.
-3. Run `11_merge_finalize.ipynb` after all ten datasets exist.
-4. Attach the resulting `typepro-python-contrastive` dataset to `12_train_and_infer.ipynb` and run with a GPU.
+1. Configure the target-owner Secrets in both Kaggle runner accounts.
+2. Dry-run `commit_shard_versions.py` and inspect its ten-version manifest.
+3. Run it with `--push` to commit/start five versions per account.
+4. Confirm shards 00-04 are ready under `duyvu1105` and shards 05-09 are ready under `duymign`.
+5. Run `03_merge_finalize.ipynb` under `duyvu1105`.
+6. Attach the resulting `typepro-python-contrastive` Dataset to `04_train_and_infer.ipynb` and run with a GPU.
 
-Dataset ownership is never hardcoded in the generated notebooks. A different
-Kaggle account only needs to define its own `KAGGLE_USERNAME` and `KAGGLE_KEY`
-Secrets; all shard and final Dataset IDs are built from that username. The
-publisher rejects empty/mismatched owner and slug values before upload, writes
-and reads back `dataset-metadata.json`, uses the Kaggle CLI create/version
-flow, and waits for Kaggle processing to report success. Shard archives contain
-only merge inputs, so build-time `third_party_kb` case collisions are excluded.
+The publisher rejects empty/mismatched owners and slugs, writes and reads back
+`dataset-metadata.json`, chooses create/version using the authenticated owner's
+exact Dataset list, and waits for Kaggle processing to succeed. Shard archives
+contain only merge inputs, so build-time `third_party_kb` case collisions are
+excluded.
 
 If shard 02 disappears after a successful build, open notebook version 8 in
 Viewer and create a temporary private Dataset from that version's Output (or
@@ -120,5 +183,8 @@ ten-shard workflow.
 ## Regenerate
 
 ```bash
-python kaggle_notebooks/generate_notebooks.py --shards 10
+python kaggle_notebooks/generate_notebooks.py \
+  --shards 10 \
+  --runner-accounts duyvu1105 duymign \
+  --dataset-owner duyvu1105
 ```

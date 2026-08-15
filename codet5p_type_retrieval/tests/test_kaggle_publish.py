@@ -68,12 +68,13 @@ def test_dataset_id_rejects_null_or_mismatched_owner(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    ("existing_state", "expected_operation"),
-    [("missing", "create"), ("failed", "version")],
+    ("dataset_exists", "existing_state", "expected_operation"),
+    [(False, None, "create"), (True, "failed", "version")],
 )
 def test_publish_selects_create_or_repair_version(
     tmp_path,
     monkeypatch,
+    dataset_exists,
     existing_state,
     expected_operation,
 ):
@@ -89,8 +90,17 @@ def test_publish_selects_create_or_repair_version(
     monkeypatch.setattr(kaggle_dataset_utils.shutil, "which", lambda _: "kaggle")
     monkeypatch.setattr(
         kaggle_dataset_utils,
+        "_owned_dataset_exists",
+        lambda _: dataset_exists,
+    )
+    monkeypatch.setattr(
+        kaggle_dataset_utils,
         "_status",
-        lambda _: (existing_state, existing_state),
+        lambda _: (
+            pytest.fail("must not query status before creating a new Dataset")
+            if existing_state is None
+            else (existing_state, existing_state)
+        ),
     )
     monkeypatch.setattr(
         kaggle_dataset_utils,
@@ -118,7 +128,12 @@ def test_publish_rejects_cli_semantic_error_with_zero_exit(tmp_path, monkeypatch
         stdout = "Dataset creation error: Dataset url's dataset slugs and hashlink are all null"
 
     monkeypatch.setattr(kaggle_dataset_utils.shutil, "which", lambda _: "kaggle")
-    monkeypatch.setattr(kaggle_dataset_utils, "_status", lambda _: ("missing", "missing"))
+    monkeypatch.setattr(kaggle_dataset_utils, "_owned_dataset_exists", lambda _: False)
+    monkeypatch.setattr(
+        kaggle_dataset_utils,
+        "_status",
+        lambda _: pytest.fail("must not query status before creating a new Dataset"),
+    )
     monkeypatch.setattr(kaggle_dataset_utils, "_run", lambda command: Result())
     monkeypatch.setattr(
         kaggle_dataset_utils,
@@ -159,6 +174,49 @@ def test_status_falls_back_to_files_when_legacy_endpoint_is_forbidden(monkeypatc
     assert state == "ready"
     assert "owner_test.json" in detail
     assert commands[1][:3] == ["kaggle", "datasets", "files"]
+
+
+@pytest.mark.parametrize(
+    ("output", "expected"),
+    [
+        (
+            "ref,title,size,lastUpdated\n"
+            "another-account/typepro-build-shard-06,Shard 06,1000,2026-08-15\n",
+            True,
+        ),
+        (
+            "ref,title,size,lastUpdated\n"
+            "another-account/typepro-build-shard-060,Other,1000,2026-08-15\n",
+            False,
+        ),
+        ("No datasets found", False),
+    ],
+)
+def test_owned_dataset_exists_requires_exact_ref(monkeypatch, output, expected):
+    commands = []
+
+    class Result:
+        returncode = 0
+        stdout = output
+
+    monkeypatch.setattr(
+        kaggle_dataset_utils,
+        "_run",
+        lambda command: commands.append(command) or Result(),
+    )
+
+    assert kaggle_dataset_utils._owned_dataset_exists(
+        "another-account/typepro-build-shard-06"
+    ) is expected
+    assert commands == [[
+        "kaggle",
+        "datasets",
+        "list",
+        "--mine",
+        "--search",
+        "typepro-build-shard-06",
+        "--csv",
+    ]]
 
 
 def test_package_contains_only_merge_inputs(tmp_path):

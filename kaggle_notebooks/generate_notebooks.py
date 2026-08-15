@@ -7,9 +7,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 from textwrap import dedent
 from uuid import uuid4
+
+
+OWNER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{1,49}$")
 
 
 if "__file__" in globals():
@@ -362,20 +366,56 @@ def owner_test_notebook() -> dict:
     ])
 
 
-def shard_notebook(index: int, count: int, repository: str, branch: str) -> dict:
+def shard_notebook(
+    index: int,
+    count: int,
+    repository: str,
+    branch: str,
+    *,
+    assigned_shards: list[int] | None = None,
+    expected_dataset_owner: str | None = None,
+    public_dataset: bool = False,
+) -> dict:
+    assigned_shards = list(assigned_shards or [index])
+    if not assigned_shards or len(set(assigned_shards)) != len(assigned_shards):
+        raise ValueError(f"assigned_shards must be non-empty and unique: {assigned_shards}")
+    if any(shard < 0 or shard >= count for shard in assigned_shards):
+        raise ValueError(f"assigned_shards must be within 0..{count - 1}: {assigned_shards}")
+    if index not in assigned_shards:
+        raise ValueError(f"initial shard {index} is not assigned to this notebook")
+    expected_dataset_owner = (expected_dataset_owner or "").strip()
+    if not OWNER_RE.fullmatch(expected_dataset_owner):
+        raise ValueError(
+            f"expected_dataset_owner must be a valid Kaggle username: "
+            f"{expected_dataset_owner!r}"
+        )
+    if not isinstance(public_dataset, bool):
+        raise TypeError("public_dataset must be boolean")
     title = f"TypePro Python dataset shard {index:02d}/{count - 1:02d}"
-    return notebook([
+    result = notebook([
         markdown(f"""
         # {title}
 
-        Settings required: **Internet ON**, accelerator **None/CPU**. Add account
-        secrets `KAGGLE_USERNAME` and `KAGGLE_KEY`. This notebook processes shard
-        `{index}` of `{count}` and publishes a private dataset named
-        `typepro-build-shard-{index:02d}`.
+        Settings required: **Internet ON**, accelerator **None/CPU**. This
+        notebook template is assigned shards `{assigned_shards}`. Each Kaggle
+        version processes exactly one hard-coded `SHARD_INDEX` and publishes
+        `typepro-build-shard-XX` as a
+        `{("public" if public_dataset else "private")}` Dataset under
+        `{expected_dataset_owner or 'the authenticated publish owner'}`.
+
+        Add target-owner Secrets `TYPEPRO_PUBLISH_USERNAME` and
+        `TYPEPRO_PUBLISH_KEY`. Legacy Secret names `KAGGLE_USERNAME` and
+        `KAGGLE_KEY` remain supported as a fallback. The notebook refuses to run
+        when the effective publish owner is not the expected owner.
         """),
         code(f"""
+        # This tagged cell is rewritten once per Kaggle version by
+        # commit_shard_versions.py. A committed version must run one shard only.
+        ASSIGNED_SHARDS = {assigned_shards!r}
         SHARD_INDEX = {index}
         SHARD_COUNT = {count}
+        EXPECTED_DATASET_OWNER = {expected_dataset_owner!r}
+        PUBLISH_PUBLIC = {public_dataset!r}
         REPOSITORY = {repository!r}
         BRANCH = {branch!r}
         SEED = 13
@@ -388,31 +428,81 @@ def shard_notebook(index: int, count: int, repository: str, branch: str) -> dict
         REPO_DIR = Path("/kaggle/working/TypePro")
         WORK_DIR = Path(f"/kaggle/working/typepro_build_shard_{{SHARD_INDEX:02d}}")
         PUBLISH_DIR = Path(f"/kaggle/working/publish_shard_{{SHARD_INDEX:02d}}")
+        if SHARD_INDEX not in ASSIGNED_SHARDS:
+            raise RuntimeError(
+                f"Shard {{SHARD_INDEX}} is not assigned to this notebook: {{ASSIGNED_SHARDS}}"
+            )
         print({{
+            "assigned_shards": ASSIGNED_SHARDS,
             "shard_index": SHARD_INDEX,
             "shard_count": SHARD_COUNT,
+            "expected_dataset_owner": EXPECTED_DATASET_OWNER or None,
+            "publish_public": PUBLISH_PUBLIC,
             "work_dir": str(WORK_DIR),
         }})
         """),
         markdown("""
         ## Authenticate safely
 
-        Values are read from Kaggle Secrets and are never printed.
+        Values are read from Kaggle Secrets and are never printed. A separate
+        config directory prevents the notebook-hosting account's automatic
+        credential from overriding the target Dataset owner's credential.
         """),
         code("""
+        import json
         import os
+        import re
         from kaggle_secrets import UserSecretsClient
 
         secrets = UserSecretsClient()
-        kaggle_username = secrets.get_secret("KAGGLE_USERNAME").strip()
-        kaggle_key = secrets.get_secret("KAGGLE_KEY").strip()
-        if not kaggle_username or not kaggle_key:
-            raise RuntimeError("KAGGLE_USERNAME and KAGGLE_KEY must not be empty")
-        os.environ["KAGGLE_USERNAME"] = kaggle_username
-        os.environ["KAGGLE_KEY"] = kaggle_key
+
+        def optional_secret(name):
+            try:
+                value = secrets.get_secret(name)
+            except Exception:
+                return None
+            value = value.strip() if value else ""
+            return value or None
+
+        target_username = optional_secret("TYPEPRO_PUBLISH_USERNAME")
+        target_key = optional_secret("TYPEPRO_PUBLISH_KEY")
+        legacy_username = optional_secret("KAGGLE_USERNAME")
+        legacy_key = optional_secret("KAGGLE_KEY")
+        if bool(target_username) != bool(target_key):
+            raise RuntimeError(
+                "TYPEPRO_PUBLISH_USERNAME and TYPEPRO_PUBLISH_KEY must both be present"
+            )
+        if bool(legacy_username) != bool(legacy_key):
+            raise RuntimeError("KAGGLE_USERNAME and KAGGLE_KEY must both be present")
+        publish_username = target_username or legacy_username
+        publish_key = target_key or legacy_key
+        if not publish_username or not publish_key:
+            raise RuntimeError(
+                "Add TYPEPRO_PUBLISH_USERNAME and TYPEPRO_PUBLISH_KEY to Kaggle Secrets"
+            )
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{1,49}", publish_username):
+            raise ValueError(f"Invalid publish username: {publish_username!r}")
+        if (
+            EXPECTED_DATASET_OWNER
+            and publish_username.casefold() != EXPECTED_DATASET_OWNER.casefold()
+        ):
+            raise RuntimeError(
+                f"Publish credential belongs to {publish_username!r}; all TypePro "
+                f"Datasets must belong to {EXPECTED_DATASET_OWNER!r}"
+            )
+
+        auth_config_dir = Path("/kaggle/working/typepro_publish_auth")
+        auth_config_dir.mkdir(parents=True, exist_ok=True)
+        os.environ["KAGGLE_CONFIG_DIR"] = str(auth_config_dir)
+        os.environ["KAGGLE_USERNAME"] = publish_username
+        os.environ["KAGGLE_KEY"] = publish_key
         os.environ.pop("KAGGLE_API_TOKEN", None)
         os.environ["PYTHONUNBUFFERED"] = "1"
-        print("Datasets will be owned by:", kaggle_username)
+        print({
+            "publish_owner": publish_username,
+            "expected_owner": EXPECTED_DATASET_OWNER or publish_username,
+            "credentials_printed": False,
+        })
         """),
         markdown("## Clone TypePro and install builder dependencies"),
         code("""
@@ -434,6 +524,45 @@ def shard_notebook(index: int, count: int, repository: str, branch: str) -> dict
         # Force legacy-key-only authentication. Newer Kaggle CLI releases may
         # prefer the notebook host account's automatic access token.
         run([sys.executable, "-m", "pip", "install", "-q", "--force-reinstall", "kaggle==1.7.4.2"])
+
+        identity_code = "\\n".join([
+            "import json",
+            "import kaggle",
+            "values = getattr(kaggle.api, 'config_values', {})",
+            "print('TYPEPRO_KAGGLE_IDENTITY=' + json.dumps({",
+            "    'username': values.get('username'),",
+            "    'auth_method': values.get('auth_method') or 'LEGACY_API_KEY',",
+            "}))",
+        ])
+        identity_result = subprocess.run(
+            [sys.executable, "-c", identity_code],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+        identity_prefix = "TYPEPRO_KAGGLE_IDENTITY="
+        identity_line = next(
+            (
+                line for line in (identity_result.stdout or "").splitlines()
+                if line.startswith(identity_prefix)
+            ),
+            None,
+        )
+        if identity_result.returncode or identity_line is None:
+            raise RuntimeError(
+                f"Kaggle publish authentication failed: {identity_result.stdout}"
+            )
+        identity = json.loads(identity_line[len(identity_prefix):])
+        authenticated_username = (identity.get("username") or "").strip()
+        if authenticated_username.casefold() != publish_username.casefold():
+            raise RuntimeError(
+                f"Kaggle authenticated as {authenticated_username!r}, expected "
+                f"publish owner {publish_username!r}"
+            )
+        print({
+            "authenticated_publish_owner": authenticated_username,
+            "authentication_method": identity.get("auth_method"),
+        })
         """),
         markdown("""
         ## Optional automatic resume
@@ -446,7 +575,7 @@ def shard_notebook(index: int, count: int, repository: str, branch: str) -> dict
         import json
         import zipfile
 
-        dataset_id = f"{os.environ['KAGGLE_USERNAME']}/typepro-build-shard-{SHARD_INDEX:02d}"
+        dataset_id = f"{publish_username}/typepro-build-shard-{SHARD_INDEX:02d}"
         resume_dir = Path(f"/kaggle/working/resume_shard_{SHARD_INDEX:02d}")
         resume_dir.mkdir(parents=True, exist_ok=True)
         probe = subprocess.run(
@@ -554,9 +683,13 @@ def shard_notebook(index: int, count: int, repository: str, branch: str) -> dict
         if missing:
             raise RuntimeError(f"Shard is incomplete: {len(missing)} projects missing")
         """),
-        markdown("## Package and publish this shard as a private Kaggle Dataset"),
+        markdown(
+            "## Package and publish this shard as a "
+            + ("public" if public_dataset else "private")
+            + " Kaggle Dataset"
+        ),
         code("""
-        run([
+        publish_command = [
             sys.executable, "-u", PIPELINE_DIR / "publish_shard.py",
             "--work-dir", WORK_DIR,
             "--payload-dir", PUBLISH_DIR,
@@ -565,24 +698,73 @@ def shard_notebook(index: int, count: int, repository: str, branch: str) -> dict
             "--message", f"Completed TypePro shard {SHARD_INDEX:02d} of {SHARD_COUNT}",
             "--expected-shard-index", SHARD_INDEX,
             "--expected-shard-count", SHARD_COUNT,
-        ])
+        ]
+        if PUBLISH_PUBLIC:
+            publish_command.append("--public")
+        run(publish_command)
         """),
     ])
+    result["cells"][1]["metadata"] = {"tags": ["typepro-shard-config"]}
+    result["metadata"]["typepro"] = {
+        "assigned_shards": assigned_shards,
+        "initial_shard_index": index,
+        "expected_dataset_owner": expected_dataset_owner or None,
+        "public_dataset": public_dataset,
+    }
+    return result
 
 
-def merge_notebook(count: int, repository: str, branch: str) -> dict:
+def merge_notebook(
+    count: int,
+    repository: str,
+    branch: str,
+    *,
+    expected_dataset_owner: str,
+    shard_accounts: list[dict],
+) -> dict:
+    if len(shard_accounts) != 2:
+        raise ValueError("Merge notebook requires exactly two shard accounts")
+    shard_source_config = []
+    for position, item in enumerate(shard_accounts):
+        owner = item["dataset_owner"]
+        shards = list(item["assigned_shards"])
+        if len(shards) != 5:
+            raise ValueError(f"Merge source {owner!r} must contain five shards")
+        shard_source_config.append({
+            "label": f"runner_{chr(ord('a') + position)}",
+            "secret_prefix": f"TYPEPRO_RUNNER_{chr(ord('A') + position)}",
+            "owner": owner,
+            "shards": shards,
+            "public_dataset": bool(item["public_dataset"]),
+        })
+    if sorted(index for source in shard_source_config for index in source["shards"]) != list(range(count)):
+        raise ValueError("Merge shard sources must cover every shard exactly once")
+    if expected_dataset_owner.casefold() not in {
+        source["owner"].casefold() for source in shard_source_config
+    }:
+        raise ValueError("Final Dataset owner must be one of the shard owners")
+    for source in shard_source_config:
+        should_be_public = source["owner"].casefold() != expected_dataset_owner.casefold()
+        if source["public_dataset"] != should_be_public:
+            raise ValueError(
+                "Only the non-final account's shard Datasets must be public for merge"
+            )
     return notebook([
         markdown(f"""
         # Merge {count} TypePro shards and publish the final dataset
 
-        Settings: **Internet ON**, accelerator **None/CPU**. Add secrets
-        `KAGGLE_USERNAME` and `KAGGLE_KEY`. Run only after all `{count}` private
-        shard datasets have been published successfully.
+        Settings: **Internet ON**, accelerator **None/CPU**. Add
+        `TYPEPRO_FINAL_USERNAME/KEY` for `{expected_dataset_owner}`. Shards owned
+        by the final account remain private; shards owned by the second account
+        are public so this credential can download both groups. Run only after
+        all `{count}` shard Datasets have completed successfully.
         """),
         code(f"""
         SHARD_COUNT = {count}
         REPOSITORY = {repository!r}
         BRANCH = {branch!r}
+        EXPECTED_DATASET_OWNER = {expected_dataset_owner!r}
+        SHARD_SOURCE_CONFIG = {shard_source_config!r}
         FINAL_DATASET_SLUG = "typepro-python-contrastive"
         SEED = 13
 
@@ -596,15 +778,51 @@ def merge_notebook(count: int, repository: str, branch: str) -> dict:
         from kaggle_secrets import UserSecretsClient
 
         secrets = UserSecretsClient()
-        kaggle_username = secrets.get_secret("KAGGLE_USERNAME").strip()
-        kaggle_key = secrets.get_secret("KAGGLE_KEY").strip()
-        if not kaggle_username or not kaggle_key:
-            raise RuntimeError("KAGGLE_USERNAME and KAGGLE_KEY must not be empty")
-        os.environ["KAGGLE_USERNAME"] = kaggle_username
-        os.environ["KAGGLE_KEY"] = kaggle_key
-        os.environ.pop("KAGGLE_API_TOKEN", None)
+
+        def optional_secret(name):
+            try:
+                value = secrets.get_secret(name)
+            except Exception:
+                return None
+            value = value.strip() if value else ""
+            return value or None
+
+        final_username = optional_secret("TYPEPRO_FINAL_USERNAME")
+        final_key = optional_secret("TYPEPRO_FINAL_KEY")
+        if not final_username or not final_key:
+            raise RuntimeError("Missing TYPEPRO_FINAL_USERNAME/KEY Secrets")
+        if final_username.casefold() != EXPECTED_DATASET_OWNER.casefold():
+            raise RuntimeError(
+                f"Final credential belongs to {{final_username!r}}, expected "
+                f"{{EXPECTED_DATASET_OWNER!r}}"
+            )
+        SHARD_SOURCES = SHARD_SOURCE_CONFIG
+        FINAL_SOURCE = {{
+            "label": "final_owner",
+            "owner": EXPECTED_DATASET_OWNER,
+            "username": final_username,
+            "key": final_key,
+        }}
+        AUTH_ROOT = Path("/kaggle/working/typepro_merge_auth")
+        AUTH_ROOT.mkdir(parents=True, exist_ok=True)
+
+        def use_credential(source):
+            auth_config_dir = AUTH_ROOT / source["label"]
+            auth_config_dir.mkdir(parents=True, exist_ok=True)
+            os.environ["KAGGLE_CONFIG_DIR"] = str(auth_config_dir)
+            os.environ["KAGGLE_USERNAME"] = source["username"]
+            os.environ["KAGGLE_KEY"] = source["key"]
+            os.environ.pop("KAGGLE_API_TOKEN", None)
+
         os.environ["PYTHONUNBUFFERED"] = "1"
-        print("Datasets will be read from and published to:", kaggle_username)
+        print({{
+            "shard_sources": [
+                {{"owner": source["owner"], "shards": source["shards"]}}
+                for source in SHARD_SOURCES
+            ],
+            "final_dataset_owner": EXPECTED_DATASET_OWNER,
+            "credentials_printed": False,
+        }})
 
         REPO_DIR = Path("/kaggle/working/TypePro")
         DOWNLOAD_DIR = Path("/kaggle/working/downloaded_shards")
@@ -624,44 +842,46 @@ def merge_notebook(count: int, repository: str, branch: str) -> dict:
         # Force legacy-key-only authentication for cross-account publishing.
         run([sys.executable, "-m", "pip", "install", "-q", "--force-reinstall", "kaggle==1.7.4.2"])
         """),
-        markdown("## Download and extract every private shard dataset"),
+        markdown("## Download and extract every shard dataset"),
         code("""
         DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
         shard_builds = []
-        for index in range(SHARD_COUNT):
-            dataset_id = f"{os.environ['KAGGLE_USERNAME']}/typepro-build-shard-{index:02d}"
-            target = DOWNLOAD_DIR / f"shard_{index:02d}"
-            target.mkdir(parents=True, exist_ok=True)
-            run(["kaggle", "datasets", "download", "-d", dataset_id, "-p", target, "--unzip"])
-            marker_paths = list(target.rglob("shard_manifest.json"))
-            if not marker_paths:
-                # Older shard datasets may preserve the pre-packed ZIP, while
-                # Kaggle expands newer uploads into a directory tree.
-                archives = list(target.rglob("typepro_build_shard_*.zip"))
-                if len(archives) != 1:
-                    raise RuntimeError(
-                        f"{dataset_id}: expected one build directory or archive, "
-                        f"found markers={marker_paths}, archives={archives}"
-                    )
-                with zipfile.ZipFile(archives[0]) as bundle:
-                    bundle.extractall(target)
+        use_credential(FINAL_SOURCE)
+        for source in SHARD_SOURCES:
+            for index in source["shards"]:
+                dataset_id = f"{source['owner']}/typepro-build-shard-{index:02d}"
+                target = DOWNLOAD_DIR / f"shard_{index:02d}"
+                target.mkdir(parents=True, exist_ok=True)
+                run(["kaggle", "datasets", "download", "-d", dataset_id, "-p", target, "--unzip"])
                 marker_paths = list(target.rglob("shard_manifest.json"))
-            if len(marker_paths) != 1:
-                raise RuntimeError(f"{dataset_id}: cannot uniquely locate shard build: {marker_paths}")
-            build = marker_paths[0].parent
-            marker = json.loads(marker_paths[0].read_text(encoding="utf-8"))
-            if marker["shard_index"] != index or marker["shard_count"] != SHARD_COUNT or marker["missing_projects"]:
-                raise RuntimeError(f"Invalid/incomplete shard marker: {marker}")
-            required = [
-                build / "metadata" / "split_manifest.json",
-                build / "raw_slices",
-                build / "project_status",
-            ]
-            missing = [str(path) for path in required if not path.exists()]
-            if missing:
-                raise RuntimeError(f"{dataset_id}: missing merge inputs: {missing}")
-            shard_builds.append(build)
-            print(f"Validated shard {index:02d}: {marker['attempted_projects']} projects")
+                if not marker_paths:
+                    # Older shard datasets may preserve the pre-packed ZIP, while
+                    # Kaggle expands newer uploads into a directory tree.
+                    archives = list(target.rglob("typepro_build_shard_*.zip"))
+                    if len(archives) != 1:
+                        raise RuntimeError(
+                            f"{dataset_id}: expected one build directory or archive, "
+                            f"found markers={marker_paths}, archives={archives}"
+                        )
+                    with zipfile.ZipFile(archives[0]) as bundle:
+                        bundle.extractall(target)
+                    marker_paths = list(target.rglob("shard_manifest.json"))
+                if len(marker_paths) != 1:
+                    raise RuntimeError(f"{dataset_id}: cannot uniquely locate shard build: {marker_paths}")
+                build = marker_paths[0].parent
+                marker = json.loads(marker_paths[0].read_text(encoding="utf-8"))
+                if marker["shard_index"] != index or marker["shard_count"] != SHARD_COUNT or marker["missing_projects"]:
+                    raise RuntimeError(f"Invalid/incomplete shard marker: {marker}")
+                required = [
+                    build / "metadata" / "split_manifest.json",
+                    build / "raw_slices",
+                    build / "project_status",
+                ]
+                missing = [str(path) for path in required if not path.exists()]
+                if missing:
+                    raise RuntimeError(f"{dataset_id}: missing merge inputs: {missing}")
+                shard_builds.append(build)
+                print(f"Validated shard {index:02d} from {source['owner']}: {marker['attempted_projects']} projects")
         print("All shard build directories:", [str(path) for path in shard_builds])
         """),
         markdown("## Merge shard outputs"),
@@ -715,7 +935,7 @@ def merge_notebook(count: int, repository: str, branch: str) -> dict:
             "preprocess_stats": stats,
             "recommendation_coverage": recommendation_coverage,
         }, indent=2, ensure_ascii=False))
-        print("\n===== GROUND TRUTH IN RECOMMENDATION TYPES =====")
+        print("\\n===== GROUND TRUTH IN RECOMMENDATION TYPES =====")
         for split, values in recommendation_coverage.items():
             print(
                 f"{split}: {values['ground_truth_in_recommendation_types']:,}/"
@@ -729,7 +949,8 @@ def merge_notebook(count: int, repository: str, branch: str) -> dict:
         """),
         markdown("## Publish final private Kaggle Dataset"),
         code("""
-        final_id = f"{os.environ['KAGGLE_USERNAME']}/{FINAL_DATASET_SLUG}"
+        use_credential(FINAL_SOURCE)
+        final_id = f"{FINAL_SOURCE['owner']}/{FINAL_DATASET_SLUG}"
         run([
             sys.executable, PIPELINE_DIR / "publish_kaggle.py",
             "--data-dir", FINAL_DIR,
@@ -845,6 +1066,17 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--shards", type=int, default=10)
     parser.add_argument("--repository", default="https://github.com/duyvu1105/TypePro.git")
     parser.add_argument("--branch", default="main")
+    parser.add_argument(
+        "--runner-accounts",
+        nargs="+",
+        default=["duyvu1105", "duymign"],
+        help="Kaggle accounts that host one versioned shard notebook each",
+    )
+    parser.add_argument(
+        "--dataset-owner",
+        default="duyvu1105",
+        help="Owner of the final Dataset and the private shard group",
+    )
     args, unknown = parser.parse_known_args(argv)
     # Jupyter kernels launch Python with ``-f <connection-file>``. Those
     # arguments are unrelated to this generator when its source is pasted into
@@ -859,6 +1091,14 @@ def main(argv: list[str] | None = None) -> None:
         parser.error(f"unrecognized arguments: {' '.join(remaining)}")
     if args.shards <= 0:
         raise ValueError("shards must be positive")
+    if len(args.runner_accounts) != 2:
+        raise ValueError("This workflow requires exactly two runner accounts")
+    if args.shards != 10:
+        raise ValueError("The two-account workflow requires exactly 10 shards")
+    if len(set(account.casefold() for account in args.runner_accounts)) != 2:
+        raise ValueError("Runner account names must be distinct")
+    if not OWNER_RE.fullmatch(args.dataset_owner):
+        raise ValueError(f"Invalid Dataset owner: {args.dataset_owner!r}")
 
     ROOT.mkdir(parents=True, exist_ok=True)
     owner_test_path = ROOT / "00_test_dataset_owner.ipynb"
@@ -866,29 +1106,87 @@ def main(argv: list[str] | None = None) -> None:
         json.dumps(owner_test_notebook(), ensure_ascii=False, indent=1),
         encoding="utf-8",
     )
-    for pattern in ("[0-9][0-9]_typepro_shard_*.ipynb", "[0-9][0-9]_merge_finalize.ipynb", "[0-9][0-9]_train_and_infer.ipynb"):
+    for pattern in (
+        "[0-9][0-9]_typepro_shard_*.ipynb",
+        "[0-9][0-9]_typepro_account_*_shards_*.ipynb",
+        "[0-9][0-9]_merge_finalize.ipynb",
+        "[0-9][0-9]_train_and_infer.ipynb",
+    ):
         for stale in ROOT.glob(pattern):
             stale.unlink()
     generated = [owner_test_path.name]
-    for index in range(args.shards):
-        path = ROOT / f"{index + 1:02d}_typepro_shard_{index:02d}.ipynb"
+    shard_groups = [list(range(0, 5)), list(range(5, 10))]
+    account_notebooks = []
+    for position, (account, shard_group) in enumerate(
+        zip(args.runner_accounts, shard_groups, strict=True),
+        start=1,
+    ):
+        safe_account = account.casefold().replace("_", "-")
+        path = ROOT / (
+            f"{position:02d}_typepro_account_{safe_account}_shards_"
+            f"{shard_group[0]:02d}_{shard_group[-1]:02d}.ipynb"
+        )
         path.write_text(
-            json.dumps(shard_notebook(index, args.shards, args.repository, args.branch), ensure_ascii=False, indent=1),
+            json.dumps(
+                shard_notebook(
+                    shard_group[0],
+                    args.shards,
+                    args.repository,
+                    args.branch,
+                    assigned_shards=shard_group,
+                    expected_dataset_owner=account,
+                    public_dataset=account.casefold() != args.dataset_owner.casefold(),
+                ),
+                ensure_ascii=False,
+                indent=1,
+            ),
             encoding="utf-8",
         )
         generated.append(path.name)
-    merge_path = ROOT / f"{args.shards + 1:02d}_merge_finalize.ipynb"
+        account_notebooks.append({
+            "runner_account": account,
+            "dataset_owner": account,
+            "public_dataset": account.casefold() != args.dataset_owner.casefold(),
+            "notebook": path.name,
+            "assigned_shards": shard_group,
+            "kernel_slug": f"typepro-shards-{shard_group[0]:02d}-{shard_group[-1]:02d}",
+        })
+    merge_path = ROOT / "03_merge_finalize.ipynb"
     merge_path.write_text(
-        json.dumps(merge_notebook(args.shards, args.repository, args.branch), ensure_ascii=False, indent=1),
+        json.dumps(
+            merge_notebook(
+                args.shards,
+                args.repository,
+                args.branch,
+                expected_dataset_owner=args.dataset_owner,
+                shard_accounts=account_notebooks,
+            ),
+            ensure_ascii=False,
+            indent=1,
+        ),
         encoding="utf-8",
     )
     generated.append(merge_path.name)
-    train_path = ROOT / f"{args.shards + 2:02d}_train_and_infer.ipynb"
+    train_path = ROOT / "04_train_and_infer.ipynb"
     train_path.write_text(
         json.dumps(train_notebook(args.repository, args.branch), ensure_ascii=False, indent=1),
         encoding="utf-8",
     )
     generated.append(train_path.name)
+    plan_path = ROOT / "shard_account_plan.json"
+    plan_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "typepro-shard-account-plan-v2",
+                "final_dataset_owner": args.dataset_owner,
+                "shard_count": args.shards,
+                "accounts": account_notebooks,
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    generated.append(plan_path.name)
     print(json.dumps({"generated": generated}, indent=2))
 
 
