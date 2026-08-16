@@ -9,7 +9,11 @@ parameter-only dataset:
 - `03_merge_finalize.ipynb`: verify, merge, finalize, and publish the processed dataset.
 - `04_train_and_infer.ipynb`: fine-tune CodeT5+ and evaluate the processed test split.
 - `shard_account_plan.json`: exact account, notebook, kernel-slug, and shard mapping.
+- `shard_merge_plan.json`: exact physical Dataset IDs used by the current merge,
+  including replacement partitions and their owners.
 - `commit_shard_versions.py`: render and optionally push five immutable shard versions per account.
+- `commit_repartitioned_parts.py`: render/push the six short replacements for
+  the cancelled shard 01 A/2 and shard 04 B/2 jobs.
 - `generate_notebooks.py`: regenerate the complete workflow.
 
 Each build shard keeps only non-built-in function parameters. It builds a cached
@@ -73,6 +77,37 @@ versions are therefore independent Kaggle CPU jobs:
 | --- | --- | --- | --- | --- |
 | `duyvu1105` | `duyvu1105/typepro-shards-00-04` | `00,01,02,03,04` | `duyvu1105` | private |
 | `duymign` | `duymign/typepro-shards-05-09` | `05,06,07,08,09` | `duymign` | public |
+
+## Current split recovery for shards 01 and 04
+
+The original shard 01 and 04 retries were split into two physical residues
+with `SHARD_COUNT=20`. Shard 01 part B (`11/20`) and shard 04 part A (`04/20`)
+completed. The other two jobs were too long, so each cancelled half is now
+split into three `SHARD_COUNT=60` residues:
+
+| Logical input | Runner / Dataset owner | Replacement residues | Visibility |
+| --- | --- | --- | --- |
+| shard 01 part A/2 (`01/20`) | `duyvu1105` | `01/60`, `21/60`, `41/60` | private |
+| shard 04 part B/2 (`14/20`) | `duymign` | `14/60`, `34/60`, `54/60` | public |
+
+This is exactly three independent notebooks per account. Dry-run and push only
+these six replacements with:
+
+```bash
+python kaggle_notebooks/commit_repartitioned_parts.py
+python kaggle_notebooks/commit_repartitioned_parts.py --push
+```
+
+The exact merge inputs are recorded in `shard_merge_plan.json`; do not infer
+their owners from the logical shard number. The current merge consists of 16
+physical Datasets covering ten logical shards:
+
+- private under `duyvu1105`: `00`, `01`, `21`, `41`, `11`, `02`, `03`, `04`;
+- public under `duymign`: `14`, `34`, `54`, `05`, `06`, `07`, `08`, `09`.
+
+Here each number denotes `owner/typepro-build-shard-NN`. The generator validates
+the residue coverage at modulus 60 and embeds these exact Dataset IDs and
+expected `shard_index/shard_count` values in `03_merge_finalize.ipynb`.
 
 Each version authenticates with its runner's own Secret, isolates that
 credential from Kaggle's automatic host authentication, and refuses to publish

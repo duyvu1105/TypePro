@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from slicing_code_class import Slicer
+from function_methods import Function_methods
 
 
 FUNCTION_NODES = (ast.FunctionDef, ast.AsyncFunctionDef)
@@ -180,14 +181,18 @@ def replace_statement(code_slice: str, original: str, masked: str, target_name: 
     return code_slice.replace(plain, f"\n{target_name}: <mask> = ", 1)
 
 
-def export_one(row: dict[str, Any], file_path: Path) -> dict[str, Any] | None:
+def export_one(
+    row: dict[str, Any],
+    file_path: Path,
+    function_methods: Function_methods | None = None,
+) -> dict[str, Any] | None:
     source = file_path.read_text(encoding="utf-8")
     root = ast.parse(source, filename=str(file_path))
     add_parent_links(root)
     target_name = str(row.get("name") or "")
     scope = str(row.get("scope") or "")
     local_function = str(row.get("loc") or "global").split("@")[0]
-    slicer = Slicer(str(file_path))
+    slicer = Slicer(str(file_path), function_methods=function_methods)
     code_slice = ""
 
     if scope == "arg":
@@ -249,6 +254,7 @@ def main() -> None:
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     current_project: tuple[str, ...] | None = None
+    function_methods: Function_methods | None = None
     written = failed = 0
 
     with output.open("w", encoding="utf-8") as handle:
@@ -257,9 +263,18 @@ def main() -> None:
                 project = repository_parts(row)
                 if args.rebuild_index and project != current_project:
                     project_root = repos_root.joinpath(*project)
+                    print(f"[export:index:start] project={'/'.join(project)}", flush=True)
                     subprocess.run([sys.executable, "run_read_data.py", str(project_root)], check=True)
+                    print(f"[export:index:done] project={'/'.join(project)}", flush=True)
                     current_project = project
-                result = export_one(row, resolve_file(row, repos_root))
+                    function_methods = Function_methods()
+                elif function_methods is None:
+                    function_methods = Function_methods()
+                result = export_one(
+                    row,
+                    resolve_file(row, repos_root),
+                    function_methods=function_methods,
+                )
                 if result is None:
                     failed += 1
                 else:

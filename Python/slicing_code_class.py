@@ -14,9 +14,9 @@ func_sig_list = []
 class Slicer:
 
     maybe_class = False
-    def __init__(self, file_name:str):
+    def __init__(self, file_name:str, function_methods: Function_methods | None = None):
         self.file_name = file_name
-        self.Funcion_methods = Function_methods()
+        self.Funcion_methods = function_methods or Function_methods()
         self.import_analyzer = importAnalyzer(file_name)
         self.other_prompts = []
         self.type_recommend = []

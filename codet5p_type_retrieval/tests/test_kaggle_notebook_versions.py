@@ -10,6 +10,7 @@ NOTEBOOK_DIR = ROOT / "kaggle_notebooks"
 sys.path.insert(0, str(NOTEBOOK_DIR))
 
 import commit_shard_versions
+import commit_repartitioned_parts
 import generate_notebooks
 import recover_shard_version
 
@@ -214,8 +215,72 @@ def test_merge_notebook_switches_private_dataset_credentials_by_owner():
     assert "Kaggle notebook host" in serialized
     assert 'os.environ[\\"KAGGLE_USERNAME\\"] = final_username' in serialized
     assert "use_credential(FINAL_SOURCE)" in serialized
-    assert "source['owner']" in serialized
+    assert 'item[\\"dataset_id\\"]' in serialized
     assert "FINAL_SOURCE['owner']" in serialized
+
+
+def test_cancelled_halves_are_split_into_three_jobs_per_account():
+    jobs = commit_repartitioned_parts.replacement_jobs()
+
+    assert [job.shard_index for job in jobs[:3]] == [1, 21, 41]
+    assert [job.shard_index for job in jobs[3:]] == [14, 34, 54]
+    assert {job.shard_count for job in jobs} == {60}
+    assert [job.runner_account for job in jobs].count("duyvu1105") == 3
+    assert [job.runner_account for job in jobs].count("duymign") == 3
+    assert all(not job.public_dataset for job in jobs[:3])
+    assert all(job.public_dataset for job in jobs[3:])
+
+
+def test_repartition_push_can_select_only_the_two_long_jobs():
+    jobs = commit_repartitioned_parts.select_jobs(
+        commit_repartitioned_parts.replacement_jobs(),
+        [
+            "typepro-shard-01-10-part-a3-3",
+            "typepro-shard-04-10-part-b3-3",
+        ],
+    )
+
+    assert [job.shard_index for job in jobs] == [41, 54]
+
+
+def test_repartitioned_notebook_records_logical_and_physical_coordinates():
+    notebook = generate_notebooks.repartitioned_shard_notebook(
+        4,
+        1,
+        2,
+        "https://github.com/duyvu1105/TypePro.git",
+        "main",
+        expected_dataset_owner="duymign",
+        public_dataset=True,
+    )
+    serialized = json.dumps(notebook)
+    metadata = notebook["metadata"]["typepro"]
+
+    assert metadata["physical_shard_index"] == 54
+    assert metadata["physical_shard_count"] == 60
+    assert metadata["logical_shard_index"] == 4
+    assert metadata["parent_part_index"] == 1
+    assert metadata["subpart_index"] == 2
+    assert metadata["output_dataset_slug"] == "typepro-build-shard-54"
+    assert "SHARD_INDEX = 54" in serialized
+    assert "SHARD_COUNT = 60" in serialized
+    assert "part B{SUBPART_INDEX + 1}/{SUBPART_COUNT}" in serialized
+
+
+def test_merge_plan_covers_all_logical_shards_without_overlap():
+    plan = json.loads(
+        (NOTEBOOK_DIR / "shard_merge_plan.json").read_text(encoding="utf-8")
+    )
+    datasets = generate_notebooks.validate_merge_datasets(
+        plan["datasets"], 10, "duyvu1105"
+    )
+
+    assert len(datasets) == 16
+    assert {item["dataset_id"] for item in datasets if item["shard_index"] in {14, 34, 54}} == {
+        "duymign/typepro-build-shard-14",
+        "duymign/typepro-build-shard-34",
+        "duymign/typepro-build-shard-54",
+    }
 
 
 def test_recovery_notebook_only_restores_and_publishes_completed_shard():

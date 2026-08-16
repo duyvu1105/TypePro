@@ -14,6 +14,7 @@ test_project_path = "./testCode"
 
 total_function_use_data = []
 global project_function_data
+project_function_names = set()
 
 def get_all_files(directory):
     file_paths = []
@@ -26,12 +27,7 @@ def get_all_files(directory):
     return file_paths
 
 def is_project_function(fileName:str) -> bool:
-    global project_function_data
-    for i in project_function_data:
-        if i.name == fileName:
-            return True
-
-    return False
+    return fileName in project_function_names
 
 
 def read_projects_from_json(filename: str) -> List[ProjectDefined]:
@@ -76,11 +72,9 @@ def list_function_calls(file_path: str) -> None:
                 else:
                     continue
 
-                src_code = ast.get_source_segment(src, node).strip()
-
-                lineno = node.lineno
-
                 if is_project_function(func_name):
+                    src_code = ast.get_source_segment(src, node).strip()
+                    lineno = node.lineno
                     temp_data = ProjectUseData(func_name, src_code, lineno, file_path)
                     total_function_use_data.append(temp_data)
 
@@ -88,6 +82,7 @@ def list_function_calls(file_path: str) -> None:
 if __name__ == "__main__":
 
     project_function_data = read_projects_from_json(project_data_path)
+    project_function_names = {item.name for item in project_function_data}
 
     import os
     from loguru import logger

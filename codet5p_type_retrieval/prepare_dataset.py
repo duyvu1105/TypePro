@@ -17,6 +17,7 @@ import stat
 import shutil
 import subprocess
 import sys
+import time
 import urllib.request
 import zipfile
 from collections import Counter, defaultdict
@@ -459,9 +460,16 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
             continue
         tqdm.write(f"[{position}/{len(projects)}] {project} ({len(rows_by_project[project])} annotations)")
         try:
+            phase_started = time.monotonic()
+            tqdm.write(f"[project:clone:start] {project}")
             commit = clone_project(project, repository_path)
+            tqdm.write(
+                f"[project:clone:done] {project} seconds={time.monotonic() - phase_started:.1f}"
+            )
             kb_summary = None
             if args.build_import_kb:
+                phase_started = time.monotonic()
+                tqdm.write(f"[project:kb:start] {project}")
                 kb_summary_path = status_dir / f"{slug}.kb-summary"
                 kb_command = [
                     sys.executable, str(kb_builder),
@@ -475,6 +483,9 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
                     kb_command.append("--no-download-missing")
                 run_logged(kb_command, python_dir, status_dir / f"{slug}.kb.log")
                 kb_summary = json.loads(kb_summary_path.read_text(encoding="utf-8"))
+                tqdm.write(
+                    f"[project:kb:done] {project} seconds={time.monotonic() - phase_started:.1f}"
+                )
             project_rows = []
             for row in rows_by_project[project]:
                 item = dict(row)
@@ -489,7 +500,12 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
                 "--parameters-only", "--exclude-builtins",
                 "--log-every", str(args.slice_log_every),
             ]
+            phase_started = time.monotonic()
+            tqdm.write(f"[project:export:start] {project}")
             exporter_tail = run_logged(command, python_dir, status_dir / f"{slug}.log")
+            tqdm.write(
+                f"[project:export:done] {project} seconds={time.monotonic() - phase_started:.1f}"
+            )
             os.replace(temporary_output, output_path)
             exported = sum(1 for line in output_path.open(encoding="utf-8") if line.strip())
             status = {

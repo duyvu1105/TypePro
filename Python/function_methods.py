@@ -7,6 +7,7 @@ from type_defined import ProjectDefined, ProjectUseData, ProjectClassDefine
 from loguru import logger
 from difflib import SequenceMatcher
 import ast
+from collections import defaultdict
 
 IGNORE_FUNCTION_NAME = ["bind", "get", "set"]
 
@@ -19,12 +20,27 @@ class Function_methods:
         self.total_function_data = self.read_projects_from_json(self.project_data_path)
         self.total_function_use_data = self.read_projects_from_json2(self.project_use_path)
         self.total_class_data = self.read_project_class_from_json(self.project_class_path)
+        self._rebuild_indexes()
+
+    def _rebuild_indexes(self):
+        self._function_sources_by_name = defaultdict(list)
+        self._function_uses_by_name = defaultdict(list)
+        self._classes_by_name = defaultdict(list)
+        for item in self.total_function_data:
+            self._function_sources_by_name[item.name].append(item.source_code)
+        for item in self.total_function_use_data:
+            self._function_uses_by_name[item.name].append(item)
+        for item in self.total_class_data:
+            self._classes_by_name[item.name].append(item.signature)
+        self._class_name_similarity_cache = {}
+        self._file_class_cache = {}
 
     def load_func_data(self):
 
         self.total_function_data = self.read_projects_from_json(self.project_data_path)
 
         self.total_function_use_data = self.read_projects_from_json2(self.project_use_path)
+        self._rebuild_indexes()
 
     def read_projects_from_json(self, filename: str) -> List[ProjectDefined]:
         try:
@@ -71,43 +87,27 @@ class Function_methods:
         # logger.info(total_function_data)
         if target_name in IGNORE_FUNCTION_NAME :
             return []
-        res: list[str] = []
-        for i in self.total_function_data:
-            if i.name == target_name:
-                res.append(i.source_code)
+        res = list(self._function_sources_by_name.get(target_name, ()))
         if "." in target_name and len(res) == 0:
             new_name = target_name.split(".")[-1]
-            for i in self.total_function_data:
-                if i.name == new_name:
-                    res.append(i.source_code)
+            res = list(self._function_sources_by_name.get(new_name, ()))
         return res
 
     def get_class_by_names(self, target_name: str)-> list[str]:
-        res: list[str] = []
-
-        for i in self.total_class_data:
-            if i.name == target_name:
-                res.append(i.signature)
+        res = list(self._classes_by_name.get(target_name, ()))
 
         if "." in target_name:
             class_name = target_name.split(".")[0]
-            for i in self.total_class_data:
-                if i.name == class_name:
-                    res.append(i.signature)
+            res.extend(self._classes_by_name.get(class_name, ()))
 
         return res
 
     def get_function_use_data(self, func_name: str) -> [ProjectUseData]:
 
-        res = []
-        for i in self.total_function_use_data:
-            if i.name == func_name:
-                res.append(i)
+        res = list(self._function_uses_by_name.get(func_name, ()))
         if "." in func_name and len(res) == 0:
             new_name = func_name.split(".")[-1]
-            for i in self.total_function_use_data:
-                if i.name == new_name:
-                    res.append(i)
+            res = list(self._function_uses_by_name.get(new_name, ()))
         return res
 
     def get_function_data(self):
@@ -161,6 +161,10 @@ class Function_methods:
 
     def calculate_similarity_for_class_name(self, target_code:str):
 
+        cached = self._class_name_similarity_cache.get(target_code)
+        if cached is not None:
+            return list(cached)
+
         choiceNumber = 5
         MinimumThreshold = 0.3
         res = []
@@ -175,14 +179,18 @@ class Function_methods:
         new_lis = []
         for i in res:
             new_lis.append(i[0])
+        self._class_name_similarity_cache[target_code] = tuple(new_lis)
         return new_lis
-
     def find_file_class_name(self, file_path: str, name: str):
+        cache_key = (file_path, name)
+        if cache_key in self._file_class_cache:
+            return self._file_class_cache[cache_key]
 
         for cls in self.total_class_data:
             if cls.file_name != file_path and cls.file_name.replace("\\","/") != file_path and cls.file_name.replace("/","\\") != file_path:
                 continue
             if name.lower() == cls.name.lower() or self.similarity_difflib(name.lower(), cls.name.lower())>self.minimum_similarity_standard:
+                self._file_class_cache[cache_key] = cls.signature
                 return cls.signature
 
         import_info = self.get_import_info(file_path)
@@ -196,8 +204,10 @@ class Function_methods:
             if cls.name not in import_name:
                 continue
             elif name.lower() == cls.name.lower() or self.similarity_difflib(name.lower(), cls.name.lower())>self.minimum_similarity_standard:
+                self._file_class_cache[cache_key] = cls.signature
                 return cls.signature
 
+        self._file_class_cache[cache_key] = ""
         return ""
 
     def similarity_difflib(self, a: str, b: str) -> float:

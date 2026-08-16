@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 from pathlib import Path
 from textwrap import dedent
@@ -728,6 +729,194 @@ def shard_notebook(
     return result
 
 
+def repartitioned_shard_notebook(
+    logical_shard_index: int,
+    parent_part_index: int,
+    subpart_index: int,
+    repository: str,
+    branch: str,
+    *,
+    expected_dataset_owner: str,
+    public_dataset: bool,
+) -> dict:
+    """Split one half of a logical 10-way shard into three 60-way residues."""
+    if logical_shard_index not in range(10):
+        raise ValueError("logical_shard_index must be within 0..9")
+    if parent_part_index not in range(2):
+        raise ValueError("parent_part_index must be 0 (A) or 1 (B)")
+    if subpart_index not in range(3):
+        raise ValueError("subpart_index must be within 0..2")
+    parent_residue = logical_shard_index + 10 * parent_part_index
+    physical_index = parent_residue + 20 * subpart_index
+    physical_count = 60
+    part_letter = chr(ord("A") + parent_part_index)
+    result = shard_notebook(
+        physical_index,
+        physical_count,
+        repository,
+        branch,
+        assigned_shards=[physical_index],
+        expected_dataset_owner=expected_dataset_owner,
+        public_dataset=public_dataset,
+    )
+    result["cells"][0]["source"] = dedent(f"""
+        # TypePro shard {logical_shard_index:02d}/10 part {part_letter}{subpart_index + 1}/3
+
+        This replacement processes subpart {subpart_index + 1}/3 of the cancelled
+        parent part {part_letter}/2 using physical residue
+        `{physical_index:02d}/{physical_count}`. The three subparts are disjoint
+        and exactly cover the original `{parent_residue:02d}/20` residue.
+        Internet must be ON and the accelerator must be None/CPU.
+        """).strip() + "\n"
+
+    config = result["cells"][1]["source"]
+    marker = f"PUBLISH_PUBLIC = {public_dataset!r}\n"
+    extra = dedent(f"""
+        LOGICAL_SHARD_INDEX = {logical_shard_index}
+        LOGICAL_SHARD_COUNT = 10
+        PARENT_PART_INDEX = {parent_part_index}
+        PARENT_PART_COUNT = 2
+        SUBPART_INDEX = {subpart_index}
+        SUBPART_COUNT = 3
+        """)
+    if config.count(marker) != 1:
+        raise RuntimeError("Cannot locate the shard visibility config")
+    config = config.replace(marker, marker + extra, 1)
+    print_marker = '    "shard_count": SHARD_COUNT,\n'
+    print_extra = dedent("""
+            "logical_shard_index": LOGICAL_SHARD_INDEX,
+            "logical_shard_count": LOGICAL_SHARD_COUNT,
+            "parent_part_index": PARENT_PART_INDEX,
+            "parent_part_count": PARENT_PART_COUNT,
+            "subpart_index": SUBPART_INDEX,
+            "subpart_count": SUBPART_COUNT,
+        """)
+    if config.count(print_marker) != 1:
+        raise RuntimeError("Cannot locate the shard config summary")
+    result["cells"][1]["source"] = config.replace(
+        print_marker, print_marker + print_extra, 1
+    )
+
+    verification = result["cells"][13]["source"]
+    summary_marker = '    "shard_count": SHARD_COUNT,\n'
+    summary_extra = dedent("""
+            "logical_shard_index": LOGICAL_SHARD_INDEX,
+            "logical_shard_count": LOGICAL_SHARD_COUNT,
+            "parent_part_index": PARENT_PART_INDEX,
+            "parent_part_count": PARENT_PART_COUNT,
+            "subpart_index": SUBPART_INDEX,
+            "subpart_count": SUBPART_COUNT,
+        """)
+    if verification.count(summary_marker) != 1:
+        raise RuntimeError("Cannot locate the shard manifest summary")
+    result["cells"][13]["source"] = verification.replace(
+        summary_marker, summary_marker + summary_extra, 1
+    )
+
+    publish = result["cells"][15]["source"]
+    publish = publish.replace(
+        'f"TypePro Python shard {SHARD_INDEX:02d} of {SHARD_COUNT}",',
+        'f"TypePro shard {LOGICAL_SHARD_INDEX:02d}/10 '
+        f'part {part_letter}{{SUBPART_INDEX + 1}}/{{SUBPART_COUNT}}",',
+    ).replace(
+        'f"Completed TypePro shard {SHARD_INDEX:02d} of {SHARD_COUNT}",',
+        'f"Completed TypePro shard {LOGICAL_SHARD_INDEX:02d}/10 '
+        f'part {part_letter}{{SUBPART_INDEX + 1}}/{{SUBPART_COUNT}}",',
+    )
+    result["cells"][15]["source"] = publish
+    result["metadata"]["typepro"] = {
+        "version_contract": "one-third-of-cancelled-half-shard",
+        "physical_shard_index": physical_index,
+        "physical_shard_count": physical_count,
+        "logical_shard_index": logical_shard_index,
+        "logical_shard_count": 10,
+        "parent_part_index": parent_part_index,
+        "parent_part_count": 2,
+        "subpart_index": subpart_index,
+        "subpart_count": 3,
+        "expected_dataset_owner": expected_dataset_owner,
+        "public_dataset": public_dataset,
+        "output_dataset_slug": f"typepro-build-shard-{physical_index:02d}",
+    }
+    return result
+
+
+def canonical_merge_datasets(shard_accounts: list[dict]) -> list[dict]:
+    datasets = []
+    for account in shard_accounts:
+        for index in account["assigned_shards"]:
+            datasets.append({
+                "dataset_id": f"{account['dataset_owner']}/typepro-build-shard-{index:02d}",
+                "logical_shard_index": index,
+                "shard_index": index,
+                "shard_count": 10,
+                "public_dataset": bool(account["public_dataset"]),
+            })
+    return datasets
+
+
+def validate_merge_datasets(
+    datasets: list[dict],
+    count: int,
+    expected_dataset_owner: str,
+) -> list[dict]:
+    normalized = []
+    seen_ids = set()
+    for item in datasets:
+        dataset_id = item.get("dataset_id")
+        logical_index = item.get("logical_shard_index")
+        shard_index = item.get("shard_index")
+        shard_count = item.get("shard_count")
+        public_dataset = item.get("public_dataset")
+        if not isinstance(dataset_id, str) or dataset_id.count("/") != 1:
+            raise ValueError(f"Invalid merge Dataset id: {dataset_id!r}")
+        owner, slug = dataset_id.split("/", 1)
+        if (
+            not OWNER_RE.fullmatch(owner)
+            or not isinstance(shard_index, int)
+            or slug != f"typepro-build-shard-{shard_index:02d}"
+        ):
+            raise ValueError(f"Dataset id does not match its physical shard: {item!r}")
+        if dataset_id.casefold() in seen_ids:
+            raise ValueError(f"Duplicate merge Dataset: {dataset_id}")
+        if not isinstance(logical_index, int) or logical_index not in range(count):
+            raise ValueError(f"Invalid logical shard index: {item!r}")
+        if (
+            not isinstance(shard_count, int)
+            or shard_count <= 0
+            or shard_index not in range(shard_count)
+            or shard_count % count
+        ):
+            raise ValueError(f"Invalid physical shard coordinates: {item!r}")
+        if shard_index % count != logical_index:
+            raise ValueError(f"Physical shard does not belong to logical shard: {item!r}")
+        if not isinstance(public_dataset, bool):
+            raise ValueError(f"public_dataset must be boolean: {item!r}")
+        should_be_public = owner.casefold() != expected_dataset_owner.casefold()
+        if public_dataset != should_be_public:
+            raise ValueError(
+                "Datasets outside the final owner must be public and final-owner "
+                f"Datasets must be private: {item!r}"
+            )
+        seen_ids.add(dataset_id.casefold())
+        normalized.append(dict(item))
+
+    modulus = math.lcm(*(item["shard_count"] for item in normalized))
+    coverage = [None] * modulus
+    for item in normalized:
+        for residue in range(item["shard_index"], modulus, item["shard_count"]):
+            if coverage[residue] is not None:
+                raise ValueError(
+                    f"Overlapping merge partitions at residue {residue}/{modulus}: "
+                    f"{coverage[residue]} and {item['dataset_id']}"
+                )
+            coverage[residue] = item["dataset_id"]
+    missing = [residue for residue, dataset_id in enumerate(coverage) if dataset_id is None]
+    if missing:
+        raise ValueError(f"Merge partitions do not cover all logical shards: {missing}")
+    return normalized
+
+
 def recovery_notebook(
     index: int,
     count: int,
@@ -926,6 +1115,7 @@ def merge_notebook(
     *,
     expected_dataset_owner: str,
     shard_accounts: list[dict],
+    merge_datasets: list[dict] | None = None,
 ) -> dict:
     if len(shard_accounts) != 2:
         raise ValueError("Merge notebook requires exactly two shard accounts")
@@ -954,6 +1144,11 @@ def merge_notebook(
             raise ValueError(
                 "Only the non-final account's shard Datasets must be public for merge"
             )
+    merge_datasets = validate_merge_datasets(
+        merge_datasets or canonical_merge_datasets(shard_accounts),
+        count,
+        expected_dataset_owner,
+    )
     return notebook([
         markdown(f"""
         # Merge {count} TypePro shards and publish the final dataset
@@ -971,6 +1166,7 @@ def merge_notebook(
         BRANCH = {branch!r}
         EXPECTED_DATASET_OWNER = {expected_dataset_owner!r}
         SHARD_SOURCE_CONFIG = {shard_source_config!r}
+        MERGE_DATASETS = {merge_datasets!r}
         FINAL_DATASET_SLUG = "typepro-python-contrastive"
         SEED = 13
 
@@ -1037,6 +1233,7 @@ def merge_notebook(
                 {{"owner": source["owner"], "shards": source["shards"]}}
                 for source in SHARD_SOURCES
             ],
+            "merge_datasets": [item["dataset_id"] for item in MERGE_DATASETS],
             "final_dataset_owner": EXPECTED_DATASET_OWNER,
             "authentication_source": (
                 "explicit Kaggle Secret"
@@ -1110,41 +1307,42 @@ def merge_notebook(
         DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
         shard_builds = []
         use_credential(FINAL_SOURCE)
-        for source in SHARD_SOURCES:
-            for index in source["shards"]:
-                dataset_id = f"{source['owner']}/typepro-build-shard-{index:02d}"
-                target = DOWNLOAD_DIR / f"shard_{index:02d}"
-                target.mkdir(parents=True, exist_ok=True)
-                run(["kaggle", "datasets", "download", "-d", dataset_id, "-p", target, "--unzip"])
+        for item in MERGE_DATASETS:
+            dataset_id = item["dataset_id"]
+            index = item["shard_index"]
+            expected_count = item["shard_count"]
+            target = DOWNLOAD_DIR / dataset_id.replace("/", "__")
+            target.mkdir(parents=True, exist_ok=True)
+            run(["kaggle", "datasets", "download", "-d", dataset_id, "-p", target, "--unzip"])
+            marker_paths = list(target.rglob("shard_manifest.json"))
+            if not marker_paths:
+                # Older shard datasets may preserve the pre-packed ZIP, while
+                # Kaggle expands newer uploads into a directory tree.
+                archives = list(target.rglob("typepro_build_shard_*.zip"))
+                if len(archives) != 1:
+                    raise RuntimeError(
+                        f"{dataset_id}: expected one build directory or archive, "
+                        f"found markers={marker_paths}, archives={archives}"
+                    )
+                with zipfile.ZipFile(archives[0]) as bundle:
+                    bundle.extractall(target)
                 marker_paths = list(target.rglob("shard_manifest.json"))
-                if not marker_paths:
-                    # Older shard datasets may preserve the pre-packed ZIP, while
-                    # Kaggle expands newer uploads into a directory tree.
-                    archives = list(target.rglob("typepro_build_shard_*.zip"))
-                    if len(archives) != 1:
-                        raise RuntimeError(
-                            f"{dataset_id}: expected one build directory or archive, "
-                            f"found markers={marker_paths}, archives={archives}"
-                        )
-                    with zipfile.ZipFile(archives[0]) as bundle:
-                        bundle.extractall(target)
-                    marker_paths = list(target.rglob("shard_manifest.json"))
-                if len(marker_paths) != 1:
-                    raise RuntimeError(f"{dataset_id}: cannot uniquely locate shard build: {marker_paths}")
-                build = marker_paths[0].parent
-                marker = json.loads(marker_paths[0].read_text(encoding="utf-8"))
-                if marker["shard_index"] != index or marker["shard_count"] != SHARD_COUNT or marker["missing_projects"]:
-                    raise RuntimeError(f"Invalid/incomplete shard marker: {marker}")
-                required = [
-                    build / "metadata" / "split_manifest.json",
-                    build / "raw_slices",
-                    build / "project_status",
-                ]
-                missing = [str(path) for path in required if not path.exists()]
-                if missing:
-                    raise RuntimeError(f"{dataset_id}: missing merge inputs: {missing}")
-                shard_builds.append(build)
-                print(f"Validated shard {index:02d} from {source['owner']}: {marker['attempted_projects']} projects")
+            if len(marker_paths) != 1:
+                raise RuntimeError(f"{dataset_id}: cannot uniquely locate shard build: {marker_paths}")
+            build = marker_paths[0].parent
+            marker = json.loads(marker_paths[0].read_text(encoding="utf-8"))
+            if marker["shard_index"] != index or marker["shard_count"] != expected_count or marker["missing_projects"]:
+                raise RuntimeError(f"Invalid/incomplete shard marker: {marker}")
+            required = [
+                build / "metadata" / "split_manifest.json",
+                build / "raw_slices",
+                build / "project_status",
+            ]
+            missing = [str(path) for path in required if not path.exists()]
+            if missing:
+                raise RuntimeError(f"{dataset_id}: missing merge inputs: {missing}")
+            shard_builds.append(build)
+            print(f"Validated {dataset_id}: {marker['attempted_projects']} projects")
         print("All shard build directories:", [str(path) for path in shard_builds])
         """),
         markdown("## Merge shard outputs"),
@@ -1219,11 +1417,12 @@ def merge_notebook(
             "--data-dir", FINAL_DIR,
             "--dataset-id", final_id,
             "--title", "TypePro Python Third-Party Contrastive Data",
-            "--message", f"Merge {SHARD_COUNT} verified TypePro shards",
+            "--message", f"Merge {len(MERGE_DATASETS)} verified partitions covering {SHARD_COUNT} shards",
         ])
         completion = {
             "dataset_id": final_id,
             "shard_count": SHARD_COUNT,
+            "source_datasets": [item["dataset_id"] for item in MERGE_DATASETS],
             "output": manifest["output"],
         }
         (FINAL_DIR / "MERGE_COMPLETE.json").write_text(
@@ -1414,6 +1613,13 @@ def main(argv: list[str] | None = None) -> None:
             "assigned_shards": shard_group,
             "kernel_slug": f"typepro-shards-{shard_group[0]:02d}-{shard_group[-1]:02d}",
         })
+    merge_plan_path = ROOT / "shard_merge_plan.json"
+    merge_datasets = None
+    if merge_plan_path.exists():
+        merge_plan = json.loads(merge_plan_path.read_text(encoding="utf-8"))
+        if merge_plan.get("logical_shard_count") != args.shards:
+            raise ValueError(f"Invalid logical shard count in {merge_plan_path}")
+        merge_datasets = merge_plan.get("datasets")
     merge_path = ROOT / "03_merge_finalize.ipynb"
     merge_path.write_text(
         json.dumps(
@@ -1423,6 +1629,7 @@ def main(argv: list[str] | None = None) -> None:
                 args.branch,
                 expected_dataset_owner=args.dataset_owner,
                 shard_accounts=account_notebooks,
+                merge_datasets=merge_datasets,
             ),
             ensure_ascii=False,
             indent=1,
@@ -1444,6 +1651,11 @@ def main(argv: list[str] | None = None) -> None:
                 "final_dataset_owner": args.dataset_owner,
                 "shard_count": args.shards,
                 "accounts": account_notebooks,
+                "merge_datasets": validate_merge_datasets(
+                    merge_datasets or canonical_merge_datasets(account_notebooks),
+                    args.shards,
+                    args.dataset_owner,
+                ),
             },
             indent=2,
         ),
