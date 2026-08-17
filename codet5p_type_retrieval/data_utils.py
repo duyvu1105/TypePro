@@ -192,7 +192,9 @@ def normalize_recommendations(record: dict[str, Any]) -> list[dict[str, str]]:
                 name = str(item.get("name") or type_name_from_definition(definition))
                 if name:
                     normalized = {"name": name, "definition": definition or name}
-                    for key in ("qualified_name", "package", "module", "source"):
+                    for key in (
+                        "qualified_name", "package", "module", "source", "kind"
+                    ):
                         if item.get(key):
                             normalized[key] = str(item[key])
                     result.append(normalized)

@@ -76,7 +76,7 @@ def extract_class_summary(file_path: str) -> List[str]:
         return []
     summaries: List[str] = []
 
-    for node in tree.body:
+    for node in ast.walk(tree):
         if not isinstance(node, ast.ClassDef):
             continue
         sig_lines = []
@@ -124,7 +124,7 @@ def extract_class_summary(file_path: str) -> List[str]:
 
         methods: List[str] = []
         for stmt in node.body:
-            if isinstance(stmt, ast.FunctionDef):
+            if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 methods.append(get_method_signature(src, stmt))
 
         parts = sig_lines
@@ -140,7 +140,41 @@ def extract_class_summary(file_path: str) -> List[str]:
         temp_data = ProjectClassDefine(class_name, "\n".join(parts), file_path)
         total_class_data.append(temp_data)
 
+    # Type aliases participate in retrieval even though the legacy index only
+    # stored concrete classes. Render them as class-like definitions so the
+    # existing recommendation/export format remains backward compatible.
+    for node in tree.body:
+        alias = extract_type_alias(node)
+        if alias is None:
+            continue
+        name, value = alias
+        signature = f"class {name}:\n    # type alias: {value}"
+        summaries.append(signature)
+        total_class_data.append(ProjectClassDefine(name, signature, file_path))
+
     return summaries
+
+
+def extract_type_alias(node: ast.AST) -> tuple[str, str] | None:
+    target = value = annotation = None
+    if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+        target, value = node.target.id, node.value
+        annotation = ast.unparse(node.annotation)
+    elif isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+        target, value = node.targets[0].id, node.value
+    if not target or value is None:
+        return None
+    type_like_name = target.lstrip("_")[:1].isupper()
+    recognized = bool(annotation and annotation.endswith("TypeAlias")) or (
+        type_like_name and isinstance(value, (ast.Subscript, ast.Attribute, ast.BinOp))
+    )
+    if isinstance(value, ast.Call):
+        recognized = type_like_name and ast.unparse(value.func).split(".")[-1] in {
+            "NewType", "TypeVar", "ParamSpec", "TypeVarTuple"
+        }
+    if isinstance(value, ast.Name):
+        recognized = bool(annotation and annotation.endswith("TypeAlias"))
+    return (target, ast.unparse(value)) if recognized else None
 
 if __name__ == "__main__":
     import os

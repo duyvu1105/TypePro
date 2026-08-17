@@ -8,6 +8,7 @@ sys.path.insert(0, str(PYTHON_DIR))
 
 from build_third_party_kb import discover_imports, scan_package
 from import_analyzer import importAnalyzer
+from export_slices import recommendation_objects
 
 
 def test_discovers_imports_and_extracts_structural_class_definition(tmp_path, monkeypatch):
@@ -49,3 +50,94 @@ def test_discovers_imports_and_extracts_structural_class_definition(tmp_path, mo
     assert "class Tensor(BaseTensor):" in recommendations[0]
     structural = analyzer.calculate_similarity_for_class("def f(x):\n    return x.reshape(2, 2)")
     assert any("class Tensor(BaseTensor):" in value for value in structural)
+
+
+def test_scanner_keeps_private_classes_aliases_and_stdlib_provenance(tmp_path):
+    package = tmp_path / "pathlib"
+    package.mkdir()
+    (package / "__init__.py").write_text(
+        "from typing import TypeAlias\n"
+        "class Path: pass\n"
+        "class _InternalPath: pass\n"
+        "PathLike: TypeAlias = str | bytes\n",
+        encoding="utf-8",
+    )
+
+    records, stats = scan_package(
+        "pathlib", [package], max_files=10, max_members=20, max_chars=4000,
+        source_kind="stdlib",
+    )
+
+    assert {item["name"] for item in records} == {
+        "Path", "_InternalPath", "PathLike"
+    }
+    assert stats["private_classes"] == 1
+    assert stats["aliases"] == 1
+    assert all(item["source"] == "stdlib" for item in records)
+    exported = recommendation_objects(item["definition"] for item in records)
+    assert {item["source"] for item in exported} == {"stdlib"}
+
+
+def test_exact_import_and_qualified_attribute_precede_fuzzy_candidates(
+    tmp_path, monkeypatch
+):
+    project = tmp_path / "project"
+    project.mkdir()
+    source = project / "app.py"
+    source.write_text(
+        "from tensorlib.core import Tensor\n"
+        "import tensorlib.core as tc\n"
+        "value = tc.Batch()\n",
+        encoding="utf-8",
+    )
+    kb = tmp_path / "kb"
+    kb.mkdir()
+    records = []
+    for name in ["Tensor", "Batch", *[f"Candidate{i}" for i in range(12)]]:
+        records.append({
+            "type": "class",
+            "name": name,
+            "package": "tensorlib",
+            "module": "tensorlib.core",
+            "qualified_name": f"tensorlib.core.{name}",
+            "definition": f"class {name}:\n    # package: tensorlib\n    # module: tensorlib.core",
+            "source": "third_party",
+        })
+    (kb / "tensorlib.json").write_text(json.dumps(records), encoding="utf-8")
+    monkeypatch.setenv("TYPEPRO_THIRD_PARTY_DATASET", str(kb))
+
+    analyzer = importAnalyzer(str(source))
+    exact = analyzer.get_exact_import_recommendations()
+    fuzzy = analyzer.get_class_recommendations("candidate", limit=20)
+    inventory = analyzer.get_imported_module_inventory("batch")
+
+    assert "class Tensor:" in exact[0]
+    assert any("class Batch:" in item for item in exact)
+    assert len(fuzzy) > 5
+    assert any("class Batch:" in item for item in inventory)
+
+
+def test_exact_import_fallback_adds_symbols_without_reading_masked_annotation(
+    tmp_path, monkeypatch
+):
+    source = tmp_path / "app.py"
+    source.write_text(
+        "from datetime import datetime\n"
+        "import pathlib\n"
+        "def target(value: pathlib.Path): return value\n",
+        encoding="utf-8",
+    )
+    kb = tmp_path / "kb"
+    kb.mkdir()
+    monkeypatch.setenv("TYPEPRO_THIRD_PARTY_DATASET", str(kb))
+    analyzer = importAnalyzer(str(source))
+
+    exact = analyzer.get_exact_import_recommendations(
+        "from datetime import datetime\n"
+        "import pathlib\n"
+        "def target(value: <mask>):\n    return value\n"
+    )
+
+    names = {item["name"] for item in recommendation_objects(exact)}
+    assert "datetime" in names
+    assert "Path" not in names

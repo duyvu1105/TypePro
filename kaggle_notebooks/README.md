@@ -19,9 +19,18 @@ parameter-only dataset:
 - `generate_notebooks.py`: regenerate the complete workflow.
 
 Each build shard keeps only non-built-in function parameters. It builds a cached
-third-party KB from imports in each project and stores detailed class structure
-(package/module, bases, fields, and public method signatures) in recommendations.
-The contrastive positive is always the annotation's `gttype`.
+stdlib/third-party KB from imports in each project and stores detailed class
+structure (package/module, bases, fields, and public method signatures) in
+recommendations. Candidate generation uses a high-recall union of exact import
+symbols, declarations visible in the masked slice, project classes/type aliases,
+lexical retrieval, and structural BM25 retrieval. Each fuzzy branch keeps up to
+20 candidates; preprocessing then retains at most seven hard negatives. The
+contrastive positive is always the annotation's `gttype`.
+
+The KB schema is versioned. A shard resumed after a retrieval-code update
+rebuilds stale cached package indexes instead of silently reusing records from
+the older class-only schema. Raw exported rows include recommendation counts by
+source and kind for coverage diagnostics.
 
 ## Before uploading
 

@@ -1,4 +1,5 @@
 import ast
+import re
 from collections import OrderedDict, defaultdict
 from loguru import logger
 from type_defined import ProjectDefined, ProjectUseData, stmt_types, FunctionInfo, OTHER_PROMPTS,SIMPLE_BINOPS
@@ -86,6 +87,67 @@ def _append_unique(values: list, seen: set, value) -> bool:
     seen.add(value)
     values.append(value)
     return True
+
+
+def class_definitions_from_text(source: str) -> list[str]:
+    """Extract visible class/type declarations without consulting the label."""
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError):
+        tree = None
+    if tree is not None:
+        definitions = []
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef):
+                continue
+            bases = [ast.unparse(value) for value in node.bases]
+            header = (
+                f"class {node.name}({', '.join(bases)}):"
+                if bases else f"class {node.name}:"
+            )
+            lines = [header, "    # source: project", "    # kind: visible_class"]
+            for statement in node.body[:40]:
+                if isinstance(statement, ast.AnnAssign):
+                    lines.append(
+                        f"    {ast.unparse(statement.target)}: "
+                        f"{ast.unparse(statement.annotation)}"
+                    )
+                elif isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    prefix = "async def" if isinstance(statement, ast.AsyncFunctionDef) else "def"
+                    returns = (
+                        f" -> {ast.unparse(statement.returns)}"
+                        if statement.returns is not None else ""
+                    )
+                    lines.append(
+                        f"    {prefix} {statement.name}({ast.unparse(statement.args)})"
+                        f"{returns}: ..."
+                    )
+            if len(lines) == 3:
+                lines.append("    pass")
+            definitions.append("\n".join(lines))
+        for node in tree.body:
+            if not isinstance(node, ast.AnnAssign) or not isinstance(node.target, ast.Name):
+                continue
+            annotation = ast.unparse(node.annotation)
+            if annotation.endswith("TypeAlias") and node.value is not None:
+                definitions.append(
+                    f"class {node.target.id}:\n"
+                    "    # source: project\n"
+                    "    # kind: alias\n"
+                    f"    # type alias: {ast.unparse(node.value)}"
+                )
+        return list(dict.fromkeys(definitions))
+    # Slices may concatenate independently valid snippets. Preserve class
+    # headers as high-recall name candidates when the combined text is invalid.
+    definitions = []
+    for match in re.finditer(r"(?m)^\s*class\s+([A-Za-z_]\w*)\s*([^:]*):", source):
+        definitions.append(
+            f"class {match.group(1)}{match.group(2)}:\n"
+            "    # source: project\n"
+            "    # kind: visible_class\n"
+            "    pass"
+        )
+    return list(dict.fromkeys(definitions))
 
 
 class ProjectAnalysisCache:
@@ -266,6 +328,23 @@ class Slicer:
             _append_unique(
                 self.type_recommend, self._type_recommend_seen, definition
             )
+
+    def add_high_recall_recommendations(
+        self, target_name: str, source: str, file_path: str
+    ) -> None:
+        """Union exact, project, lexical, and structural retrieval signals."""
+        exact = [
+            *class_definitions_from_text(source),
+            *self.Funcion_methods.exact_imported_class_definitions(file_path),
+            *self.import_analyzer.get_exact_import_recommendations(source),
+            *self.import_analyzer.get_imported_module_inventory(target_name),
+        ]
+        fuzzy = [
+            *self.Funcion_methods.calculate_similarity_for_class_name(target_name),
+            *self.import_analyzer.get_class_recommendations(target_name),
+            *self.import_analyzer.calculate_similarity_for_class(source),
+        ]
+        self.add_type_recommendations([*exact, *fuzzy], prepend=True)
 
     def is_simple_op_assign(self,node: ast.AST,
                             ops: Iterable[Type[ast.operator]] = SIMPLE_BINOPS
@@ -855,15 +934,9 @@ class Slicer:
             root1 = self.get_scope_node(root, var_node)
 
         may_cls_data = self.Funcion_methods.find_file_class_name(file_path, target_var_name)
-        may_cls_data2 = self.Funcion_methods.calculate_similarity_for_class_name(target_var_name)
         if may_cls_data!="":
             total_code_list.append(may_cls_data)
             total_code_seen.add(may_cls_data)
-        if len(may_cls_data)>0:
-            self.add_type_recommendations(may_cls_data2)
-        self.add_type_recommendations(
-            self.import_analyzer.get_class_recommendations(target_var_name)
-        )
         res, sigs = self.find_statements_for_var(file_path, target_var_name, is_for_defined=True,
                                             Domain=(root1, source))
 
@@ -877,9 +950,7 @@ class Slicer:
         for i in res:
             _append_unique(total_code_list, total_code_seen, i[0])
         total_code = "\n".join(total_code_list)
-        self.add_type_recommendations(
-            self.import_analyzer.calculate_similarity_for_class(total_code), prepend=True
-        )
+        self.add_high_recall_recommendations(target_var_name, total_code, file_path)
         return total_code
 
     def slicing_func(self,func_node: ast.AST, root: str, file_path: str):
@@ -918,15 +989,9 @@ class Slicer:
             lines = source.splitlines()
             params_line = self.get_signature_line(func_node)
             may_class = self.Funcion_methods.find_file_class_name(file_path, param_name)
-            may_class_2 = self.Funcion_methods.calculate_similarity_for_class_name(param_name)
             if may_class!="":
                 total_code_list.append(may_class)
                 total_code_seen.add(may_class)
-            if len(may_class_2)>0:
-                self.add_type_recommendations(may_class_2)
-            self.add_type_recommendations(
-                self.import_analyzer.get_class_recommendations(param_name)
-            )
 
             res, sigs = self.find_statements_for_var(file_path, param_name, is_for_defined=True, Domain=(func_node, ast.unparse(func_node)))
             for fs in sigs:
@@ -940,9 +1005,7 @@ class Slicer:
                 _append_unique(total_code_list, total_code_seen, fu)
 
             total_code = "\n".join(total_code_list)
-            self.add_type_recommendations(
-                self.import_analyzer.calculate_similarity_for_class(total_code), prepend=True
-            )
+            self.add_high_recall_recommendations(param_name, total_code, file_path)
             return total_code
 
     def get_type_recommend(self):

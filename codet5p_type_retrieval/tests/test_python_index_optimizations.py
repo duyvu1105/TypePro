@@ -12,7 +12,12 @@ import export_slices
 import readFunctionUseData
 from export_slices import AnnotationTimeoutError, annotation_deadline, export_one
 from function_methods import Function_methods
-from slicing_code_class import CachedStatement, ProjectAnalysisCache, Slicer
+from slicing_code_class import (
+    CachedStatement,
+    ProjectAnalysisCache,
+    Slicer,
+    class_definitions_from_text,
+)
 from type_defined import ProjectClassDefine, ProjectDefined, ProjectUseData
 
 
@@ -54,6 +59,27 @@ def test_indexed_lookups_preserve_legacy_order_and_dotted_fallbacks():
         item.source_code for item in methods.get_function_use_data("module.fallback")
     ] == ["call-2"]
     assert methods.get_class_by_names("Outer.Exact") == ["class Outer: first"]
+
+
+def test_project_exact_imports_and_slice_declarations_are_high_recall(tmp_path):
+    methods = make_methods()
+    source = tmp_path / "consumer.py"
+    source.write_text(
+        "from local.types import Exact, Outer\n",
+        encoding="utf-8",
+    )
+
+    exact = methods.exact_imported_class_definitions(str(source))
+    declarations = class_definitions_from_text(
+        "class Visible(Protocol):\n    def run(self): ...\n"
+        "Alias: TypeAlias = str | bytes\n"
+    )
+
+    assert "class Exact: first" in exact
+    assert "class Exact: second" in exact
+    assert "class Outer: first" in exact
+    assert any(value.startswith("class Visible") for value in declarations)
+    assert any(value.startswith("class Alias") for value in declarations)
 
 
 def test_function_call_membership_set_matches_original_exact_name_semantics():
@@ -104,6 +130,53 @@ def test_shared_project_index_produces_identical_export_record(tmp_path, monkeyp
     shared = export_one(row, source, function_methods=Function_methods())
 
     assert shared == uncached
+
+
+def test_exporter_adds_exact_import_symbol_without_ground_truth_lookup(
+    tmp_path, monkeypatch
+):
+    project = tmp_path / "owner" / "project"
+    project.mkdir(parents=True)
+    source = project / "sample.py"
+    source.write_text(
+        "from datetime import datetime\n"
+        "def target(value):\n    return value\n",
+        encoding="utf-8",
+    )
+    index_dir = tmp_path / "index"
+    index_dir.mkdir()
+    for name in ("functions.json", "uses.json", "classes.json"):
+        (index_dir / name).write_text("[]", encoding="utf-8")
+    monkeypatch.setattr(
+        Function_methods, "project_data_path", str(index_dir / "functions.json")
+    )
+    monkeypatch.setattr(
+        Function_methods, "project_use_path", str(index_dir / "uses.json")
+    )
+    monkeypatch.setattr(
+        Function_methods, "project_class_path", str(index_dir / "classes.json")
+    )
+    empty_kb = tmp_path / "kb"
+    empty_kb.mkdir()
+    monkeypatch.setenv("TYPEPRO_THIRD_PARTY_DATASET", str(empty_kb))
+    row = {
+        "file": str(source),
+        "url": "https://github.com/owner/project",
+        "name": "value",
+        "loc": "target@1",
+        "scope": "arg",
+        # A deliberately unrelated label verifies retrieval never reads it.
+        "gttype": "CompletelyDifferentGold",
+    }
+
+    result = export_one(row, source, function_methods=Function_methods())
+
+    exact = next(
+        item for item in result["recommendation_types"] if item["name"] == "datetime"
+    )
+    assert exact["source"] == "stdlib"
+    assert exact["kind"] == "imported_symbol"
+    assert result["recommendation_diagnostics"]["by_source"]["stdlib"] >= 1
 
 
 def test_statement_index_and_result_cache_preserve_exact_output(tmp_path):

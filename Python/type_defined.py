@@ -35,6 +35,8 @@ class ClassInfo:
     qualified_name: str = ""
     bases: List[str] = field(default_factory=list)
     definition: str = ""
+    source: str = "third_party"
+    kind: str = "class"
 
 OTHER_PROMPTS ={
     "init_type": "The type that initially passes static analysis is {}",

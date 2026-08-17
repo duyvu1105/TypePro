@@ -203,6 +203,7 @@ def main() -> None:
                         ),
                         **({"package": item["package"]} if item.get("package") else {}),
                         **({"qualified_name": item["qualified_name"]} if item.get("qualified_name") else {}),
+                        **({"kind": item["kind"]} if item.get("kind") else {}),
                     }
                     for candidate_index, item in enumerate(selected)
                 ],

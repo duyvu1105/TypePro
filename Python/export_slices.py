@@ -12,6 +12,7 @@ import re
 import signal
 import subprocess
 import sys
+from collections import Counter
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterable
@@ -31,6 +32,8 @@ BUILTIN_TYPE_NAMES = {
 CLASS_NAME_RE = re.compile(r"(?m)^\s*class\s+([A-Za-z_]\w*)\b")
 PACKAGE_RE = re.compile(r"(?m)^\s*#\s*package:\s*(\S+)")
 MODULE_RE = re.compile(r"(?m)^\s*#\s*module:\s*(\S+)")
+SOURCE_RE = re.compile(r"(?m)^\s*#\s*source:\s*(\S+)")
+KIND_RE = re.compile(r"(?m)^\s*#\s*kind:\s*(\S+)")
 
 
 class AnnotationTimeoutError(BaseException):
@@ -109,6 +112,8 @@ def recommendation_objects(definitions: Iterable[str]) -> list[dict[str, str]]:
         name = match.group(1)
         package_match = PACKAGE_RE.search(definition)
         module_match = MODULE_RE.search(definition)
+        source_match = SOURCE_RE.search(definition)
+        kind_match = KIND_RE.search(definition)
         package = package_match.group(1) if package_match else ""
         module = module_match.group(1) if module_match else ""
         qualified_name = f"{module}.{name}" if module else name
@@ -120,7 +125,11 @@ def recommendation_objects(definitions: Iterable[str]) -> list[dict[str, str]]:
             "name": name,
             "qualified_name": qualified_name,
             "package": package,
-            "source": "third_party" if package else "project",
+            "source": (
+                source_match.group(1)
+                if source_match else ("third_party" if package else "project")
+            ),
+            "kind": kind_match.group(1) if kind_match else "class",
             "definition": definition,
         })
     return result
@@ -278,7 +287,13 @@ def export_one(
     result["file"] = str(row.get("file") or row.get("path") or file_path)
     result["language"] = "python"
     result["interprocedural_slice"] = code_slice
-    result["recommendation_types"] = recommendation_objects(slicer.get_type_recommend())
+    recommendations = recommendation_objects(slicer.get_type_recommend())
+    result["recommendation_types"] = recommendations
+    result["recommendation_diagnostics"] = {
+        "count": len(recommendations),
+        "by_source": dict(Counter(item["source"] for item in recommendations)),
+        "by_kind": dict(Counter(item["kind"] for item in recommendations)),
+    }
     result["other_prompt"] = list(slicer.get_other_prompt())
     return result
 

@@ -10,11 +10,13 @@ from __future__ import annotations
 import argparse
 import ast
 import importlib.machinery
+import importlib.metadata
 import json
 import os
 import shutil
 import subprocess
 import sys
+import tarfile
 import zipfile
 from collections import Counter
 from pathlib import Path
@@ -26,14 +28,22 @@ SKIP_DIRECTORIES = {
     "__pycache__", "build", "dist", "node_modules", "venv",
 }
 IMPORT_TO_DISTRIBUTION = {
+    "Crypto": "pycryptodome",
+    "OpenSSL": "pyOpenSSL",
     "PIL": "Pillow",
+    "bs4": "beautifulsoup4",
     "cv2": "opencv-python",
     "dateutil": "python-dateutil",
+    "dotenv": "python-dotenv",
     "googleapiclient": "google-api-python-client",
+    "jwt": "PyJWT",
+    "mysql": "mysql-connector-python",
     "sklearn": "scikit-learn",
+    "telegram": "python-telegram-bot",
     "yaml": "PyYAML",
 }
 USEFUL_DUNDERS = {"__call__", "__enter__", "__exit__", "__getitem__", "__init__", "__iter__", "__len__"}
+KB_SCHEMA_VERSION = 2
 
 
 def parse_args() -> argparse.Namespace:
@@ -114,33 +124,73 @@ def safe_extract_wheel(wheel: Path, destination: Path) -> None:
 
 
 def download_roots(import_name: str, cache: Path) -> list[Path]:
-    distribution = IMPORT_TO_DISTRIBUTION.get(import_name, import_name)
+    installed_distributions = importlib.metadata.packages_distributions().get(
+        import_name, []
+    )
+    distribution = IMPORT_TO_DISTRIBUTION.get(
+        import_name, installed_distributions[0] if installed_distributions else import_name
+    )
     destination = cache / distribution.casefold().replace("-", "_")
     extracted = destination / "extracted"
     if not extracted.exists():
         wheels = sorted(destination.glob("*.whl")) if destination.exists() else []
-        if not wheels:
+        if not wheels and not list(destination.glob("*.tar.gz")) and not list(destination.glob("*.zip")):
             destination.mkdir(parents=True, exist_ok=True)
-            command = [
+            wheel_command = [
                 sys.executable, "-m", "pip", "download", "--disable-pip-version-check",
                 "--no-deps", "--only-binary=:all:", "--dest", str(destination), distribution,
             ]
-            subprocess.run(command, check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            wheel_result = subprocess.run(
+                wheel_command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+            )
+            if wheel_result.returncode:
+                source_command = [
+                    sys.executable, "-m", "pip", "download", "--disable-pip-version-check",
+                    "--no-deps", "--no-binary=:all:", "--dest", str(destination), distribution,
+                ]
+                subprocess.run(
+                    source_command, check=True, stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT, text=True,
+                )
             wheels = sorted(destination.glob("*.whl"))
-        if not wheels:
+        archives = [*wheels, *sorted(destination.glob("*.tar.gz")), *sorted(destination.glob("*.zip"))]
+        if not archives:
             return []
         temporary = destination / "extracted.tmp"
         if temporary.exists():
             shutil.rmtree(temporary)
-        safe_extract_wheel(wheels[-1], temporary)
+        archive = archives[-1]
+        if archive.suffix == ".whl" or archive.suffix == ".zip":
+            safe_extract_wheel(archive, temporary)
+        else:
+            safe_extract_tar(archive, temporary)
         os.replace(temporary, extracted)
-    direct = extracted / import_name
-    if direct.is_dir():
-        return [direct]
-    direct_file = extracted / f"{import_name}.py"
-    if direct_file.is_file():
-        return [direct_file]
-    return []
+    candidates = [
+        extracted / import_name,
+        extracted / f"{import_name}.py",
+        extracted / "src" / import_name,
+        extracted / "src" / f"{import_name}.py",
+    ]
+    candidates.extend(extracted.glob(f"*/{import_name}"))
+    candidates.extend(extracted.glob(f"*/src/{import_name}"))
+    return [path.resolve() for path in candidates if path.exists()]
+
+
+def safe_extract_tar(archive: Path, destination: Path) -> None:
+    destination.mkdir(parents=True, exist_ok=True)
+    root = destination.resolve()
+    with tarfile.open(archive) as bundle:
+        members = []
+        for member in bundle.getmembers():
+            target = (destination / member.name).resolve()
+            if target != root and root not in target.parents:
+                raise ValueError(f"Unsafe source archive member: {member.name}")
+            if member.issym() or member.islnk():
+                raise ValueError(f"Links are not allowed in source archives: {member.name}")
+            if not member.isfile() and not member.isdir():
+                raise ValueError(f"Unsupported source archive member: {member.name}")
+            members.append(member)
+        bundle.extractall(destination, members=members)
 
 
 def unparse(node: ast.AST | None) -> str:
@@ -175,11 +225,17 @@ def class_definition(
     module: str,
     max_members: int,
     max_chars: int,
+    source_kind: str = "third_party",
 ) -> tuple[str, list[str], list[str], list[str]]:
     bases = [unparse(value) for value in node.bases]
     bases.extend(f"{keyword.arg}={unparse(keyword.value)}" for keyword in node.keywords if keyword.arg)
     header = f"class {node.name}({', '.join(value for value in bases if value)}):" if bases else f"class {node.name}:"
-    lines = [header, f"    # package: {package}", f"    # module: {module}"]
+    lines = [
+        header,
+        f"    # package: {package}",
+        f"    # module: {module}",
+        f"    # source: {source_kind}",
+    ]
     fields: list[str] = []
     methods: list[str] = []
     decorators = [unparse(value) for value in node.decorator_list]
@@ -222,6 +278,7 @@ def scan_package(
     max_files: int,
     max_members: int,
     max_chars: int,
+    source_kind: str = "third_party",
 ) -> tuple[list[dict[str, Any]], Counter[str]]:
     records: dict[tuple[str, str, str], dict[str, Any]] = {}
     stats: Counter[str] = Counter()
@@ -242,12 +299,14 @@ def scan_package(
             continue
         module = module_name(import_name, root, source)
         for node in tree.body:
-            if isinstance(node, ast.ClassDef) and not node.name.startswith("_"):
+            if isinstance(node, ast.ClassDef):
                 definition, fields, methods, bases = class_definition(
                     node, package=import_name, module=module,
                     max_members=max_members, max_chars=max_chars,
+                    source_kind=source_kind,
                 )
                 record = {
+                    "kb_schema_version": KB_SCHEMA_VERSION,
                     "type": "class",
                     "name": node.name,
                     "package": import_name,
@@ -257,14 +316,43 @@ def scan_package(
                     "fields": fields,
                     "methods": methods,
                     "definition": definition,
+                    "source": source_kind,
+                    "kind": "class",
                 }
                 key = ("class", node.name, module)
                 previous = records.get(key)
                 if previous is None or len(definition) > len(previous["definition"]):
                     records[key] = record
+                if node.name.startswith("_"):
+                    stats["private_classes"] += 1
+            elif (alias := type_alias(node)) is not None:
+                name, value = alias
+                definition = "\n".join([
+                    f"class {name}:",
+                    f"    # package: {import_name}",
+                    f"    # module: {module}",
+                    f"    # source: {source_kind}",
+                    "    # kind: alias",
+                    f"    # type alias: {value}",
+                ])
+                records.setdefault(("alias", name, module), {
+                    "kb_schema_version": KB_SCHEMA_VERSION,
+                    "type": "class",
+                    "kind": "alias",
+                    "name": name,
+                    "package": import_name,
+                    "module": module,
+                    "qualified_name": f"{module}.{name}",
+                    "bases": [],
+                    "fields": [f"type alias = {value}"],
+                    "methods": [],
+                    "definition": definition,
+                    "source": source_kind,
+                })
             elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and not node.name.startswith("_"):
                 signature = function_signature(node)
                 records.setdefault(("function", node.name, module), {
+                    "kb_schema_version": KB_SCHEMA_VERSION,
                     "type": "function",
                     "name": node.name,
                     "package": import_name,
@@ -274,8 +362,32 @@ def scan_package(
                 })
     stats["files_skipped_by_limit"] = max(0, len(sources) - max_files)
     stats["classes"] = sum(item[0] == "class" for item in records)
+    stats["aliases"] = sum(item[0] == "alias" for item in records)
     stats["functions"] = sum(item[0] == "function" for item in records)
     return list(records.values()), stats
+
+
+def type_alias(node: ast.AST) -> tuple[str, str] | None:
+    target = value = annotation = None
+    if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+        target, value, annotation = node.target.id, node.value, unparse(node.annotation)
+    elif isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+        target, value = node.targets[0].id, node.value
+    if not target or value is None:
+        return None
+    type_like_name = target.lstrip("_")[:1].isupper()
+    explicit_alias = bool(annotation and annotation.endswith("TypeAlias"))
+    recognized = explicit_alias or (
+        type_like_name and isinstance(value, (ast.Subscript, ast.Attribute, ast.BinOp))
+    )
+    if isinstance(value, ast.Call):
+        call_name = unparse(value.func).split(".")[-1]
+        recognized = type_like_name and call_name in {
+            "NewType", "TypeVar", "ParamSpec", "TypeVarTuple"
+        }
+    if isinstance(value, ast.Name):
+        recognized = explicit_alias
+    return (target, unparse(value)) if recognized else None
 
 
 def write_json(path: Path, value: Any) -> None:
@@ -291,30 +403,44 @@ def main() -> None:
     output_dir = Path(args.output_dir).resolve()
     cache = Path(args.download_cache).resolve()
     imports, discovery_stats = discover_imports(project_root)
-    excluded = set(sys.stdlib_module_names) | local_module_names(project_root)
-    third_party = sorted(name for name in imports if name and name not in excluded)
+    local_modules = local_module_names(project_root)
+    stdlib = sorted(name for name in imports if name in sys.stdlib_module_names)
+    third_party = sorted(
+        name for name in imports
+        if name and name not in sys.stdlib_module_names and name not in local_modules
+    )
     summary: dict[str, Any] = {
         "project_root": str(project_root),
         "imports_discovered": len(imports),
         "third_party_imports": third_party,
+        "stdlib_imports": stdlib,
         "packages": {},
         **discovery_stats,
     }
-    for import_name in third_party:
+    for import_name in [*stdlib, *third_party]:
         output_path = output_dir / f"{import_name}.json"
         if args.reuse_existing and output_path.exists():
             try:
                 existing = json.loads(output_path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError):
                 existing = None
-            if isinstance(existing, list):
+            if (
+                isinstance(existing, list)
+                and bool(existing)
+                and all(
+                    isinstance(item, dict)
+                    and item.get("kb_schema_version") == KB_SCHEMA_VERSION
+                    for item in existing
+                )
+            ):
                 summary["packages"][import_name] = {"status": "reused", "records": len(existing)}
                 continue
         roots = installed_roots(import_name)
         source = "installed"
         error = None
-        if not roots and args.download_missing:
-            source = "downloaded-wheel"
+        is_stdlib = import_name in sys.stdlib_module_names
+        if not roots and args.download_missing and not is_stdlib:
+            source = "downloaded-archive"
             try:
                 roots = download_roots(import_name, cache)
             except (OSError, subprocess.CalledProcessError, zipfile.BadZipFile, ValueError) as exception:
@@ -327,11 +453,16 @@ def main() -> None:
             max_files=args.max_files_per_package,
             max_members=args.max_members_per_class,
             max_chars=args.max_definition_chars,
+            source_kind="stdlib" if is_stdlib else "third_party",
         )
         write_json(output_path, records)
         summary["packages"][import_name] = {"status": "written", "source": source, "records": len(records), **stats}
     summary["packages_written"] = sum(item.get("status") in {"written", "reused"} for item in summary["packages"].values())
     summary["packages_unresolved"] = sum(item.get("status") == "unresolved" for item in summary["packages"].values())
+    summary["stdlib_packages_written"] = sum(
+        name in sys.stdlib_module_names and item.get("status") in {"written", "reused"}
+        for name, item in summary["packages"].items()
+    )
     if args.summary_output:
         write_json(Path(args.summary_output), summary)
     print(json.dumps(summary, ensure_ascii=False))

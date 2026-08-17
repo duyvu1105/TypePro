@@ -16,6 +16,7 @@ class Function_methods:
     project_use_path = "./data/project_function_use.json"
     project_class_path  = "./data/project_class_defined.json"
     minimum_similarity_standard = 0.78
+    recall_limit = 20
     def __init__(self):
         self.total_function_data = self.read_projects_from_json(self.project_data_path)
         self.total_function_use_data = self.read_projects_from_json2(self.project_use_path)
@@ -34,6 +35,7 @@ class Function_methods:
             self._classes_by_name[item.name].append(item.signature)
         self._class_name_similarity_cache = {}
         self._file_class_cache = {}
+        self._exact_import_cache = {}
 
     def load_func_data(self):
 
@@ -159,14 +161,16 @@ class Function_methods:
 
         return imports
 
-    def calculate_similarity_for_class_name(self, target_code:str):
+    def calculate_similarity_for_class_name(
+        self, target_code: str, limit: int | None = None
+    ):
 
         cached = self._class_name_similarity_cache.get(target_code)
         if cached is not None:
             return list(cached)
 
-        choiceNumber = 5
-        MinimumThreshold = 0.3
+        choiceNumber = limit or self.recall_limit
+        MinimumThreshold = 0.2
         res = []
         for cls in self.total_class_data:
             sim = self.similarity_difflib(target_code, cls.name)
@@ -181,6 +185,29 @@ class Function_methods:
             new_lis.append(i[0])
         self._class_name_similarity_cache[target_code] = tuple(new_lis)
         return new_lis
+
+    def exact_imported_class_definitions(self, file_path: str) -> list[str]:
+        """Return project class definitions named by direct/qualified imports."""
+        cached = self._exact_import_cache.get(file_path)
+        if cached is not None:
+            return list(cached)
+        try:
+            with open(file_path, "r", encoding="utf-8") as handle:
+                tree = ast.parse(handle.read(), filename=file_path)
+        except (OSError, SyntaxError, ValueError):
+            return []
+        imported_names = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                for alias in node.names:
+                    if alias.name != "*":
+                        imported_names.add(alias.name)
+        definitions = []
+        for name in imported_names:
+            definitions.extend(self._classes_by_name.get(name, ()))
+        result = tuple(dict.fromkeys(definitions))
+        self._exact_import_cache[file_path] = result
+        return list(result)
     def find_file_class_name(self, file_path: str, name: str):
         cache_key = (file_path, name)
         if cache_key in self._file_class_cache:
