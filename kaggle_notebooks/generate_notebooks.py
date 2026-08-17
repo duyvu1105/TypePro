@@ -423,6 +423,11 @@ def shard_notebook(
         TEST_PROJECTS = 100
         VALIDATION_PROJECT_RATIO = 0.10
         SLICE_LOG_EVERY = 50
+        SLICE_ANNOTATION_TIMEOUT_SECONDS = 600
+        SLICE_TIMEOUT_PROJECTS = [
+            "home-assistant/home-assistant",
+            "Opentrons/opentrons",
+        ]
 
         from pathlib import Path
 
@@ -657,6 +662,12 @@ def shard_notebook(
             "--shard-count", SHARD_COUNT,
             "--shard-index", SHARD_INDEX,
             "--slice-log-every", SLICE_LOG_EVERY,
+            "--slice-annotation-timeout-seconds", SLICE_ANNOTATION_TIMEOUT_SECONDS,
+            *[
+                value
+                for project in SLICE_TIMEOUT_PROJECTS
+                for value in ("--slice-timeout-project", project)
+            ],
             "--build-import-kb",
             "--download-missing-imports",
             "--kb-max-files-per-package", 3000,

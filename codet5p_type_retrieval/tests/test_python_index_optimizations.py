@@ -1,13 +1,16 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[2]
 PYTHON_DIR = ROOT / "Python"
 sys.path.insert(0, str(PYTHON_DIR))
 
+import export_slices
 import readFunctionUseData
-from export_slices import export_one
+from export_slices import AnnotationTimeoutError, annotation_deadline, export_one
 from function_methods import Function_methods
 from slicing_code_class import CachedStatement, ProjectAnalysisCache, Slicer
 from type_defined import ProjectClassDefine, ProjectDefined, ProjectUseData
@@ -226,3 +229,33 @@ def test_function_use_cache_preserves_event_order_and_signature_filtering(
     assert calls == uses
     assert cache.hits["function"] == 1
     assert cache.hits["function_output"] == 1
+
+
+def test_annotation_deadline_raises_and_always_cancels_timer(monkeypatch):
+    assert not issubclass(AnnotationTimeoutError, Exception)
+    handlers = {}
+    timers = []
+    alarm = 14
+    old_handler = object()
+
+    monkeypatch.setattr(export_slices.signal, "SIGALRM", alarm, raising=False)
+    monkeypatch.setattr(export_slices.signal, "ITIMER_REAL", 0, raising=False)
+    monkeypatch.setattr(
+        export_slices.signal, "getsignal", lambda _signal_number: old_handler
+    )
+
+    def fake_signal(signal_number, handler):
+        handlers[signal_number] = handler
+
+    def fake_setitimer(_timer, seconds):
+        timers.append(seconds)
+
+    monkeypatch.setattr(export_slices.signal, "signal", fake_signal)
+    monkeypatch.setattr(export_slices.signal, "setitimer", fake_setitimer, raising=False)
+
+    with pytest.raises(AnnotationTimeoutError, match="600-second"):
+        with annotation_deadline(600):
+            handlers[alarm](alarm, None)
+
+    assert timers == [600, 0]
+    assert handlers[alarm] is old_handler

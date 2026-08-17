@@ -629,7 +629,7 @@ class Slicer:
                         for f in sigs:
                             func_sig_used_list.append(f)
                     break
-        except:
+        except Exception:
             logger.warning(f"analysizer use data error {data.name}, code:{fix_srcCode}")
 
         if cache_key is not None:

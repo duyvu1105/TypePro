@@ -9,8 +9,10 @@ import argparse
 import ast
 import json
 import re
+import signal
 import subprocess
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -31,6 +33,36 @@ PACKAGE_RE = re.compile(r"(?m)^\s*#\s*package:\s*(\S+)")
 MODULE_RE = re.compile(r"(?m)^\s*#\s*module:\s*(\S+)")
 
 
+class AnnotationTimeoutError(BaseException):
+    """Control-flow exception that ordinary analysis error handlers must not swallow."""
+
+    pass
+
+
+@contextmanager
+def annotation_deadline(seconds: int):
+    """Interrupt one annotation on Linux without losing the process caches."""
+    if seconds <= 0:
+        yield
+        return
+    if not all(hasattr(signal, name) for name in ("SIGALRM", "setitimer", "ITIMER_REAL")):
+        raise RuntimeError("Per-annotation timeout requires POSIX setitimer support")
+
+    def handle_timeout(_signum, _frame):
+        raise AnnotationTimeoutError(
+            f"annotation exceeded the {seconds}-second deadline"
+        )
+
+    previous_handler = signal.getsignal(signal.SIGALRM)
+    signal.signal(signal.SIGALRM, handle_timeout)
+    signal.setitimer(signal.ITIMER_REAL, seconds)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous_handler)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Create TypePro contrastive-training records")
     parser.add_argument("--dataset", required=True, help="ManyTypes4Py/TypeGen-style JSON or JSONL")
@@ -41,7 +73,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--parameters-only", action="store_true")
     parser.add_argument("--exclude-builtins", action="store_true")
     parser.add_argument("--log-every", type=int, default=100, help="Print progress every N annotations; 0 disables")
-    return parser.parse_args()
+    parser.add_argument(
+        "--annotation-timeout-seconds",
+        type=int,
+        default=0,
+        help="Skip one annotation after this many seconds; 0 disables",
+    )
+    args = parser.parse_args()
+    if args.annotation_timeout_seconds < 0:
+        parser.error("--annotation-timeout-seconds must be >= 0")
+    return args
 
 
 def is_builtin_row(row: dict[str, Any]) -> bool:
@@ -261,7 +302,7 @@ def main() -> None:
     current_project: tuple[str, ...] | None = None
     function_methods: Function_methods | None = None
     analysis_cache: ProjectAnalysisCache | None = None
-    written = failed = 0
+    written = failed = timed_out = 0
 
     with output.open("w", encoding="utf-8") as handle:
         for index, row in enumerate(rows):
@@ -280,17 +321,28 @@ def main() -> None:
                 elif function_methods is None:
                     function_methods = Function_methods()
                     analysis_cache = ProjectAnalysisCache()
-                result = export_one(
-                    row,
-                    resolve_file(row, repos_root),
-                    function_methods=function_methods,
-                    analysis_cache=analysis_cache,
-                )
+                with annotation_deadline(args.annotation_timeout_seconds):
+                    result = export_one(
+                        row,
+                        resolve_file(row, repos_root),
+                        function_methods=function_methods,
+                        analysis_cache=analysis_cache,
+                    )
                 if result is None:
                     failed += 1
                 else:
                     handle.write(json.dumps(result, ensure_ascii=False) + "\n")
                     written += 1
+            except AnnotationTimeoutError as error:
+                failed += 1
+                timed_out += 1
+                print(
+                    f"[annotation:timeout] index={index} "
+                    f"seconds={args.annotation_timeout_seconds} "
+                    f"file={row.get('file')!r} name={row.get('name')!r}: {error}",
+                    file=sys.stderr,
+                    flush=True,
+                )
             except Exception as error:  # Continue a long dataset export and retain actionable diagnostics.
                 failed += 1
                 print(f"[{index}] {row.get('file')}: {type(error).__name__}: {error}", file=sys.stderr)
@@ -308,6 +360,8 @@ def main() -> None:
         "filtered": original_count - len(rows),
         "written": written,
         "failed": failed,
+        "timed_out": timed_out,
+        "annotation_timeout_seconds": args.annotation_timeout_seconds,
         "output": str(output),
     }))
 

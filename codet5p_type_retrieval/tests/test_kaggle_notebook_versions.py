@@ -46,6 +46,11 @@ def test_account_notebook_locks_publish_owner_and_assigned_shards():
     assert "use_explicit_credential" in serialized
     assert 'os.environ[\\"KAGGLE_USERNAME\\"] = publish_username' in serialized
     assert "credentials_printed" in serialized
+    assert "SLICE_ANNOTATION_TIMEOUT_SECONDS = 600" in config
+    assert '"home-assistant/home-assistant"' in config
+    assert '"Opentrons/opentrons"' in config
+    assert "--slice-annotation-timeout-seconds" in serialized
+    assert "--slice-timeout-project" in serialized
     assert notebook["metadata"]["typepro"] == {
         "assigned_shards": [0, 1, 2, 3, 4],
         "initial_shard_index": 0,

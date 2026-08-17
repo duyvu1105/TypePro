@@ -4,7 +4,12 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from prepare_dataset import build_splits, eligible_parameter_rows, project_from_row
+from prepare_dataset import (
+    annotation_timeout_for_project,
+    build_splits,
+    eligible_parameter_rows,
+    project_from_row,
+)
 
 
 class Args:
@@ -53,3 +58,12 @@ def test_only_non_builtin_parameters_are_eligible():
     assert [item["name"] for item in eligible] == ["value_1"]
     assert stats["non_parameter"] == 1
     assert stats["builtin"] == 1
+
+
+def test_annotation_timeout_is_limited_to_configured_slow_projects():
+    projects = {"home-assistant/home-assistant", "Opentrons/opentrons"}
+
+    assert annotation_timeout_for_project(600, projects, "home-assistant/home-assistant") == 600
+    assert annotation_timeout_for_project(600, projects, "Opentrons/opentrons") == 600
+    assert annotation_timeout_for_project(600, projects, "fast/project") == 0
+    assert annotation_timeout_for_project(0, projects, "home-assistant/home-assistant") == 0

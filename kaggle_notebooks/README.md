@@ -98,6 +98,12 @@ python kaggle_notebooks/commit_repartitioned_parts.py
 python kaggle_notebooks/commit_repartitioned_parts.py --push
 ```
 
+The shard notebooks enforce a 600-second per-annotation deadline only for
+`home-assistant/home-assistant` and `Opentrons/opentrons`. A timed-out
+annotation is logged as `[annotation:timeout]`, counted in
+`failed_annotations`, and omitted from the shard output so the remaining
+annotations and projects can complete. Other projects do not use this timeout.
+
 The exact merge inputs are recorded in `shard_merge_plan.json`; do not infer
 their owners from the logical shard number. The current merge consists of 16
 physical Datasets covering ten logical shards:

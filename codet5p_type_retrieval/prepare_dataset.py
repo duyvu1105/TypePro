@@ -77,7 +77,22 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--preview-max-chars", type=int, default=1600, help="Maximum characters per sample; 0 prints all")
     parser.add_argument("--log-every", type=int, default=10000, help="Preprocess progress interval; 0 disables")
     parser.add_argument("--slice-log-every", type=int, default=100, help="Print progress every N annotations within a project")
-    return parser.parse_args()
+    parser.add_argument(
+        "--slice-annotation-timeout-seconds",
+        type=int,
+        default=0,
+        help="Skip an annotation after this many seconds; 0 disables",
+    )
+    parser.add_argument(
+        "--slice-timeout-project",
+        action="append",
+        default=[],
+        help="Apply the annotation timeout only to this owner/repository; repeatable",
+    )
+    args = parser.parse_args()
+    if args.slice_annotation_timeout_seconds < 0:
+        parser.error("--slice-annotation-timeout-seconds must be >= 0")
+    return args
 
 
 def sha256_file(path: Path, chunk_size: int = 1024 * 1024) -> str:
@@ -346,7 +361,7 @@ def run_logged(command: list[str], cwd: Path, log_path: Path) -> str:
             log_handle.write(line)
             log_handle.flush()
             tail = (tail + line)[-4000:]
-            if line.startswith("[export:progress]"):
+            if line.startswith(("[export:progress]", "[annotation:timeout]")):
                 tqdm.write(line.rstrip())
         return_code = process.wait()
         if return_code:
@@ -385,6 +400,16 @@ def load_prepared_annotations(work_dir: Path) -> list[dict[str, Any]]:
     return rows
 
 
+def annotation_timeout_for_project(
+    seconds: int, timeout_projects: set[str], project: str
+) -> int:
+    if seconds <= 0:
+        return 0
+    if timeout_projects and project not in timeout_projects:
+        return 0
+    return seconds
+
+
 def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path) -> dict[str, Any]:
     python_dir = typepro_root / "Python"
     exporter = python_dir / "export_slices.py"
@@ -396,6 +421,7 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
     rows_by_project: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in load_prepared_annotations(work_dir):
         rows_by_project[project_from_row(row)].append(row)
+    timeout_projects = set(args.slice_timeout_project)
 
     projects = sorted(rows_by_project, key=lambda value: stable_number(value, args.seed + 3))
     projects = [project for project in projects if stable_number(project, args.seed + 4) % args.shard_count == args.shard_index]
@@ -432,6 +458,8 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
         "import_knowledge_base_path": str(generated_kb) if args.build_import_kb else None,
         "download_missing_imports": bool(args.download_missing_imports),
         "repos_root_provided": bool(args.repos_root),
+        "slice_annotation_timeout_seconds": args.slice_annotation_timeout_seconds,
+        "slice_timeout_projects": sorted(timeout_projects),
     })
 
     counters = Counter(selected_projects=len(projects))
@@ -500,6 +528,13 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
                 "--parameters-only", "--exclude-builtins",
                 "--log-every", str(args.slice_log_every),
             ]
+            annotation_timeout = annotation_timeout_for_project(
+                args.slice_annotation_timeout_seconds, timeout_projects, project
+            )
+            if annotation_timeout:
+                command.extend([
+                    "--annotation-timeout-seconds", str(annotation_timeout)
+                ])
             phase_started = time.monotonic()
             tqdm.write(f"[project:export:start] {project}")
             exporter_tail = run_logged(command, python_dir, status_dir / f"{slug}.log")
@@ -514,6 +549,7 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
                 "annotations": len(project_rows),
                 "exported": exported,
                 "failed_annotations": len(project_rows) - exported,
+                "annotation_timeout_seconds": annotation_timeout,
                 "third_party_kb": kb_summary,
                 "completed_at": datetime.now(timezone.utc).isoformat(),
                 "exporter_tail": exporter_tail,
