@@ -225,6 +225,8 @@ def test_merge_notebook_uses_attached_inputs_and_final_owner_for_publish():
     assert "FINAL_SOURCE['owner']" in serialized
     assert "/kaggle/input" in serialized
     assert '\\"datasets\\", \\"download\\"' not in serialized
+    assert "INPUT_ROOT.rglob(\\\"shard_manifest.json\\\")" in serialized
+    assert "dataset_id.rsplit" not in serialized
 
 
 def test_merge_kernel_metadata_attaches_exact_merge_plan_inputs():

@@ -1317,36 +1317,56 @@ def merge_notebook(
         markdown("## Validate all attached shard Dataset inputs"),
         code("""
         EXTRACTED_INPUT_ROOT.mkdir(parents=True, exist_ok=True)
+        attached_builds = {}
+
+        def register_manifest(marker_path):
+            marker = json.loads(marker_path.read_text(encoding="utf-8"))
+            coordinates = (marker.get("shard_index"), marker.get("shard_count"))
+            attached_builds.setdefault(coordinates, []).append(
+                (marker_path.parent, marker)
+            )
+
+        # Kaggle may normalize or suffix mounted directory names. Resolve each
+        # input by its validated manifest coordinates instead of guessing a
+        # /kaggle/input/<dataset-slug> path.
+        for marker_path in INPUT_ROOT.rglob("shard_manifest.json"):
+            register_manifest(marker_path)
+
+        for archive_number, archive in enumerate(
+            INPUT_ROOT.rglob("typepro_build_shard_*.zip")
+        ):
+            if list(archive.parent.rglob("shard_manifest.json")):
+                continue
+            target = EXTRACTED_INPUT_ROOT / f"archive_{archive_number:02d}"
+            target.mkdir(parents=True, exist_ok=True)
+            with zipfile.ZipFile(archive) as bundle:
+                bundle.extractall(target)
+            extracted_markers = list(target.rglob("shard_manifest.json"))
+            if len(extracted_markers) != 1:
+                raise RuntimeError(
+                    f"Cannot uniquely locate manifest in attached archive {archive}: "
+                    f"{extracted_markers}"
+                )
+            register_manifest(extracted_markers[0])
+
         shard_builds = []
         for item in MERGE_DATASETS:
             dataset_id = item["dataset_id"]
             index = item["shard_index"]
             expected_count = item["shard_count"]
-            input_dir = INPUT_ROOT / dataset_id.rsplit("/", 1)[-1]
-            if not input_dir.is_dir():
+            candidates = attached_builds.get((index, expected_count), [])
+            if len(candidates) != 1:
                 raise RuntimeError(
-                    f"Attached input is missing for {dataset_id}: {input_dir}"
+                    f"{dataset_id}: expected one attached build for "
+                    f"{index}/{expected_count}, found {candidates}; "
+                    f"mounted={sorted(str(path) for path in INPUT_ROOT.iterdir())}"
                 )
-            marker_paths = list(input_dir.rglob("shard_manifest.json"))
-            if not marker_paths:
-                # Older shard datasets may preserve the pre-packed ZIP, while
-                # Kaggle expands newer uploads into a directory tree.
-                archives = list(input_dir.rglob("typepro_build_shard_*.zip"))
-                if len(archives) != 1:
-                    raise RuntimeError(
-                        f"{dataset_id}: expected one build directory or archive, "
-                        f"found markers={marker_paths}, archives={archives}"
-                    )
-                target = EXTRACTED_INPUT_ROOT / dataset_id.replace("/", "__")
-                target.mkdir(parents=True, exist_ok=True)
-                with zipfile.ZipFile(archives[0]) as bundle:
-                    bundle.extractall(target)
-                marker_paths = list(target.rglob("shard_manifest.json"))
-            if len(marker_paths) != 1:
-                raise RuntimeError(f"{dataset_id}: cannot uniquely locate shard build: {marker_paths}")
-            build = marker_paths[0].parent
-            marker = json.loads(marker_paths[0].read_text(encoding="utf-8"))
-            if marker["shard_index"] != index or marker["shard_count"] != expected_count or marker["missing_projects"]:
+            build, marker = candidates[0]
+            if (
+                marker["missing_projects"]
+                or marker.get("selected_projects", 0) <= 0
+                or marker.get("attempted_projects") != marker.get("selected_projects")
+            ):
                 raise RuntimeError(f"Invalid/incomplete shard marker: {marker}")
             required = [
                 build / "metadata" / "split_manifest.json",
