@@ -16,7 +16,7 @@ from commit_shard_versions import load_credential, run_push
 ROOT = Path(__file__).resolve().parent
 REPO_ROOT = ROOT.parent
 OWNER = "duyvu1105"
-KERNEL_SLUG = "typepro-merge-16-verified-partitions"
+KERNEL_SLUG = "typepro-merge-18-verified-partitions"
 NOTEBOOK_PATH = ROOT / "03_merge_finalize.ipynb"
 MERGE_PLAN_PATH = ROOT / "shard_merge_plan.json"
 CREDENTIAL_PATH = REPO_ROOT / "kaggle.json"
@@ -27,8 +27,8 @@ def merge_dataset_ids() -> list[str]:
     if plan.get("final_dataset_owner") != OWNER:
         raise RuntimeError("Merge plan final owner does not match merge kernel owner")
     datasets = plan.get("datasets")
-    if not isinstance(datasets, list) or len(datasets) != 16:
-        raise RuntimeError("Merge plan must contain exactly 16 physical Datasets")
+    if not isinstance(datasets, list) or len(datasets) != 18:
+        raise RuntimeError("Merge plan must contain exactly 18 physical Datasets")
     result = [item["dataset_id"] for item in datasets]
     if len(result) != len(set(result)):
         raise RuntimeError("Merge plan contains duplicate Dataset IDs")
@@ -38,7 +38,7 @@ def merge_dataset_ids() -> list[str]:
 def kernel_metadata(code_file: str) -> dict:
     return {
         "id": f"{OWNER}/{KERNEL_SLUG}",
-        "title": "TypePro Merge 16 Verified Partitions",
+        "title": "TypePro Merge 18 Verified Partitions",
         "code_file": code_file,
         "language": "python",
         "kernel_type": "notebook",

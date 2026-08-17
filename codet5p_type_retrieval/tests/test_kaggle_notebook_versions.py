@@ -233,9 +233,9 @@ def test_merge_kernel_metadata_attaches_exact_merge_plan_inputs():
     dataset_ids = commit_merge_finalize.merge_dataset_ids()
     metadata = commit_merge_finalize.kernel_metadata("typepro_merge_finalize.ipynb")
 
-    assert len(dataset_ids) == 16
-    assert len(set(dataset_ids)) == 16
-    assert metadata["id"] == "duyvu1105/typepro-merge-16-verified-partitions"
+    assert len(dataset_ids) == 18
+    assert len(set(dataset_ids)) == 18
+    assert metadata["id"] == "duyvu1105/typepro-merge-18-verified-partitions"
     assert metadata["dataset_sources"] == dataset_ids
 
 
@@ -295,7 +295,17 @@ def test_merge_plan_covers_all_logical_shards_without_overlap():
         plan["datasets"], 10, "duyvu1105"
     )
 
-    assert len(datasets) == 16
+    assert len(datasets) == 18
+    assert {
+        (item["shard_index"], item["shard_count"])
+        for item in datasets
+        if item["logical_shard_index"] == 5
+    } == {(5, 20), (15, 20)}
+    assert {
+        (item["shard_index"], item["shard_count"])
+        for item in datasets
+        if item["logical_shard_index"] == 9
+    } == {(9, 20), (19, 20)}
     assert {item["dataset_id"] for item in datasets if item["shard_index"] in {14, 34, 54}} == {
         "duymign/typepro-build-shard-14",
         "duymign/typepro-build-shard-34",

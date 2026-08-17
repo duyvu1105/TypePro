@@ -14,7 +14,7 @@ parameter-only dataset:
 - `commit_shard_versions.py`: render and optionally push five immutable shard versions per account.
 - `commit_repartitioned_parts.py`: render/push the six short replacements for
   the cancelled shard 01 A/2 and shard 04 B/2 jobs.
-- `commit_merge_finalize.py`: attach the exact 16 shard Datasets and push/check
+- `commit_merge_finalize.py`: attach the exact 18 shard Datasets and push/check
   the final merge kernel under `duyvu1105`.
 - `generate_notebooks.py`: regenerate the complete workflow.
 
@@ -107,11 +107,14 @@ annotation is logged as `[annotation:timeout]`, counted in
 annotations and projects can complete. Other projects do not use this timeout.
 
 The exact merge inputs are recorded in `shard_merge_plan.json`; do not infer
-their owners from the logical shard number. The current merge consists of 16
-physical Datasets covering ten logical shards:
+their owners from the logical shard number. The current merge consists of 18
+physical Datasets covering ten logical shards. In addition to the shard 01 and
+04 replacements above, shards 05 and 09 each consist of two completed
+`SHARD_COUNT=20` halves:
 
 - private under `duyvu1105`: `00`, `01`, `21`, `41`, `11`, `02`, `03`, `04`;
-- public under `duymign`: `14`, `34`, `54`, `05`, `06`, `07`, `08`, `09`.
+- public under `duymign`: `14`, `34`, `54`, `05`, `15`, `06`, `07`, `08`,
+  `09`, `19`.
 
 Here each number denotes `owner/typepro-build-shard-NN`. The generator validates
 the residue coverage at modulus 60 and embeds these exact Dataset IDs and
@@ -119,10 +122,11 @@ expected `shard_index/shard_count` values in `03_merge_finalize.ipynb`.
 
 Each version authenticates with its runner's own Secret, isolates that
 credential from Kaggle's automatic host authentication, and refuses to publish
-under any other owner. The split is therefore:
+under any other owner. The logical owner split is therefore:
 
 - `duyvu1105/typepro-build-shard-00` through `...-04`;
-- `duymign/typepro-build-shard-05` through `...-09`.
+- logical shards 05-09 under `duymign`, using the physical halves `05`/`15`
+  and `09`/`19` where listed in the merge plan.
 
 Kaggle rejected private cross-account downloads using the available `duymign`
 legacy credential, while a live public-dataset download succeeded. Therefore
@@ -132,11 +136,11 @@ shards 05-09 are intentionally public. The merge notebook can use
 - `TYPEPRO_FINAL_USERNAME=duyvu1105`;
 - `TYPEPRO_FINAL_KEY` from `kaggle.json`.
 
-That identity reads its own private shards 00-04 and the public `duymign`
-shards 05-09. After validating all ten manifests, it publishes the final
-private `duyvu1105/typepro-python-contrastive` Dataset.
+That identity reads its own private partitions and the public `duymign`
+partitions. After validating all 18 manifests covering ten logical shards, it
+publishes the final private `duyvu1105/typepro-python-contrastive` Dataset.
 
-The merge kernel receives all 16 physical Datasets through Kaggle
+The merge kernel receives all 18 physical Datasets through Kaggle
 `dataset_sources`; it validates them directly under `/kaggle/input` and does
 not download shard payloads again at runtime. Dry-run, push, and check it with:
 

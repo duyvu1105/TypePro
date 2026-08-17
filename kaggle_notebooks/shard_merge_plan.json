@@ -15,11 +15,13 @@
     {"dataset_id": "duymign/typepro-build-shard-14", "logical_shard_index": 4, "shard_index": 14, "shard_count": 60, "public_dataset": true},
     {"dataset_id": "duymign/typepro-build-shard-34", "logical_shard_index": 4, "shard_index": 34, "shard_count": 60, "public_dataset": true},
     {"dataset_id": "duymign/typepro-build-shard-54", "logical_shard_index": 4, "shard_index": 54, "shard_count": 60, "public_dataset": true},
-    {"dataset_id": "duymign/typepro-build-shard-05", "logical_shard_index": 5, "shard_index": 5, "shard_count": 10, "public_dataset": true},
+    {"dataset_id": "duymign/typepro-build-shard-05", "logical_shard_index": 5, "shard_index": 5, "shard_count": 20, "public_dataset": true},
+    {"dataset_id": "duymign/typepro-build-shard-15", "logical_shard_index": 5, "shard_index": 15, "shard_count": 20, "public_dataset": true},
     {"dataset_id": "duymign/typepro-build-shard-06", "logical_shard_index": 6, "shard_index": 6, "shard_count": 10, "public_dataset": true},
     {"dataset_id": "duymign/typepro-build-shard-07", "logical_shard_index": 7, "shard_index": 7, "shard_count": 10, "public_dataset": true},
     {"dataset_id": "duymign/typepro-build-shard-08", "logical_shard_index": 8, "shard_index": 8, "shard_count": 10, "public_dataset": true},
-    {"dataset_id": "duymign/typepro-build-shard-09", "logical_shard_index": 9, "shard_index": 9, "shard_count": 10, "public_dataset": true}
+    {"dataset_id": "duymign/typepro-build-shard-09", "logical_shard_index": 9, "shard_index": 9, "shard_count": 20, "public_dataset": true},
+    {"dataset_id": "duymign/typepro-build-shard-19", "logical_shard_index": 9, "shard_index": 19, "shard_count": 20, "public_dataset": true}
   ],
   "replacement_jobs": [
     {"runner_account": "duyvu1105", "kernel_slug": "typepro-shard-01-10-part-a1-3", "dataset_id": "duyvu1105/typepro-build-shard-01", "logical_shard_index": 1, "parent_part": "A/2", "subpart": "1/3", "shard_index": 1, "shard_count": 60},
