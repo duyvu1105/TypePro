@@ -10,7 +10,6 @@ NOTEBOOK_DIR = ROOT / "kaggle_notebooks"
 sys.path.insert(0, str(NOTEBOOK_DIR))
 
 import commit_shard_versions
-import commit_repartitioned_parts
 import commit_merge_finalize
 import generate_notebooks
 import recover_shard_version
@@ -26,19 +25,19 @@ def source_with_tag(notebook, tag):
     return cells[0]["source"]
 
 
-def test_account_notebook_locks_publish_owner_and_assigned_shards():
+def test_standalone_notebook_locks_publish_owner_and_single_shard():
     notebook = generate_notebooks.shard_notebook(
         0,
         10,
         "https://github.com/duyvu1105/TypePro.git",
         "main",
-        assigned_shards=[0, 1, 2, 3, 4],
+        assigned_shards=[0],
         expected_dataset_owner="duyvu1105",
     )
     serialized = json.dumps(notebook)
     config = source_with_tag(notebook, "typepro-shard-config")
 
-    assert "ASSIGNED_SHARDS = [0, 1, 2, 3, 4]" in config
+    assert "ASSIGNED_SHARDS = [0]" in config
     assert "SHARD_INDEX = 0" in config
     assert "EXPECTED_DATASET_OWNER = 'duyvu1105'" in config
     assert "TYPEPRO_PUBLISH_USERNAME" in serialized
@@ -48,41 +47,45 @@ def test_account_notebook_locks_publish_owner_and_assigned_shards():
     assert 'os.environ[\\"KAGGLE_USERNAME\\"] = publish_username' in serialized
     assert "credentials_printed" in serialized
     assert "SLICE_ANNOTATION_TIMEOUT_SECONDS = 600" in config
+    assert 'RETRIEVAL_SCHEMA_VERSION = "typepro-high-recall-v3"' in config
     assert '"home-assistant/home-assistant"' in config
     assert '"Opentrons/opentrons"' in config
     assert "--slice-annotation-timeout-seconds" in serialized
     assert "--slice-timeout-project" in serialized
+    assert "--retrieval-schema-version" in serialized
+    assert "restored_runtime.get" in serialized
     assert notebook["metadata"]["typepro"] == {
-        "assigned_shards": [0, 1, 2, 3, 4],
+        "assigned_shards": [0],
         "initial_shard_index": 0,
         "expected_dataset_owner": "duyvu1105",
         "public_dataset": False,
     }
 
 
-@pytest.mark.parametrize("shard_index", [0, 1, 2, 3, 4])
+@pytest.mark.parametrize("shard_index", range(10))
 def test_rendered_version_contains_exactly_one_assigned_shard(shard_index):
     template = generate_notebooks.shard_notebook(
-        0,
+        shard_index,
         10,
         "https://github.com/duyvu1105/TypePro.git",
         "main",
-        assigned_shards=[0, 1, 2, 3, 4],
-        expected_dataset_owner="duyvu1105",
+        assigned_shards=[shard_index],
+        expected_dataset_owner="duyvu1105" if shard_index < 5 else "duymign",
+        public_dataset=shard_index >= 5,
     )
     rendered = commit_shard_versions.render_shard_version(
         template,
         shard_index,
-        (0, 1, 2, 3, 4),
-        "duyvu1105",
-        False,
+        (shard_index,),
+        "duyvu1105" if shard_index < 5 else "duymign",
+        shard_index >= 5,
     )
     config = source_with_tag(rendered, "typepro-shard-config")
 
     assert f"SHARD_INDEX = {shard_index}" in config
     assert rendered["metadata"]["typepro"]["rendered_shard_index"] == shard_index
     assert rendered["metadata"]["typepro"]["version_contract"] == (
-        "one-kaggle-version-builds-one-shard"
+        "one-kaggle-notebook-builds-one-shard"
     )
 
 
@@ -92,41 +95,40 @@ def test_render_rejects_shard_owned_by_other_account():
         10,
         "https://github.com/duyvu1105/TypePro.git",
         "main",
-        assigned_shards=[0, 1, 2, 3, 4],
+        assigned_shards=[0],
         expected_dataset_owner="duyvu1105",
     )
     with pytest.raises(ValueError, match="not assigned"):
         commit_shard_versions.render_shard_version(
             template,
             5,
-            (0, 1, 2, 3, 4),
+            (0,),
             "duyvu1105",
             False,
         )
 
 
-def test_plan_requires_two_accounts_and_exact_ten_shards(tmp_path):
-    notebooks = []
-    accounts = []
+def test_plan_requires_ten_notebooks_and_five_shards_per_account(tmp_path):
+    shards_plan = []
     for account, shards in (("duyvu1105", range(5)), ("duymign", range(5, 10))):
-        notebook_name = f"{account}.ipynb"
-        (tmp_path / notebook_name).write_text("{}", encoding="utf-8")
-        notebooks.append(notebook_name)
-        accounts.append({
-            "runner_account": account,
-            "dataset_owner": account,
-            "public_dataset": account == "duymign",
-            "notebook": notebook_name,
-            "assigned_shards": list(shards),
-            "kernel_slug": f"typepro-shards-{min(shards):02d}-{max(shards):02d}",
-        })
+        for shard_index in shards:
+            notebook_name = f"shard-{shard_index:02d}.ipynb"
+            (tmp_path / notebook_name).write_text("{}", encoding="utf-8")
+            shards_plan.append({
+                "shard_index": shard_index,
+                "runner_account": account,
+                "dataset_owner": account,
+                "public_dataset": account == "duymign",
+                "notebook": notebook_name,
+                "kernel_slug": f"typepro-python-shard-{shard_index:02d}",
+            })
     plan_path = tmp_path / "plan.json"
     plan_path.write_text(
         json.dumps({
-            "schema_version": "typepro-shard-account-plan-v2",
+            "schema_version": "typepro-shard-account-plan-v3",
             "final_dataset_owner": "duyvu1105",
             "shard_count": 10,
-            "accounts": accounts,
+            "shards": shards_plan,
         }),
         encoding="utf-8",
     )
@@ -134,30 +136,58 @@ def test_plan_requires_two_accounts_and_exact_ten_shards(tmp_path):
     owner, count, plans = commit_shard_versions.load_plan(plan_path)
     assert owner == "duyvu1105"
     assert count == 10
-    assert [plan.runner_account for plan in plans] == ["duyvu1105", "duymign"]
+    assert [plan.runner_account for plan in plans[:5]] == ["duyvu1105"] * 5
+    assert [plan.runner_account for plan in plans[5:]] == ["duymign"] * 5
     assert [index for plan in plans for index in plan.assigned_shards] == list(range(10))
 
 
+def test_generated_artifacts_are_ten_standalone_notebooks_and_direct_merge():
+    owner, count, plans = commit_shard_versions.load_plan(
+        NOTEBOOK_DIR / "shard_account_plan.json"
+    )
+
+    assert owner == "duyvu1105"
+    assert count == 10
+    assert len(plans) == 10
+    assert [plan.notebook_path.name for plan in plans] == [
+        f"{index + 1:02d}_typepro_shard_{index:02d}.ipynb"
+        for index in range(10)
+    ]
+    assert len({plan.kernel_slug for plan in plans}) == 10
+    for index, plan in enumerate(plans):
+        notebook = json.loads(plan.notebook_path.read_text(encoding="utf-8"))
+        config = source_with_tag(notebook, "typepro-shard-config")
+        assert f"ASSIGNED_SHARDS = [{index}]" in config
+        assert f"SHARD_INDEX = {index}" in config
+        assert "SHARD_COUNT = 10" in config
+
+    assert (NOTEBOOK_DIR / "11_merge_finalize.ipynb").exists()
+    assert (NOTEBOOK_DIR / "12_train_and_infer.ipynb").exists()
+    assert not (NOTEBOOK_DIR / "03_merge_finalize.ipynb").exists()
+    assert not (NOTEBOOK_DIR / "04_train_and_infer.ipynb").exists()
+
+
 def test_plan_rejects_private_non_final_account(tmp_path):
-    accounts = []
+    shards_plan = []
     for account, shards in (("duyvu1105", range(5)), ("duymign", range(5, 10))):
-        notebook_name = f"{account}.ipynb"
-        (tmp_path / notebook_name).write_text("{}", encoding="utf-8")
-        accounts.append({
-            "runner_account": account,
-            "dataset_owner": account,
-            "public_dataset": False,
-            "notebook": notebook_name,
-            "assigned_shards": list(shards),
-            "kernel_slug": f"typepro-shards-{min(shards):02d}-{max(shards):02d}",
-        })
+        for shard_index in shards:
+            notebook_name = f"shard-{shard_index:02d}.ipynb"
+            (tmp_path / notebook_name).write_text("{}", encoding="utf-8")
+            shards_plan.append({
+                "shard_index": shard_index,
+                "runner_account": account,
+                "dataset_owner": account,
+                "public_dataset": False,
+                "notebook": notebook_name,
+                "kernel_slug": f"typepro-python-shard-{shard_index:02d}",
+            })
     plan_path = tmp_path / "plan.json"
     plan_path.write_text(
         json.dumps({
-            "schema_version": "typepro-shard-account-plan-v2",
+            "schema_version": "typepro-shard-account-plan-v3",
             "final_dataset_owner": "duyvu1105",
             "shard_count": 10,
-            "accounts": accounts,
+            "shards": shards_plan,
         }),
         encoding="utf-8",
     )
@@ -182,11 +212,11 @@ def test_kernel_metadata_is_private_cpu_notebook():
         dataset_owner="duymign",
         public_dataset=True,
         notebook_path=Path("template.ipynb"),
-        kernel_slug="typepro-shards-05-09",
-        assigned_shards=(5, 6, 7, 8, 9),
+        kernel_slug="typepro-python-shard-05",
+        assigned_shards=(5,),
     )
     metadata = commit_shard_versions.kernel_metadata(plan, "typepro_shard.ipynb")
-    assert metadata["id"] == "duymign/typepro-shards-05-09"
+    assert metadata["id"] == "duymign/typepro-python-shard-05"
     assert metadata["is_private"] is True
     assert metadata["enable_gpu"] is False
     assert metadata["enable_internet"] is True
@@ -233,58 +263,10 @@ def test_merge_kernel_metadata_attaches_exact_merge_plan_inputs():
     dataset_ids = commit_merge_finalize.merge_dataset_ids()
     metadata = commit_merge_finalize.kernel_metadata("typepro_merge_finalize.ipynb")
 
-    assert len(dataset_ids) == 18
-    assert len(set(dataset_ids)) == 18
-    assert metadata["id"] == "duyvu1105/typepro-merge-18-verified-partitions"
+    assert len(dataset_ids) == 10
+    assert len(set(dataset_ids)) == 10
+    assert metadata["id"] == "duyvu1105/typepro-merge-10-shards"
     assert metadata["dataset_sources"] == dataset_ids
-
-
-def test_cancelled_halves_are_split_into_three_jobs_per_account():
-    jobs = commit_repartitioned_parts.replacement_jobs()
-
-    assert [job.shard_index for job in jobs[:3]] == [1, 21, 41]
-    assert [job.shard_index for job in jobs[3:]] == [14, 34, 54]
-    assert {job.shard_count for job in jobs} == {60}
-    assert [job.runner_account for job in jobs].count("duyvu1105") == 3
-    assert [job.runner_account for job in jobs].count("duymign") == 3
-    assert all(not job.public_dataset for job in jobs[:3])
-    assert all(job.public_dataset for job in jobs[3:])
-
-
-def test_repartition_push_can_select_only_the_two_long_jobs():
-    jobs = commit_repartitioned_parts.select_jobs(
-        commit_repartitioned_parts.replacement_jobs(),
-        [
-            "typepro-shard-01-10-part-a3-3",
-            "typepro-shard-04-10-part-b3-3",
-        ],
-    )
-
-    assert [job.shard_index for job in jobs] == [41, 54]
-
-
-def test_repartitioned_notebook_records_logical_and_physical_coordinates():
-    notebook = generate_notebooks.repartitioned_shard_notebook(
-        4,
-        1,
-        2,
-        "https://github.com/duyvu1105/TypePro.git",
-        "main",
-        expected_dataset_owner="duymign",
-        public_dataset=True,
-    )
-    serialized = json.dumps(notebook)
-    metadata = notebook["metadata"]["typepro"]
-
-    assert metadata["physical_shard_index"] == 54
-    assert metadata["physical_shard_count"] == 60
-    assert metadata["logical_shard_index"] == 4
-    assert metadata["parent_part_index"] == 1
-    assert metadata["subpart_index"] == 2
-    assert metadata["output_dataset_slug"] == "typepro-build-shard-54"
-    assert "SHARD_INDEX = 54" in serialized
-    assert "SHARD_COUNT = 60" in serialized
-    assert "part B{SUBPART_INDEX + 1}/{SUBPART_COUNT}" in serialized
 
 
 def test_merge_plan_covers_all_logical_shards_without_overlap():
@@ -295,22 +277,10 @@ def test_merge_plan_covers_all_logical_shards_without_overlap():
         plan["datasets"], 10, "duyvu1105"
     )
 
-    assert len(datasets) == 18
-    assert {
-        (item["shard_index"], item["shard_count"])
-        for item in datasets
-        if item["logical_shard_index"] == 5
-    } == {(5, 20), (15, 20)}
-    assert {
-        (item["shard_index"], item["shard_count"])
-        for item in datasets
-        if item["logical_shard_index"] == 9
-    } == {(9, 20), (19, 20)}
-    assert {item["dataset_id"] for item in datasets if item["shard_index"] in {14, 34, 54}} == {
-        "duymign/typepro-build-shard-14",
-        "duymign/typepro-build-shard-34",
-        "duymign/typepro-build-shard-54",
-    }
+    assert len(datasets) == 10
+    assert [(item["shard_index"], item["shard_count"]) for item in datasets] == [
+        (index, 10) for index in range(10)
+    ]
 
 
 def test_recovery_notebook_only_restores_and_publishes_completed_shard():
@@ -321,7 +291,7 @@ def test_recovery_notebook_only_restores_and_publishes_completed_shard():
         "main",
         expected_dataset_owner="duymign",
         public_dataset=True,
-        source_kernel="duymign/typepro-shards-05-09/9",
+        source_kernel="duymign/typepro-python-shard-08/9",
     )
     serialized = json.dumps(notebook)
 
@@ -341,8 +311,8 @@ def test_recovery_metadata_pins_exact_source_version():
         dataset_owner="duymign",
         public_dataset=True,
         notebook_path=Path("template.ipynb"),
-        kernel_slug="typepro-shards-05-09",
-        assigned_shards=(5, 6, 7, 8, 9),
+        kernel_slug="typepro-python-shard-08",
+        assigned_shards=(8,),
     )
     metadata = recover_shard_version.recovery_metadata(
         plan, 8, 9, "recover_shard.ipynb"

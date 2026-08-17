@@ -68,6 +68,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--keep-repos", action="store_true")
     parser.add_argument("--force-metadata", action="store_true")
     parser.add_argument("--force-projects", action="store_true")
+    parser.add_argument(
+        "--retrieval-schema-version",
+        default="typepro-legacy-retrieval",
+        help="Invalidates restored raw slices when recommendation logic changes",
+    )
     parser.add_argument("--max-negatives", type=int, default=7)
     parser.add_argument("--missing-positive", choices=("drop", "append"), default="drop")
     parser.add_argument("--skip-sha256", action="store_true")
@@ -460,6 +465,7 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
         "repos_root_provided": bool(args.repos_root),
         "slice_annotation_timeout_seconds": args.slice_annotation_timeout_seconds,
         "slice_timeout_projects": sorted(timeout_projects),
+        "retrieval_schema_version": args.retrieval_schema_version,
     })
 
     counters = Counter(selected_projects=len(projects))

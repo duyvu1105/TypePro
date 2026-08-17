@@ -383,6 +383,10 @@ def shard_notebook(
         raise ValueError(f"assigned_shards must be within 0..{count - 1}: {assigned_shards}")
     if index not in assigned_shards:
         raise ValueError(f"initial shard {index} is not assigned to this notebook")
+    if assigned_shards != [index]:
+        raise ValueError(
+            "The ten-shard workflow requires one standalone notebook per shard"
+        )
     expected_dataset_owner = (expected_dataset_owner or "").strip()
     if not OWNER_RE.fullmatch(expected_dataset_owner):
         raise ValueError(
@@ -391,15 +395,14 @@ def shard_notebook(
         )
     if not isinstance(public_dataset, bool):
         raise TypeError("public_dataset must be boolean")
-    title = f"TypePro Python dataset shard {index:02d}/{count - 1:02d}"
+    title = f"TypePro Python shard {index:02d} of {count}"
     result = notebook([
         markdown(f"""
         # {title}
 
         Settings required: **Internet ON**, accelerator **None/CPU**. This
-        notebook template is assigned shards `{assigned_shards}`. Each Kaggle
-        version processes exactly one hard-coded `SHARD_INDEX` and publishes
-        `typepro-build-shard-XX` as a
+        standalone notebook is permanently assigned shard `{index:02d}` and
+        publishes `typepro-build-shard-{index:02d}` as a
         `{("public" if public_dataset else "private")}` Dataset under
         `{expected_dataset_owner or 'the authenticated publish owner'}`.
 
@@ -410,8 +413,7 @@ def shard_notebook(
         owner is not the expected owner.
         """),
         code(f"""
-        # This tagged cell is rewritten once per Kaggle version by
-        # commit_shard_versions.py. A committed version must run one shard only.
+        # This standalone notebook permanently builds exactly one shard.
         ASSIGNED_SHARDS = {assigned_shards!r}
         SHARD_INDEX = {index}
         SHARD_COUNT = {count}
@@ -424,6 +426,7 @@ def shard_notebook(
         VALIDATION_PROJECT_RATIO = 0.10
         SLICE_LOG_EVERY = 50
         SLICE_ANNOTATION_TIMEOUT_SECONDS = 600
+        RETRIEVAL_SCHEMA_VERSION = "typepro-high-recall-v3"
         SLICE_TIMEOUT_PROJECTS = [
             "home-assistant/home-assistant",
             "Opentrons/opentrons",
@@ -624,13 +627,26 @@ def shard_notebook(
                 raise RuntimeError(f"Cannot uniquely locate restored shard: {markers}")
             source_build = markers[0].parent
             restored_manifest = json.loads(markers[0].read_text(encoding="utf-8"))
+            restored_runtime_path = source_build / "runtime_manifest.json"
+            restored_runtime = (
+                json.loads(restored_runtime_path.read_text(encoding="utf-8"))
+                if restored_runtime_path.exists() else {}
+            )
             if (
                 restored_manifest.get("shard_index") != SHARD_INDEX
                 or restored_manifest.get("shard_count") != SHARD_COUNT
+                or restored_runtime.get("retrieval_schema_version")
+                != RETRIEVAL_SCHEMA_VERSION
             ):
                 print(
-                    "Ignoring an incompatible previous shard Dataset; starting the new layout:",
-                    restored_manifest,
+                    "Ignoring an incompatible previous shard Dataset; starting fresh:",
+                    {
+                        "manifest": restored_manifest,
+                        "retrieval_schema_version": restored_runtime.get(
+                            "retrieval_schema_version"
+                        ),
+                        "expected_retrieval_schema_version": RETRIEVAL_SCHEMA_VERSION,
+                    },
                 )
             else:
                 shutil.copytree(source_build, WORK_DIR, dirs_exist_ok=True)
@@ -663,6 +679,7 @@ def shard_notebook(
             "--shard-index", SHARD_INDEX,
             "--slice-log-every", SLICE_LOG_EVERY,
             "--slice-annotation-timeout-seconds", SLICE_ANNOTATION_TIMEOUT_SECONDS,
+            "--retrieval-schema-version", RETRIEVAL_SCHEMA_VERSION,
             *[
                 value
                 for project in SLICE_TIMEOUT_PROJECTS
@@ -736,118 +753,6 @@ def shard_notebook(
         "initial_shard_index": index,
         "expected_dataset_owner": expected_dataset_owner or None,
         "public_dataset": public_dataset,
-    }
-    return result
-
-
-def repartitioned_shard_notebook(
-    logical_shard_index: int,
-    parent_part_index: int,
-    subpart_index: int,
-    repository: str,
-    branch: str,
-    *,
-    expected_dataset_owner: str,
-    public_dataset: bool,
-) -> dict:
-    """Split one half of a logical 10-way shard into three 60-way residues."""
-    if logical_shard_index not in range(10):
-        raise ValueError("logical_shard_index must be within 0..9")
-    if parent_part_index not in range(2):
-        raise ValueError("parent_part_index must be 0 (A) or 1 (B)")
-    if subpart_index not in range(3):
-        raise ValueError("subpart_index must be within 0..2")
-    parent_residue = logical_shard_index + 10 * parent_part_index
-    physical_index = parent_residue + 20 * subpart_index
-    physical_count = 60
-    part_letter = chr(ord("A") + parent_part_index)
-    result = shard_notebook(
-        physical_index,
-        physical_count,
-        repository,
-        branch,
-        assigned_shards=[physical_index],
-        expected_dataset_owner=expected_dataset_owner,
-        public_dataset=public_dataset,
-    )
-    result["cells"][0]["source"] = dedent(f"""
-        # TypePro shard {logical_shard_index:02d}/10 part {part_letter}{subpart_index + 1}/3
-
-        This replacement processes subpart {subpart_index + 1}/3 of the cancelled
-        parent part {part_letter}/2 using physical residue
-        `{physical_index:02d}/{physical_count}`. The three subparts are disjoint
-        and exactly cover the original `{parent_residue:02d}/20` residue.
-        Internet must be ON and the accelerator must be None/CPU.
-        """).strip() + "\n"
-
-    config = result["cells"][1]["source"]
-    marker = f"PUBLISH_PUBLIC = {public_dataset!r}\n"
-    extra = dedent(f"""
-        LOGICAL_SHARD_INDEX = {logical_shard_index}
-        LOGICAL_SHARD_COUNT = 10
-        PARENT_PART_INDEX = {parent_part_index}
-        PARENT_PART_COUNT = 2
-        SUBPART_INDEX = {subpart_index}
-        SUBPART_COUNT = 3
-        """)
-    if config.count(marker) != 1:
-        raise RuntimeError("Cannot locate the shard visibility config")
-    config = config.replace(marker, marker + extra, 1)
-    print_marker = '    "shard_count": SHARD_COUNT,\n'
-    print_extra = dedent("""
-            "logical_shard_index": LOGICAL_SHARD_INDEX,
-            "logical_shard_count": LOGICAL_SHARD_COUNT,
-            "parent_part_index": PARENT_PART_INDEX,
-            "parent_part_count": PARENT_PART_COUNT,
-            "subpart_index": SUBPART_INDEX,
-            "subpart_count": SUBPART_COUNT,
-        """)
-    if config.count(print_marker) != 1:
-        raise RuntimeError("Cannot locate the shard config summary")
-    result["cells"][1]["source"] = config.replace(
-        print_marker, print_marker + print_extra, 1
-    )
-
-    verification = result["cells"][13]["source"]
-    summary_marker = '    "shard_count": SHARD_COUNT,\n'
-    summary_extra = dedent("""
-            "logical_shard_index": LOGICAL_SHARD_INDEX,
-            "logical_shard_count": LOGICAL_SHARD_COUNT,
-            "parent_part_index": PARENT_PART_INDEX,
-            "parent_part_count": PARENT_PART_COUNT,
-            "subpart_index": SUBPART_INDEX,
-            "subpart_count": SUBPART_COUNT,
-        """)
-    if verification.count(summary_marker) != 1:
-        raise RuntimeError("Cannot locate the shard manifest summary")
-    result["cells"][13]["source"] = verification.replace(
-        summary_marker, summary_marker + summary_extra, 1
-    )
-
-    publish = result["cells"][15]["source"]
-    publish = publish.replace(
-        'f"TypePro Python shard {SHARD_INDEX:02d} of {SHARD_COUNT}",',
-        'f"TypePro shard {LOGICAL_SHARD_INDEX:02d}/10 '
-        f'part {part_letter}{{SUBPART_INDEX + 1}}/{{SUBPART_COUNT}}",',
-    ).replace(
-        'f"Completed TypePro shard {SHARD_INDEX:02d} of {SHARD_COUNT}",',
-        'f"Completed TypePro shard {LOGICAL_SHARD_INDEX:02d}/10 '
-        f'part {part_letter}{{SUBPART_INDEX + 1}}/{{SUBPART_COUNT}}",',
-    )
-    result["cells"][15]["source"] = publish
-    result["metadata"]["typepro"] = {
-        "version_contract": "one-third-of-cancelled-half-shard",
-        "physical_shard_index": physical_index,
-        "physical_shard_count": physical_count,
-        "logical_shard_index": logical_shard_index,
-        "logical_shard_count": 10,
-        "parent_part_index": parent_part_index,
-        "parent_part_count": 2,
-        "subpart_index": subpart_index,
-        "subpart_count": 3,
-        "expected_dataset_owner": expected_dataset_owner,
-        "public_dataset": public_dataset,
-        "output_dataset_slug": f"typepro-build-shard-{physical_index:02d}",
     }
     return result
 
@@ -1613,49 +1518,58 @@ def main(argv: list[str] | None = None) -> None:
             stale.unlink()
     generated = [owner_test_path.name]
     shard_groups = [list(range(0, 5)), list(range(5, 10))]
-    account_notebooks = []
-    for position, (account, shard_group) in enumerate(
-        zip(args.runner_accounts, shard_groups, strict=True),
-        start=1,
+    shard_accounts = []
+    shard_notebooks = []
+    for account, shard_group in zip(
+        args.runner_accounts, shard_groups, strict=True
     ):
-        safe_account = account.casefold().replace("_", "-")
-        path = ROOT / (
-            f"{position:02d}_typepro_account_{safe_account}_shards_"
-            f"{shard_group[0]:02d}_{shard_group[-1]:02d}.ipynb"
-        )
-        path.write_text(
-            json.dumps(
-                shard_notebook(
-                    shard_group[0],
-                    args.shards,
-                    args.repository,
-                    args.branch,
-                    assigned_shards=shard_group,
-                    expected_dataset_owner=account,
-                    public_dataset=account.casefold() != args.dataset_owner.casefold(),
-                ),
-                ensure_ascii=False,
-                indent=1,
-            ),
-            encoding="utf-8",
-        )
-        generated.append(path.name)
-        account_notebooks.append({
+        public_dataset = account.casefold() != args.dataset_owner.casefold()
+        shard_accounts.append({
             "runner_account": account,
             "dataset_owner": account,
-            "public_dataset": account.casefold() != args.dataset_owner.casefold(),
-            "notebook": path.name,
+            "public_dataset": public_dataset,
             "assigned_shards": shard_group,
-            "kernel_slug": f"typepro-shards-{shard_group[0]:02d}-{shard_group[-1]:02d}",
         })
+        for shard_index in shard_group:
+            path = ROOT / f"{shard_index + 1:02d}_typepro_shard_{shard_index:02d}.ipynb"
+            path.write_text(
+                json.dumps(
+                    shard_notebook(
+                        shard_index,
+                        args.shards,
+                        args.repository,
+                        args.branch,
+                        assigned_shards=[shard_index],
+                        expected_dataset_owner=account,
+                        public_dataset=public_dataset,
+                    ),
+                    ensure_ascii=False,
+                    indent=1,
+                ),
+                encoding="utf-8",
+            )
+            generated.append(path.name)
+            shard_notebooks.append({
+                "shard_index": shard_index,
+                "runner_account": account,
+                "dataset_owner": account,
+                "public_dataset": public_dataset,
+                "notebook": path.name,
+                "kernel_slug": f"typepro-python-shard-{shard_index:02d}",
+            })
+    merge_datasets = canonical_merge_datasets(shard_accounts)
     merge_plan_path = ROOT / "shard_merge_plan.json"
-    merge_datasets = None
-    if merge_plan_path.exists():
-        merge_plan = json.loads(merge_plan_path.read_text(encoding="utf-8"))
-        if merge_plan.get("logical_shard_count") != args.shards:
-            raise ValueError(f"Invalid logical shard count in {merge_plan_path}")
-        merge_datasets = merge_plan.get("datasets")
-    merge_path = ROOT / "03_merge_finalize.ipynb"
+    merge_plan_path.write_text(
+        json.dumps({
+            "schema_version": "typepro-shard-merge-plan-v2",
+            "logical_shard_count": args.shards,
+            "final_dataset_owner": args.dataset_owner,
+            "datasets": merge_datasets,
+        }, indent=2),
+        encoding="utf-8",
+    )
+    generated.append(merge_plan_path.name)
+    merge_path = ROOT / "11_merge_finalize.ipynb"
     merge_path.write_text(
         json.dumps(
             merge_notebook(
@@ -1663,7 +1577,7 @@ def main(argv: list[str] | None = None) -> None:
                 args.repository,
                 args.branch,
                 expected_dataset_owner=args.dataset_owner,
-                shard_accounts=account_notebooks,
+                shard_accounts=shard_accounts,
                 merge_datasets=merge_datasets,
             ),
             ensure_ascii=False,
@@ -1672,7 +1586,7 @@ def main(argv: list[str] | None = None) -> None:
         encoding="utf-8",
     )
     generated.append(merge_path.name)
-    train_path = ROOT / "04_train_and_infer.ipynb"
+    train_path = ROOT / "12_train_and_infer.ipynb"
     train_path.write_text(
         json.dumps(train_notebook(args.repository, args.branch), ensure_ascii=False, indent=1),
         encoding="utf-8",
@@ -1682,12 +1596,12 @@ def main(argv: list[str] | None = None) -> None:
     plan_path.write_text(
         json.dumps(
             {
-                "schema_version": "typepro-shard-account-plan-v2",
+                "schema_version": "typepro-shard-account-plan-v3",
                 "final_dataset_owner": args.dataset_owner,
                 "shard_count": args.shards,
-                "accounts": account_notebooks,
+                "shards": shard_notebooks,
                 "merge_datasets": validate_merge_datasets(
-                    merge_datasets or canonical_merge_datasets(account_notebooks),
+                    merge_datasets,
                     args.shards,
                     args.dataset_owner,
                 ),

@@ -1,10 +1,4 @@
-"""Render and optionally push five shard versions to each Kaggle account.
-
-Two remote notebook slugs are used, one per runner account.  Each push embeds a
-single immutable ``SHARD_INDEX`` so every Kaggle version builds exactly one
-shard. Host-account credentials are used only for ``kernels push``; each
-generated notebook validates and uses its same-account Kaggle host identity.
-"""
+"""Validate, render, and optionally push ten standalone shard notebooks."""
 
 from __future__ import annotations
 
@@ -26,6 +20,7 @@ CONFIG_TAG = "typepro-shard-config"
 OWNER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{1,49}$")
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{2,49}$")
 SHARD_LINE_RE = re.compile(r"^SHARD_INDEX = \d+$", re.MULTILINE)
+SHARD_COUNT_LINE_RE = re.compile(r"^SHARD_COUNT = 10$", re.MULTILINE)
 PUSH_ERROR_MARKERS = (
     "kernel push error:",
     "notebook not found",
@@ -45,7 +40,7 @@ class AccountPlan:
 
 def load_plan(path: Path) -> tuple[str, int, list[AccountPlan]]:
     value = json.loads(path.read_text(encoding="utf-8"))
-    if value.get("schema_version") != "typepro-shard-account-plan-v2":
+    if value.get("schema_version") != "typepro-shard-account-plan-v3":
         raise RuntimeError(f"Unsupported account plan: {path}")
     final_dataset_owner = value.get("final_dataset_owner")
     shard_count = value.get("shard_count")
@@ -60,13 +55,13 @@ def load_plan(path: Path) -> tuple[str, int, list[AccountPlan]]:
         raise RuntimeError(f"Expected exactly 10 shards, found {shard_count!r}")
 
     plans: list[AccountPlan] = []
-    for item in value.get("accounts", []):
+    for item in value.get("shards", []):
         account = item.get("runner_account")
         dataset_owner = item.get("dataset_owner")
         public_dataset = item.get("public_dataset")
         notebook_name = item.get("notebook")
         kernel_slug = item.get("kernel_slug")
-        shards = item.get("assigned_shards")
+        shard_index = item.get("shard_index")
         if not isinstance(account, str) or not OWNER_RE.fullmatch(account):
             raise RuntimeError(f"Invalid runner account: {account!r}")
         if not isinstance(dataset_owner, str) or not OWNER_RE.fullmatch(dataset_owner):
@@ -82,13 +77,8 @@ def load_plan(path: Path) -> tuple[str, int, list[AccountPlan]]:
             raise RuntimeError(f"Invalid notebook filename: {notebook_name!r}")
         if not isinstance(kernel_slug, str) or not SLUG_RE.fullmatch(kernel_slug):
             raise RuntimeError(f"Invalid kernel slug: {kernel_slug!r}")
-        if (
-            not isinstance(shards, list)
-            or len(shards) != 5
-            or any(not isinstance(index, int) for index in shards)
-            or len(set(shards)) != 5
-        ):
-            raise RuntimeError(f"Each account must own exactly five unique shards: {shards!r}")
+        if not isinstance(shard_index, int) or shard_index not in range(shard_count):
+            raise RuntimeError(f"Invalid shard index: {shard_index!r}")
         plans.append(
             AccountPlan(
                 runner_account=account,
@@ -96,15 +86,25 @@ def load_plan(path: Path) -> tuple[str, int, list[AccountPlan]]:
                 public_dataset=public_dataset,
                 notebook_path=path.parent / notebook_name,
                 kernel_slug=kernel_slug,
-                assigned_shards=tuple(shards),
+                assigned_shards=(shard_index,),
             )
         )
-    if len(plans) != 2:
-        raise RuntimeError(f"Expected exactly two runner accounts, found {len(plans)}")
+    if len(plans) != shard_count:
+        raise RuntimeError(
+            f"Expected exactly {shard_count} standalone shard notebooks, found {len(plans)}"
+        )
     combined = [index for plan in plans for index in plan.assigned_shards]
     if sorted(combined) != list(range(shard_count)):
         raise RuntimeError(f"Account plan must cover shards 0..9 exactly once: {combined}")
+    notebook_paths = [plan.notebook_path.resolve() for plan in plans]
+    kernel_ids = [f"{plan.runner_account}/{plan.kernel_slug}".casefold() for plan in plans]
+    if len(set(notebook_paths)) != shard_count or len(set(kernel_ids)) != shard_count:
+        raise RuntimeError("Every shard must have a distinct notebook path and kernel ID")
+    account_counts: dict[str, int] = {}
     for plan in plans:
+        account_counts[plan.runner_account.casefold()] = (
+            account_counts.get(plan.runner_account.casefold(), 0) + 1
+        )
         should_be_public = (
             plan.dataset_owner.casefold() != final_dataset_owner.casefold()
         )
@@ -113,6 +113,16 @@ def load_plan(path: Path) -> tuple[str, int, list[AccountPlan]]:
                 "The final owner's shards must be private and the other "
                 f"account's shards must be public: {plan.runner_account!r}"
             )
+    if sorted(account_counts.values()) != [5, 5]:
+        raise RuntimeError(
+            f"Exactly two runner accounts must own five shards each: {account_counts}"
+        )
+    if any(
+        plan.dataset_owner.casefold()
+        != (final_dataset_owner if plan.assigned_shards[0] < 5 else plan.runner_account).casefold()
+        for plan in plans
+    ):
+        raise RuntimeError("Shards 00-04 must belong to the final owner")
     return final_dataset_owner, shard_count, plans
 
 
@@ -154,6 +164,10 @@ def render_shard_version(
     source = tagged[0].get("source")
     if not isinstance(source, str):
         raise RuntimeError("Tagged shard config cell must contain string source")
+    if not SHARD_COUNT_LINE_RE.search(source):
+        raise RuntimeError("Standalone shard notebook must hard-code SHARD_COUNT = 10")
+    if f"ASSIGNED_SHARDS = [{shard_index}]" not in source:
+        raise RuntimeError("Standalone shard notebook must assign exactly one shard")
     source, replacements = SHARD_LINE_RE.subn(f"SHARD_INDEX = {shard_index}", source)
     if replacements != 1:
         raise RuntimeError(f"Expected one SHARD_INDEX assignment, replaced {replacements}")
@@ -167,17 +181,15 @@ def render_shard_version(
     if bool(typepro.get("public_dataset")) != public_dataset:
         raise RuntimeError("Notebook Dataset visibility does not match the account plan")
     typepro["rendered_shard_index"] = shard_index
-    typepro["version_contract"] = "one-kaggle-version-builds-one-shard"
+    typepro["version_contract"] = "one-kaggle-notebook-builds-one-shard"
     return rendered
 
 
 def kernel_metadata(plan: AccountPlan, code_file: str) -> dict[str, Any]:
+    shard_index = plan.assigned_shards[0]
     return {
         "id": f"{plan.runner_account}/{plan.kernel_slug}",
-        "title": (
-            f"TypePro shards {plan.assigned_shards[0]:02d}-"
-            f"{plan.assigned_shards[-1]:02d}"
-        ),
+        "title": f"TypePro Python shard {shard_index:02d} of 10",
         "code_file": code_file,
         "language": "python",
         "kernel_type": "notebook",
@@ -239,9 +251,14 @@ def run_push(directory: Path, credential: dict[str, str], config_dir: Path) -> s
 def parse_credentials(values: list[str], plans: list[AccountPlan]) -> dict[str, Path]:
     if not values:
         defaults = [REPO_ROOT / "kaggle.json", REPO_ROOT / "kaggle2.json"]
+        accounts = list(dict.fromkeys(
+            plan.runner_account.casefold() for plan in plans
+        ))
+        if len(accounts) != 2:
+            raise ValueError(f"Expected two runner accounts, found {accounts}")
         return {
-            plan.runner_account.casefold(): path
-            for plan, path in zip(plans, defaults, strict=True)
+            account: path
+            for account, path in zip(accounts, defaults, strict=True)
         }
     parsed: dict[str, Path] = {}
     for value in values:
@@ -299,52 +316,46 @@ def main(argv: list[str] | None = None) -> None:
         template = json.loads(plan.notebook_path.read_text(encoding="utf-8"))
         credential_path = credential_paths[plan.runner_account.casefold()]
         credential = load_credential(credential_path, plan.runner_account)
-        for version_number, shard_index in enumerate(plan.assigned_shards, start=1):
-            if shard_index not in requested_shards:
-                continue
-            rendered = render_shard_version(
-                template,
-                shard_index,
-                plan.assigned_shards,
-                plan.dataset_owner,
-                plan.public_dataset,
+        shard_index = plan.assigned_shards[0]
+        if shard_index not in requested_shards:
+            continue
+        rendered = render_shard_version(
+            template,
+            shard_index,
+            plan.assigned_shards,
+            plan.dataset_owner,
+            plan.public_dataset,
+        )
+        summary = {
+            "runner_account": plan.runner_account,
+            "kernel": f"{plan.runner_account}/{plan.kernel_slug}",
+            "notebook": plan.notebook_path.name,
+            "shard_index": shard_index,
+        }
+        if args.push:
+            with tempfile.TemporaryDirectory(prefix="typepro_kernel_push_") as temp:
+                push_dir = Path(temp) / "payload"
+                auth_dir = Path(temp) / "auth"
+                auth_dir.mkdir(parents=True)
+                write_version(push_dir, plan, rendered)
+                output = run_push(push_dir, credential, auth_dir)
+            summaries.append({**summary, "pushed": True, "cli_output": output})
+        else:
+            destination = (
+                args.output_dir.resolve()
+                / plan.runner_account
+                / f"shard_{shard_index:02d}"
             )
-            if args.push:
-                with tempfile.TemporaryDirectory(prefix="typepro_kernel_push_") as temp:
-                    push_dir = Path(temp) / "payload"
-                    auth_dir = Path(temp) / "auth"
-                    auth_dir.mkdir(parents=True)
-                    write_version(push_dir, plan, rendered)
-                    output = run_push(push_dir, credential, auth_dir)
-                summaries.append({
-                    "runner_account": plan.runner_account,
-                    "kernel": f"{plan.runner_account}/{plan.kernel_slug}",
-                    "version_in_batch": version_number,
-                    "shard_index": shard_index,
-                    "pushed": True,
-                    "cli_output": output,
-                })
-            else:
-                destination = (
-                    args.output_dir.resolve()
-                    / plan.runner_account
-                    / f"version_{version_number:02d}_shard_{shard_index:02d}"
-                )
-                write_version(destination, plan, rendered)
-                summaries.append({
-                    "runner_account": plan.runner_account,
-                    "kernel": f"{plan.runner_account}/{plan.kernel_slug}",
-                    "version_in_batch": version_number,
-                    "shard_index": shard_index,
-                    "pushed": False,
-                    "rendered_to": str(destination),
-                })
+            write_version(destination, plan, rendered)
+            summaries.append({
+                **summary, "pushed": False, "rendered_to": str(destination),
+            })
     print(json.dumps({
         "final_dataset_owner": final_dataset_owner,
         "shard_dataset_owners": {
             plan.runner_account: plan.dataset_owner for plan in plans
         },
-        "versions": summaries,
+        "notebooks": summaries,
     }, indent=2, ensure_ascii=False))
 
 

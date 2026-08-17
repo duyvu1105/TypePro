@@ -20,13 +20,13 @@ Kaggle.
 
 ## Hợp đồng workflow hiện tại
 
-Không giả định “mỗi shard là một notebook”. Workflow hiện tại có hai template,
-mỗi template được push thành năm Kaggle versions độc lập:
+Workflow hiện tại có đúng mười notebook shard độc lập, một notebook cho mỗi
+`SHARD_INDEX` từ `00` đến `09`; mỗi runner sở hữu năm notebook:
 
 | Shards | Runner/Dataset owner | Kernel | Dataset visibility |
 | --- | --- | --- | --- |
-| `00-04` | `duyvu1105` | `duyvu1105/typepro-shards-00-04` | private |
-| `05-09` | `duymign` | `duymign/typepro-shards-05-09` | public |
+| `00-04` | `duyvu1105` | `duyvu1105/typepro-python-shard-XX` | private |
+| `05-09` | `duymign` | `duymign/typepro-python-shard-XX` | public |
 
 Final merge chạy dưới `duyvu1105` và tạo private Dataset
 `duyvu1105/typepro-python-contrastive`. Shards `05-09` phải public để tài khoản
@@ -36,11 +36,12 @@ tra lại toàn bộ `shard_account_plan.json`.
 Các file điều khiển:
 
 - `kaggle_notebooks/generate_notebooks.py`: nguồn sinh notebook.
-- `kaggle_notebooks/commit_shard_versions.py`: render/push đúng một shard cho
-  mỗi version.
+- `kaggle_notebooks/commit_shard_versions.py`: validate/push đúng mười notebook.
 - `kaggle_notebooks/shard_account_plan.json`: mapping owner/kernel/shard.
-- `kaggle_notebooks/03_merge_finalize.ipynb`: merge và publish final Dataset.
-- `kaggle_notebooks/04_train_and_infer.ipynb`: train sau khi attach final Dataset.
+- `kaggle_notebooks/01_typepro_shard_00.ipynb` đến
+  `10_typepro_shard_09.ipynb`: mười shard notebooks.
+- `kaggle_notebooks/11_merge_finalize.ipynb`: merge và publish final Dataset.
+- `kaggle_notebooks/12_train_and_infer.ipynb`: train sau khi attach final Dataset.
 
 Không sửa tay notebook sinh ra nếu thay đổi có thể biểu diễn trong generator.
 Sửa `generate_notebooks.py`, sinh lại artifacts, rồi kiểm tra diff.
@@ -53,7 +54,7 @@ Sinh lại workflow chuẩn:
 python kaggle_notebooks/generate_notebooks.py --shards 10 --runner-accounts duyvu1105 duymign --dataset-owner duyvu1105
 ```
 
-Dry-run render đủ mười versions, không gọi Kaggle:
+Dry-run validate/render đủ mười notebook, không gọi Kaggle:
 
 ```bash
 python kaggle_notebooks/commit_shard_versions.py
@@ -67,9 +68,9 @@ quan khi thay đổi generator/publisher:
 python -m pytest codet5p_type_retrieval/tests -q -p no:cacheprovider
 ```
 
-## Push notebook versions lên Kaggle
+## Push shard notebooks lên Kaggle
 
-Lệnh chuẩn push cả mười jobs (năm versions cho mỗi account):
+Lệnh chuẩn push cả mười jobs (năm notebook cho mỗi account):
 
 ```bash
 uv run --with kaggle==1.7.4.2 python kaggle_notebooks/commit_shard_versions.py --push
@@ -181,10 +182,10 @@ có `shard_count=5` không được trộn với workflow mười shard hiện t
 
 ## Trình tự hoàn tất
 
-1. Generate và dry-run mười versions.
-2. Push hai nhóm versions bằng đúng credential runner.
+1. Generate và dry-run mười notebook.
+2. Push hai nhóm notebook bằng đúng credential runner.
 3. Xác nhận datasets `00-04` dưới `duyvu1105` và `05-09` dưới `duymign`.
-4. Chạy `03_merge_finalize.ipynb` dưới `duyvu1105`.
-5. Verify final Dataset, attach nó vào `04_train_and_infer.ipynb`, rồi train GPU.
+4. Chạy `11_merge_finalize.ipynb` dưới `duyvu1105`.
+5. Verify final Dataset, attach nó vào `12_train_and_infer.ipynb`, rồi train GPU.
 6. Báo rõ kernel/version/Dataset URL nào đã được tạo; không tuyên bố thành công
    nếu chưa có bằng chứng từ manifest hoặc file listing.

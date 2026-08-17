@@ -11,25 +11,33 @@ import tempfile
 from pathlib import Path
 
 from commit_shard_versions import load_credential, run_push
+from generate_notebooks import validate_merge_datasets
 
 
 ROOT = Path(__file__).resolve().parent
 REPO_ROOT = ROOT.parent
 OWNER = "duyvu1105"
-KERNEL_SLUG = "typepro-merge-18-verified-partitions"
-NOTEBOOK_PATH = ROOT / "03_merge_finalize.ipynb"
+KERNEL_SLUG = "typepro-merge-10-shards"
+NOTEBOOK_PATH = ROOT / "11_merge_finalize.ipynb"
 MERGE_PLAN_PATH = ROOT / "shard_merge_plan.json"
 CREDENTIAL_PATH = REPO_ROOT / "kaggle.json"
 
 
 def merge_dataset_ids() -> list[str]:
     plan = json.loads(MERGE_PLAN_PATH.read_text(encoding="utf-8"))
+    if plan.get("schema_version") != "typepro-shard-merge-plan-v2":
+        raise RuntimeError("Unsupported ten-shard merge plan schema")
     if plan.get("final_dataset_owner") != OWNER:
         raise RuntimeError("Merge plan final owner does not match merge kernel owner")
     datasets = plan.get("datasets")
-    if not isinstance(datasets, list) or len(datasets) != 18:
-        raise RuntimeError("Merge plan must contain exactly 18 physical Datasets")
-    result = [item["dataset_id"] for item in datasets]
+    if not isinstance(datasets, list) or len(datasets) != 10:
+        raise RuntimeError("Merge plan must contain exactly 10 shard Datasets")
+    validated = validate_merge_datasets(datasets, 10, OWNER)
+    if [(item["shard_index"], item["shard_count"]) for item in validated] != [
+        (index, 10) for index in range(10)
+    ]:
+        raise RuntimeError("Merge plan must map shards 0..9 directly at shard_count=10")
+    result = [item["dataset_id"] for item in validated]
     if len(result) != len(set(result)):
         raise RuntimeError("Merge plan contains duplicate Dataset IDs")
     return result
@@ -38,7 +46,7 @@ def merge_dataset_ids() -> list[str]:
 def kernel_metadata(code_file: str) -> dict:
     return {
         "id": f"{OWNER}/{KERNEL_SLUG}",
-        "title": "TypePro Merge 18 Verified Partitions",
+        "title": "TypePro Merge 10 Shards",
         "code_file": code_file,
         "language": "python",
         "kernel_type": "notebook",

@@ -1,288 +1,175 @@
 # TypePro Kaggle notebooks
 
-This folder contains a two-account, ten-shard workflow for the Python
-parameter-only dataset:
+This directory contains the two-account, ten-shard workflow for the Python
+parameter-only dataset. Every shard has its own notebook and Kaggle kernel; no
+half-shard or replacement-residue Dataset participates in the current merge.
 
-- `00_test_dataset_owner.ipynb`: create a tiny private Dataset to verify cross-account credentials and ownership.
-- `01_typepro_account_duyvu1105_shards_00_04.ipynb`: template committed as five versions under `duyvu1105`, one version per shard 00-04.
-- `02_typepro_account_duymign_shards_05_09.ipynb`: template committed as five versions under `duymign`, one version per shard 05-09.
-- `03_merge_finalize.ipynb`: verify, merge, finalize, and publish the processed dataset.
-- `04_train_and_infer.ipynb`: fine-tune CodeT5+ and evaluate the processed test split.
-- `shard_account_plan.json`: exact account, notebook, kernel-slug, and shard mapping.
-- `shard_merge_plan.json`: exact physical Dataset IDs used by the current merge,
-  including replacement partitions and their owners.
-- `commit_shard_versions.py`: render and optionally push five immutable shard versions per account.
-- `commit_repartitioned_parts.py`: render/push the six short replacements for
-  the cancelled shard 01 A/2 and shard 04 B/2 jobs.
-- `commit_merge_finalize.py`: attach the exact 18 shard Datasets and push/check
-  the final merge kernel under `duyvu1105`.
-- `generate_notebooks.py`: regenerate the complete workflow.
+## Current artifacts
 
-Each build shard keeps only non-built-in function parameters. It builds a cached
-stdlib/third-party KB from imports in each project and stores detailed class
-structure (package/module, bases, fields, and public method signatures) in
-recommendations. Candidate generation uses a high-recall union of exact import
-symbols, declarations visible in the masked slice, project classes/type aliases,
-lexical retrieval, and structural BM25 retrieval. Each fuzzy branch keeps up to
-20 candidates; preprocessing then retains at most seven hard negatives. The
-contrastive positive is always the annotation's `gttype`.
+- `00_test_dataset_owner.ipynb`: optional credential/owner smoke test.
+- `01_typepro_shard_00.ipynb` through `10_typepro_shard_09.ipynb`: ten
+  standalone CPU shard notebooks.
+- `11_merge_finalize.ipynb`: validate and merge exactly ten attached Datasets,
+  preprocess the splits, verify them, and publish the final private Dataset.
+- `12_train_and_infer.ipynb`: fine-tune and evaluate after attaching the final
+  Dataset.
+- `shard_account_plan.json`: notebook, kernel, owner, visibility and shard
+  mapping.
+- `shard_merge_plan.json`: the exact ten Dataset inputs accepted by merge.
+- `commit_shard_versions.py`: dry-run or push selected/all shard notebooks.
+- `commit_merge_finalize.py`: dry-run, push, or check the merge kernel.
+- `generate_notebooks.py`: the only source for generated notebook changes.
 
-The high-recall union also performs five label-independent analyses. It extracts
-types from non-target annotations, guards, casts, constructors and base classes;
-resolves relative imports, aliases, `TYPE_CHECKING`, star imports and re-export
-chains; indexes project `.pyi` files and the Typeshed bundled by
-`typeshed-client`; propagates constructor and return types through assignments,
-wrappers and call-site arguments to a bounded fixed point; and recognizes pytest
-fixtures plus common factory, mock, Django and SQLAlchemy construction idioms.
-Parameter annotations from the original project index are intentionally ignored
-because one may be the masked evaluation label. Set `TYPEPRO_TYPESHED_PATH` (use
-the platform path separator for multiple roots) to add custom Typeshed/stub
-trees.
+Do not edit generated notebooks manually when the change belongs in
+`generate_notebooks.py`.
 
-The KB schema is versioned. A shard resumed after a retrieval-code update
-rebuilds stale cached package indexes instead of silently reusing records from
-the older class-only schema. Raw exported rows include recommendation counts by
-source and kind for coverage diagnostics.
+## Ownership contract
 
-## Before uploading
-
-1. Commit and push the current code to the repository/branch configured in the notebooks.
-2. Each shard notebook normally uses its own Kaggle host account automatically.
-   Optionally, in each runner account's Kaggle Settings > Secrets, create
-   `TYPEPRO_PUBLISH_USERNAME` and `TYPEPRO_PUBLISH_KEY` using that runner's own
-   credential: `duyvu1105` for shards 00-04 and `duymign` for shards 05-09.
-   The fallback names `KAGGLE_USERNAME` and `KAGGLE_KEY` are supported.
-3. Never paste either secret into a notebook or commit `kaggle.json`.
-4. Keep the two local runner credentials as ignored files `kaggle.json`
-   (`duyvu1105`) and `kaggle2.json` (`duymign`). They are used only to push
-   notebook versions to the correct runner accounts.
-
-## Cross-account owner test
-
-Run `00_test_dataset_owner.ipynb` before the expensive shards when the notebook
-is hosted by a different Kaggle account than the intended Dataset owner. Add
-these Secrets to the notebook-hosting account:
-
-- `KAGGLE_API_TOKEN`: a current access token generated by the intended owner
-  using **Generate New Token** (not the `key` field from `kaggle.json`).
-- `KAGGLE_DATASET_OWNER`: the intended owner's public Kaggle username.
-
-For a legacy `kaggle.json`, do not set `KAGGLE_API_TOKEN`; use its `username`
-and `key` as `KAGGLE_USERNAME` and `KAGGLE_KEY`. The notebook verifies the
-effective authenticated username and authentication method before uploading. It
-prefers a complete legacy pair if both credential modes are visible, preventing
-the notebook-hosting account's token from overriding the requested owner. It
-uses Kaggle CLI 1.7.4.2 for that legacy mode because this release predates the
-automatic access-token authentication that can otherwise select the host owner.
-The generated shard and merge notebooks use the same pinned legacy CLI.
-It then creates a tiny private Dataset with a unique slug, waits for processing,
-and verifies that `owner_test.json` is listable under the requested owner. A
-successful output contains `"verified": true` and the Dataset URL. Revoke any
-token temporarily shared with another account after testing.
-
-The legacy `datasets status` endpoint may return HTTP 403 after a successful
-creation. The notebooks therefore use `datasets files` as the compatibility
-fallback and only declare success once the uploaded payload is listable.
-Before publishing a fixed shard slug, the publisher checks the authenticated
-owner's Dataset listing for an exact ref. This distinguishes a new Dataset from
-the ambiguous HTTP 403 returned by status/file endpoints for a missing or
-not-yet-ready private Dataset.
-
-## Two-account version contract
-
-Each remote notebook receives five pushes. Before every push,
-`commit_shard_versions.py` rewrites the single tagged config cell with one
-hard-coded `SHARD_INDEX`. It validates that the two account groups cover shards
-0-9 exactly once and that each group contains exactly five shards. The ten
-versions are therefore independent Kaggle CPU jobs:
-
-| Runner account | Remote notebook | Version shards | Dataset owner | Visibility |
-| --- | --- | --- | --- | --- |
-| `duyvu1105` | `duyvu1105/typepro-shards-00-04` | `00,01,02,03,04` | `duyvu1105` | private |
-| `duymign` | `duymign/typepro-shards-05-09` | `05,06,07,08,09` | `duymign` | public |
-
-## Current split recovery for shards 01 and 04
-
-The original shard 01 and 04 retries were split into two physical residues
-with `SHARD_COUNT=20`. Shard 01 part B (`11/20`) and shard 04 part A (`04/20`)
-completed. The other two jobs were too long, so each cancelled half is now
-split into three `SHARD_COUNT=60` residues:
-
-| Logical input | Runner / Dataset owner | Replacement residues | Visibility |
+| Shards | Runner and Dataset owner | Kernel pattern | Visibility |
 | --- | --- | --- | --- |
-| shard 01 part A/2 (`01/20`) | `duyvu1105` | `01/60`, `21/60`, `41/60` | private |
-| shard 04 part B/2 (`14/20`) | `duymign` | `14/60`, `34/60`, `54/60` | public |
+| `00-04` | `duyvu1105` | `duyvu1105/typepro-python-shard-XX` | private |
+| `05-09` | `duymign` | `duymign/typepro-python-shard-XX` | public |
 
-This is exactly three independent notebooks per account. Dry-run and push only
-these six replacements with:
+The merge runs under `duyvu1105` and publishes the private Dataset
+`duyvu1105/typepro-python-contrastive`. The second account's shards must remain
+public so the final owner can attach them.
 
-```bash
-python kaggle_notebooks/commit_repartitioned_parts.py
-python kaggle_notebooks/commit_repartitioned_parts.py --push
-```
+Each shard manifest must report its own `shard_index`, `shard_count=10`, no
+missing projects, and every selected project attempted. The merge rejects
+different counts, duplicate coordinates, gaps and overlaps.
 
-The shard notebooks enforce a 600-second per-annotation deadline only for
-`home-assistant/home-assistant` and `Opentrons/opentrons`. A timed-out
-annotation is logged as `[annotation:timeout]`, counted in
-`failed_annotations`, and omitted from the shard output so the remaining
-annotations and projects can complete. Other projects do not use this timeout.
+## Candidate retrieval
 
-The exact merge inputs are recorded in `shard_merge_plan.json`; do not infer
-their owners from the logical shard number. The current merge consists of 18
-physical Datasets covering ten logical shards. In addition to the shard 01 and
-04 replacements above, shards 05 and 09 each consist of two completed
-`SHARD_COUNT=20` halves:
+Each shard keeps non-built-in function parameters and builds a cached
+stdlib/third-party KB. Candidate retrieval unions exact imports, declarations
+visible in the masked slice, project classes and aliases, lexical/structural
+retrieval, `.pyi`/Typeshed symbols, project call/data flow, fixtures and common
+factory/framework idioms. The target parameter annotation is never used as a
+retrieval signal.
 
-- private under `duyvu1105`: `00`, `01`, `21`, `41`, `11`, `02`, `03`, `04`;
-- public under `duymign`: `14`, `34`, `54`, `05`, `15`, `06`, `07`, `08`,
-  `09`, `19`.
+`RETRIEVAL_SCHEMA_VERSION` is embedded in every shard notebook and stored in
+`runtime_manifest.json`. A restored Dataset with a missing/different version is
+ignored, forcing fresh `raw_slices`; a retry with the same version resumes
+completed projects. This prevents a new retrieval implementation from silently
+reusing old recommendations.
 
-Here each number denotes `owner/typepro-build-shard-NN`. The generator validates
-the residue coverage at modulus 60 and embeds these exact Dataset IDs and
-expected `shard_index/shard_count` values in `03_merge_finalize.ipynb`.
+The two known very long projects use a 600-second per-annotation timeout:
 
-Each version authenticates with its runner's own Secret, isolates that
-credential from Kaggle's automatic host authentication, and refuses to publish
-under any other owner. The logical owner split is therefore:
+- `home-assistant/home-assistant`
+- `Opentrons/opentrons`
 
-- `duyvu1105/typepro-build-shard-00` through `...-04`;
-- logical shards 05-09 under `duymign`, using the physical halves `05`/`15`
-  and `09`/`19` where listed in the merge plan.
+A timed-out annotation is logged and omitted while the project and shard keep
+running. This timeout is why the workflow can remain at ten shards.
 
-Kaggle rejected private cross-account downloads using the available `duymign`
-legacy credential, while a live public-dataset download succeeded. Therefore
-shards 05-09 are intentionally public. The merge notebook can use
-`duyvu1105`'s automatic host identity. Optional explicit overrides are:
+## Credentials
 
-- `TYPEPRO_FINAL_USERNAME=duyvu1105`;
-- `TYPEPRO_FINAL_KEY` from `kaggle.json`.
+Never print, paste or commit API keys. Local ignored credentials default to:
 
-That identity reads its own private partitions and the public `duymign`
-partitions. After validating all 18 manifests covering ten logical shards, it
-publishes the final private `duyvu1105/typepro-python-contrastive` Dataset.
+- `kaggle.json` for `duyvu1105`;
+- `kaggle2.json` for `duymign`.
 
-The merge kernel receives all 18 physical Datasets through Kaggle
-`dataset_sources`; it validates them directly under `/kaggle/input` and does
-not download shard payloads again at runtime. Dry-run, push, and check it with:
+The push scripts verify the credential username. Inside Kaggle, same-account
+host authentication is the default. Optional explicit Secrets are
+`TYPEPRO_PUBLISH_USERNAME` + `TYPEPRO_PUBLISH_KEY`; merge accepts
+`TYPEPRO_FINAL_USERNAME` + `TYPEPRO_FINAL_KEY`. A complete legacy pair uses
+`kaggle==1.7.4.2` so host OAuth cannot silently replace the requested owner.
+
+## Generate and test
+
+Generate all ten shard notebooks plus merge/train:
 
 ```bash
-uv run --with kaggle==1.7.4.2 python kaggle_notebooks/commit_merge_finalize.py
-uv run --with kaggle==1.7.4.2 python kaggle_notebooks/commit_merge_finalize.py --push
-uv run --with kaggle==1.7.4.2 python kaggle_notebooks/commit_merge_finalize.py --check-status
+python kaggle_notebooks/generate_notebooks.py --shards 10 --runner-accounts duyvu1105 duymign --dataset-owner duyvu1105
 ```
 
-Dry-run and validate all ten rendered versions without contacting Kaggle:
+Dry-run all ten standalone kernels without contacting Kaggle:
 
 ```bash
 python kaggle_notebooks/commit_shard_versions.py
 ```
 
-Push five versions to each account (Secrets are optional when each notebook is
-hosted by the same account that owns its shard Datasets):
+The summary must contain shards `0..9` exactly once, ten distinct notebook
+paths/kernel IDs, five jobs per account, private `00-04`, public `05-09`, and
+`shard_count=10` throughout.
+
+Run the repository tests after generator/publisher changes:
+
+```bash
+python -m pytest codet5p_type_retrieval/tests -q -p no:cacheprovider
+```
+
+## Push shards
+
+Push/start all ten jobs only after reviewing the dry-run:
 
 ```bash
 uv run --with kaggle==1.7.4.2 python kaggle_notebooks/commit_shard_versions.py --push
 ```
 
-`kaggle kernels push` uploads and starts a run for every version. The official
-CLI treats an existing kernel ID as a new version, so the two fixed kernel slugs
-accumulate five shard-specific versions each.
-
-To retry only selected shards, repeat `--shard`, for example
-`--shard 0 --shard 5 --push`.
-
-### Recovery after a publish-only failure
-
-`recover_shard_version.py --source-version SHARD=VERSION --push` creates a
-Kaggle-side, publish-only recovery notebook and never rebuilds projects. It can
-recover only when `kaggle kernels output owner/slug/version` exposes the saved
-archive or completed work directory. Kaggle may expose an empty output for a
-committed run that ends in `ERROR`, even if the archive existed in
-`/kaggle/working` immediately before the exception. In that case the closed
-session cannot be recovered and the safe fallback is to rerun only that shard:
+Use explicit credential paths when needed:
 
 ```bash
-uv run --with kaggle==1.7.4.2 python \
-  kaggle_notebooks/commit_shard_versions.py --shard 8 --push
+uv run --with kaggle==1.7.4.2 python kaggle_notebooks/commit_shard_versions.py --credential "duyvu1105=D:\secure\duyvu.json" --credential "duymign=D:\secure\duymign.json" --push
 ```
 
-## Run order
-
-1. Optionally configure the target-owner Secrets in both Kaggle runner accounts;
-   otherwise the notebooks validate and use their automatic host identity.
-2. Dry-run `commit_shard_versions.py` and inspect its ten-version manifest.
-3. Run it with `--push` to commit/start five versions per account.
-4. Confirm shards 00-04 are ready under `duyvu1105` and shards 05-09 are ready under `duymign`.
-5. Run `03_merge_finalize.ipynb` under `duyvu1105`.
-6. Attach the resulting `typepro-python-contrastive` Dataset to `04_train_and_infer.ipynb` and run with a GPU.
-
-The publisher rejects empty/mismatched owners and slugs, writes and reads back
-`dataset-metadata.json`, chooses create/version using the authenticated owner's
-exact Dataset list, and waits for Kaggle processing to succeed. Shard archives
-contain only merge inputs, so build-time `third_party_kb` case collisions are
-excluded.
-
-If shard 02 disappears after a successful build, open notebook version 8 in
-Viewer and create a temporary private Dataset from that version's Output (or
-download the Output and upload it as a temporary Dataset). Attach that Dataset
-to `08_restore_shard_02_from_v8.ipynb`. The recovery notebook validates and
-republishes only shard 02, without rebuilding it.
-
-The direct recovery script downloads exactly version 8 and recreates the
-private shard Dataset (or adds a new version if it already exists):
-
-```python
-%pip install -q -U kagglehub
-!python /kaggle/input/<typepro-source>/kaggle_notebooks/restore_shard_02_from_v8.py
-```
-
-It refuses to upload unless `shard_manifest.json` identifies shard index 2 of
-5, contains no missing projects, and reports every selected project attempted.
-Use `--download-only` to validate the saved output without uploading it.
-
-To pin version 8 without using the Add Input UI, run
-`pin_versioned_notebook_input.py` from a launcher session. It updates the
-recovery notebook when it exists, or creates it from
-`08_restore_shard_02_from_v8.ipynb` when the target cannot be pulled. It writes
-`duyvu1105/create-dataset/8` to `kernel_sources` and pushes a new recovery
-version. Do not save the launcher cell into the target notebook, because that
-would make the target push itself recursively.
-
-The merge refuses shards with another shard count/split or unattempted projects.
-
-## Legacy five-shard recovery
-
-`resume_shards_from_versions.py` restores and continues these interrupted runs:
-
-| Shard | Saved notebook output |
-| --- | --- |
-| `00` | `duyvu1105/create-dataset/versions/6` |
-| `01` | `duyvu1105/create-dataset/versions/7` |
-| `04` | `duyvu1105/create-dataset/versions/10` |
-
-Run only one shard in each Kaggle session:
-
-```python
-%pip install -q -U kagglehub
-!python /kaggle/input/<typepro-source>/kaggle_notebooks/resume_shards_from_versions.py --shard-index 0
-```
-
-Repeat with `--shard-index 1` and `--shard-index 4` in separate sessions. The
-script validates that restored projects belong to the selected shard, skips
-completed raw/status pairs, retries unfinished projects, writes a completed
-manifest, packages only merge inputs, and uploads `typepro-build-shard-XX`.
-Use `--restore-only` to inspect recovered progress or `--no-upload` to stop
-after creating the completed archive. `--reuse-download` avoids downloading
-the same historical output again when `/kaggle/working` is still available.
-
-These historical outputs use `shard_count=5` and cannot be mixed with the new
-ten-shard workflow.
-
-## Regenerate
+Retry only selected shard kernels:
 
 ```bash
-python kaggle_notebooks/generate_notebooks.py \
-  --shards 10 \
-  --runner-accounts duyvu1105 duymign \
-  --dataset-owner duyvu1105
+uv run --with kaggle==1.7.4.2 python kaggle_notebooks/commit_shard_versions.py --shard 2 --shard 8 --push
 ```
+
+Each kernel slug is shard-specific, so a retry creates a new version only for
+that shard and cannot overwrite another shard's notebook config.
+
+## Merge and publish
+
+After all ten Dataset versions are listable, dry-run the merge payload:
+
+```bash
+uv run --with kaggle==1.7.4.2 python kaggle_notebooks/commit_merge_finalize.py
+```
+
+Then push and check it:
+
+```bash
+uv run --with kaggle==1.7.4.2 python kaggle_notebooks/commit_merge_finalize.py --push
+uv run --with kaggle==1.7.4.2 python kaggle_notebooks/commit_merge_finalize.py --check-status
+```
+
+The merge kernel `duyvu1105/typepro-merge-10-shards` receives exactly these
+attached inputs:
+
+- private `duyvu1105/typepro-build-shard-00` through `...-04`;
+- public `duymign/typepro-build-shard-05` through `...-09`.
+
+It reads attached `/kaggle/input` data and never downloads shard payloads at
+runtime. It validates manifests before running `merge_shards.py`, finalization,
+dataset verification and publication.
+
+## Recovery
+
+If slicing/publishing fails, rerun only that standalone shard. Compatible
+partial state resumes automatically. If the completed archive remains in a
+saved kernel version but publication failed, dry-run then use:
+
+```bash
+uv run --with kaggle==1.7.4.2 python kaggle_notebooks/recover_shard_version.py --source-version 8=2 --push
+```
+
+Here shard `08` is restored from version `2` of
+`duymign/typepro-python-shard-08`. Replace the version with the actual saved
+version. Recovery only republishes verified completed output; it does not
+rebuild recommendations.
+
+`restore_shard_02_from_v8.py` and `resume_shards_from_versions.py` are legacy
+five-shard history utilities. Their `shard_count=5` outputs must never be mixed
+with this ten-shard workflow.
+
+## Completion order
+
+1. Generate artifacts and run tests.
+2. Dry-run and inspect the ten shard payloads.
+3. Push the ten standalone kernels with the correct two credentials.
+4. Verify all ten Dataset manifests and file listings.
+5. Push/check `11_merge_finalize.ipynb` under `duyvu1105`.
+6. Attach the final Dataset to `12_train_and_infer.ipynb` and run training.

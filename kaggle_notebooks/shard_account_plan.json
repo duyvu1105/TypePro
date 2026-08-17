@@ -1,35 +1,87 @@
 {
-  "schema_version": "typepro-shard-account-plan-v2",
+  "schema_version": "typepro-shard-account-plan-v3",
   "final_dataset_owner": "duyvu1105",
   "shard_count": 10,
-  "accounts": [
+  "shards": [
     {
+      "shard_index": 0,
       "runner_account": "duyvu1105",
       "dataset_owner": "duyvu1105",
       "public_dataset": false,
-      "notebook": "01_typepro_account_duyvu1105_shards_00_04.ipynb",
-      "assigned_shards": [
-        0,
-        1,
-        2,
-        3,
-        4
-      ],
-      "kernel_slug": "typepro-shards-00-04"
+      "notebook": "01_typepro_shard_00.ipynb",
+      "kernel_slug": "typepro-python-shard-00"
     },
     {
+      "shard_index": 1,
+      "runner_account": "duyvu1105",
+      "dataset_owner": "duyvu1105",
+      "public_dataset": false,
+      "notebook": "02_typepro_shard_01.ipynb",
+      "kernel_slug": "typepro-python-shard-01"
+    },
+    {
+      "shard_index": 2,
+      "runner_account": "duyvu1105",
+      "dataset_owner": "duyvu1105",
+      "public_dataset": false,
+      "notebook": "03_typepro_shard_02.ipynb",
+      "kernel_slug": "typepro-python-shard-02"
+    },
+    {
+      "shard_index": 3,
+      "runner_account": "duyvu1105",
+      "dataset_owner": "duyvu1105",
+      "public_dataset": false,
+      "notebook": "04_typepro_shard_03.ipynb",
+      "kernel_slug": "typepro-python-shard-03"
+    },
+    {
+      "shard_index": 4,
+      "runner_account": "duyvu1105",
+      "dataset_owner": "duyvu1105",
+      "public_dataset": false,
+      "notebook": "05_typepro_shard_04.ipynb",
+      "kernel_slug": "typepro-python-shard-04"
+    },
+    {
+      "shard_index": 5,
       "runner_account": "duymign",
       "dataset_owner": "duymign",
       "public_dataset": true,
-      "notebook": "02_typepro_account_duymign_shards_05_09.ipynb",
-      "assigned_shards": [
-        5,
-        6,
-        7,
-        8,
-        9
-      ],
-      "kernel_slug": "typepro-shards-05-09"
+      "notebook": "06_typepro_shard_05.ipynb",
+      "kernel_slug": "typepro-python-shard-05"
+    },
+    {
+      "shard_index": 6,
+      "runner_account": "duymign",
+      "dataset_owner": "duymign",
+      "public_dataset": true,
+      "notebook": "07_typepro_shard_06.ipynb",
+      "kernel_slug": "typepro-python-shard-06"
+    },
+    {
+      "shard_index": 7,
+      "runner_account": "duymign",
+      "dataset_owner": "duymign",
+      "public_dataset": true,
+      "notebook": "08_typepro_shard_07.ipynb",
+      "kernel_slug": "typepro-python-shard-07"
+    },
+    {
+      "shard_index": 8,
+      "runner_account": "duymign",
+      "dataset_owner": "duymign",
+      "public_dataset": true,
+      "notebook": "09_typepro_shard_08.ipynb",
+      "kernel_slug": "typepro-python-shard-08"
+    },
+    {
+      "shard_index": 9,
+      "runner_account": "duymign",
+      "dataset_owner": "duymign",
+      "public_dataset": true,
+      "notebook": "10_typepro_shard_09.ipynb",
+      "kernel_slug": "typepro-python-shard-09"
     }
   ],
   "merge_datasets": [
@@ -44,28 +96,7 @@
       "dataset_id": "duyvu1105/typepro-build-shard-01",
       "logical_shard_index": 1,
       "shard_index": 1,
-      "shard_count": 60,
-      "public_dataset": false
-    },
-    {
-      "dataset_id": "duyvu1105/typepro-build-shard-21",
-      "logical_shard_index": 1,
-      "shard_index": 21,
-      "shard_count": 60,
-      "public_dataset": false
-    },
-    {
-      "dataset_id": "duyvu1105/typepro-build-shard-41",
-      "logical_shard_index": 1,
-      "shard_index": 41,
-      "shard_count": 60,
-      "public_dataset": false
-    },
-    {
-      "dataset_id": "duyvu1105/typepro-build-shard-11",
-      "logical_shard_index": 1,
-      "shard_index": 11,
-      "shard_count": 20,
+      "shard_count": 10,
       "public_dataset": false
     },
     {
@@ -86,42 +117,14 @@
       "dataset_id": "duyvu1105/typepro-build-shard-04",
       "logical_shard_index": 4,
       "shard_index": 4,
-      "shard_count": 20,
+      "shard_count": 10,
       "public_dataset": false
-    },
-    {
-      "dataset_id": "duymign/typepro-build-shard-14",
-      "logical_shard_index": 4,
-      "shard_index": 14,
-      "shard_count": 60,
-      "public_dataset": true
-    },
-    {
-      "dataset_id": "duymign/typepro-build-shard-34",
-      "logical_shard_index": 4,
-      "shard_index": 34,
-      "shard_count": 60,
-      "public_dataset": true
-    },
-    {
-      "dataset_id": "duymign/typepro-build-shard-54",
-      "logical_shard_index": 4,
-      "shard_index": 54,
-      "shard_count": 60,
-      "public_dataset": true
     },
     {
       "dataset_id": "duymign/typepro-build-shard-05",
       "logical_shard_index": 5,
       "shard_index": 5,
-      "shard_count": 20,
-      "public_dataset": true
-    },
-    {
-      "dataset_id": "duymign/typepro-build-shard-15",
-      "logical_shard_index": 5,
-      "shard_index": 15,
-      "shard_count": 20,
+      "shard_count": 10,
       "public_dataset": true
     },
     {
@@ -149,14 +152,7 @@
       "dataset_id": "duymign/typepro-build-shard-09",
       "logical_shard_index": 9,
       "shard_index": 9,
-      "shard_count": 20,
-      "public_dataset": true
-    },
-    {
-      "dataset_id": "duymign/typepro-build-shard-19",
-      "logical_shard_index": 9,
-      "shard_index": 19,
-      "shard_count": 20,
+      "shard_count": 10,
       "public_dataset": true
     }
   ]
