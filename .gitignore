@@ -11,3 +11,6 @@ typepro_python_contrastive/
 codet5p-typepro*/
 test_predictions.jsonl
 typepro_kernel_versions/
+
+# Cloud Run dataset downloads
+typepro_cloudrun_downloads/

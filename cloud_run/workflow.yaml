@@ -1,0 +1,27 @@
+main:
+  params: [args]
+  steps:
+    - init:
+        assign:
+          - project: "project-7df9f963-9fe0-4b76-b3d"
+          - region: "asia-southeast1"
+    - build_shards:
+        call: googleapis.run.v2.projects.locations.jobs.run
+        args:
+          name: ${"projects/" + project + "/locations/" + region + "/jobs/typepro-shards"}
+          body: {}
+          connector_params:
+            timeout: 604800
+        result: shard_execution
+    - finalize_dataset:
+        call: googleapis.run.v2.projects.locations.jobs.run
+        args:
+          name: ${"projects/" + project + "/locations/" + region + "/jobs/typepro-finalize"}
+          body: {}
+          connector_params:
+            timeout: 21600
+        result: finalize_execution
+    - done:
+        return:
+          shard_execution: ${shard_execution.name}
+          finalize_execution: ${finalize_execution.name}

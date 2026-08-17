@@ -1,0 +1,10 @@
+{
+  "project_id": "project-7df9f963-9fe0-4b76-b3d",
+  "region": "asia-southeast1",
+  "bucket": "project-7df9f963-9fe0-4b76-b3d-typepro",
+  "artifact_repository": "typepro",
+  "shard_job": "typepro-shards",
+  "finalize_job": "typepro-finalize",
+  "workflow": "typepro-build",
+  "service_account": "typepro-cloudrun"
+}

@@ -1,0 +1,10 @@
+#!include:.gitignore
+.git/
+.github/
+.agents/
+.codex/
+RQ Results/
+TypeScript/
+kaggle_notebooks/
+*.pdf
+*.zip
