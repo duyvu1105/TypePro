@@ -1168,8 +1168,8 @@ def merge_notebook(
         `{expected_dataset_owner}` so the automatic host identity can publish
         the final Dataset. Optional `TYPEPRO_FINAL_USERNAME/KEY` Secrets may
         override it. Shards owned by the final account remain private; shards
-        owned by the second account are public so this identity can download
-        both groups. Run only after all `{count}` shard Datasets complete.
+        owned by the second account are public so they can be attached as
+        notebook inputs. Run only after all `{count}` shard Datasets complete.
         """),
         code(f"""
         SHARD_COUNT = {count}
@@ -1255,7 +1255,8 @@ def merge_notebook(
         }})
 
         REPO_DIR = Path("/kaggle/working/TypePro")
-        DOWNLOAD_DIR = Path("/kaggle/working/downloaded_shards")
+        INPUT_ROOT = Path("/kaggle/input")
+        EXTRACTED_INPUT_ROOT = Path("/kaggle/working/extracted_shard_inputs")
         MERGED_BUILD = Path("/kaggle/working/typepro_build")
         FINAL_DIR = Path("/kaggle/working/typepro_python_contrastive")
 
@@ -1313,28 +1314,31 @@ def merge_notebook(
             "authentication_method": identity.get("auth_method"),
         })
         """),
-        markdown("## Download and extract every shard dataset"),
+        markdown("## Validate all attached shard Dataset inputs"),
         code("""
-        DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
+        EXTRACTED_INPUT_ROOT.mkdir(parents=True, exist_ok=True)
         shard_builds = []
-        use_credential(FINAL_SOURCE)
         for item in MERGE_DATASETS:
             dataset_id = item["dataset_id"]
             index = item["shard_index"]
             expected_count = item["shard_count"]
-            target = DOWNLOAD_DIR / dataset_id.replace("/", "__")
-            target.mkdir(parents=True, exist_ok=True)
-            run(["kaggle", "datasets", "download", "-d", dataset_id, "-p", target, "--unzip"])
-            marker_paths = list(target.rglob("shard_manifest.json"))
+            input_dir = INPUT_ROOT / dataset_id.rsplit("/", 1)[-1]
+            if not input_dir.is_dir():
+                raise RuntimeError(
+                    f"Attached input is missing for {dataset_id}: {input_dir}"
+                )
+            marker_paths = list(input_dir.rglob("shard_manifest.json"))
             if not marker_paths:
                 # Older shard datasets may preserve the pre-packed ZIP, while
                 # Kaggle expands newer uploads into a directory tree.
-                archives = list(target.rglob("typepro_build_shard_*.zip"))
+                archives = list(input_dir.rglob("typepro_build_shard_*.zip"))
                 if len(archives) != 1:
                     raise RuntimeError(
                         f"{dataset_id}: expected one build directory or archive, "
                         f"found markers={marker_paths}, archives={archives}"
                     )
+                target = EXTRACTED_INPUT_ROOT / dataset_id.replace("/", "__")
+                target.mkdir(parents=True, exist_ok=True)
                 with zipfile.ZipFile(archives[0]) as bundle:
                     bundle.extractall(target)
                 marker_paths = list(target.rglob("shard_manifest.json"))

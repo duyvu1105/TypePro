@@ -14,6 +14,8 @@ parameter-only dataset:
 - `commit_shard_versions.py`: render and optionally push five immutable shard versions per account.
 - `commit_repartitioned_parts.py`: render/push the six short replacements for
   the cancelled shard 01 A/2 and shard 04 B/2 jobs.
+- `commit_merge_finalize.py`: attach the exact 16 shard Datasets and push/check
+  the final merge kernel under `duyvu1105`.
 - `generate_notebooks.py`: regenerate the complete workflow.
 
 Each build shard keeps only non-built-in function parameters. It builds a cached
@@ -133,6 +135,16 @@ shards 05-09 are intentionally public. The merge notebook can use
 That identity reads its own private shards 00-04 and the public `duymign`
 shards 05-09. After validating all ten manifests, it publishes the final
 private `duyvu1105/typepro-python-contrastive` Dataset.
+
+The merge kernel receives all 16 physical Datasets through Kaggle
+`dataset_sources`; it validates them directly under `/kaggle/input` and does
+not download shard payloads again at runtime. Dry-run, push, and check it with:
+
+```bash
+uv run --with kaggle==1.7.4.2 python kaggle_notebooks/commit_merge_finalize.py
+uv run --with kaggle==1.7.4.2 python kaggle_notebooks/commit_merge_finalize.py --push
+uv run --with kaggle==1.7.4.2 python kaggle_notebooks/commit_merge_finalize.py --check-status
+```
 
 Dry-run and validate all ten rendered versions without contacting Kaggle:
 

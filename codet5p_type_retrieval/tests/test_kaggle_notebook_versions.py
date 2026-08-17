@@ -11,6 +11,7 @@ sys.path.insert(0, str(NOTEBOOK_DIR))
 
 import commit_shard_versions
 import commit_repartitioned_parts
+import commit_merge_finalize
 import generate_notebooks
 import recover_shard_version
 
@@ -191,7 +192,7 @@ def test_kernel_metadata_is_private_cpu_notebook():
     assert metadata["enable_internet"] is True
 
 
-def test_merge_notebook_switches_private_dataset_credentials_by_owner():
+def test_merge_notebook_uses_attached_inputs_and_final_owner_for_publish():
     shard_accounts = [
         {
             "runner_account": "duyvu1105",
@@ -222,6 +223,18 @@ def test_merge_notebook_switches_private_dataset_credentials_by_owner():
     assert "use_credential(FINAL_SOURCE)" in serialized
     assert 'item[\\"dataset_id\\"]' in serialized
     assert "FINAL_SOURCE['owner']" in serialized
+    assert "/kaggle/input" in serialized
+    assert '\\"datasets\\", \\"download\\"' not in serialized
+
+
+def test_merge_kernel_metadata_attaches_exact_merge_plan_inputs():
+    dataset_ids = commit_merge_finalize.merge_dataset_ids()
+    metadata = commit_merge_finalize.kernel_metadata("typepro_merge_finalize.ipynb")
+
+    assert len(dataset_ids) == 16
+    assert len(set(dataset_ids)) == 16
+    assert metadata["id"] == "duyvu1105/typepro-merge-finalize"
+    assert metadata["dataset_sources"] == dataset_ids
 
 
 def test_cancelled_halves_are_split_into_three_jobs_per_account():
