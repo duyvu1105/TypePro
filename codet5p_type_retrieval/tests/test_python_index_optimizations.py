@@ -9,7 +9,7 @@ sys.path.insert(0, str(PYTHON_DIR))
 import readFunctionUseData
 from export_slices import export_one
 from function_methods import Function_methods
-from slicing_code_class import ProjectAnalysisCache, Slicer
+from slicing_code_class import CachedStatement, ProjectAnalysisCache, Slicer
 from type_defined import ProjectClassDefine, ProjectDefined, ProjectUseData
 
 
@@ -131,6 +131,12 @@ def test_statement_index_and_result_cache_preserve_exact_output(tmp_path):
     assert cache.misses["file"] == 1
     assert cache.hits["file"] >= 1
     assert cache.hits["statement"] == 1
+    structure = cache.file_analysis(str(source))
+    assert all(
+        isinstance(statement, CachedStatement)
+        for statements in structure.values()
+        for statement in statements
+    )
 
 
 def test_shared_analysis_cache_preserves_records_for_repeated_function_uses(
@@ -181,5 +187,42 @@ def test_shared_analysis_cache_preserves_records_for_repeated_function_uses(
     ]
 
     assert actual == expected
-    assert cache.hits["use"] == 1
+    assert cache.hits["function"] == 1
+    assert cache.hits["function_output"] == 1
     assert cache.hits["analyzer"] == 1
+
+
+def test_function_use_cache_preserves_event_order_and_signature_filtering(
+    tmp_path, monkeypatch
+):
+    source = tmp_path / "sample.py"
+    source.write_text("def target(value):\n    return value\n", encoding="utf-8")
+    methods = make_methods()
+    uses = [
+        ProjectUseData("target", "first()", 1, str(source)),
+        ProjectUseData("target", "second()", 2, str(source)),
+    ]
+    methods.total_function_use_data = uses
+    methods._rebuild_indexes()
+    cache = ProjectAnalysisCache()
+    slicer = Slicer(str(source), function_methods=methods, analysis_cache=cache)
+    parsed = {
+        uses[0]: (["call-1", "shared"], ["excluded", "sig-1"]),
+        uses[1]: (["excluded", "call-2"], ["sig-1", "sig-2"]),
+    }
+    calls = []
+
+    def fake_parse(use):
+        calls.append(use)
+        return parsed[use]
+
+    monkeypatch.setattr(slicer, "parse_use_data", fake_parse)
+
+    first = slicer.function_use_data("target", ["excluded"])
+    second = slicer.function_use_data("target", ["excluded"])
+
+    assert first == ["sig-1", "call-1", "shared", "sig-2", "excluded", "call-2"]
+    assert second == first
+    assert calls == uses
+    assert cache.hits["function"] == 1
+    assert cache.hits["function_output"] == 1

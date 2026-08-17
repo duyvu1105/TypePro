@@ -3,7 +3,7 @@ from collections import OrderedDict, defaultdict
 from loguru import logger
 from type_defined import ProjectDefined, ProjectUseData, stmt_types, FunctionInfo, OTHER_PROMPTS,SIMPLE_BINOPS
 from function_methods import Function_methods
-from typing import List, Optional, Union, Dict,Iterable,Type
+from typing import List, Optional, Union, Dict, Iterable, Type, NamedTuple
 from import_analyzer import importAnalyzer
 from tool import split_unpack_in_code
 ScopeNode = Union[ast.FunctionDef, ast.ClassDef, ast.Module]
@@ -13,24 +13,103 @@ file_lines = []
 func_sig_list = []
 
 
+class CachedStatement(NamedTuple):
+    """Compact statement data; deliberately holds no AST references."""
+
+    code_line: str
+    lineno: int
+    call_target: str | None
+    is_assign: bool
+    lhs: tuple[str, ...]
+    names: tuple[str, ...]
+    simple_op_assign: bool
+
+
+def _call_target_name(node: ast.Call) -> str:
+    names = []
+    func = node.func
+    while isinstance(func, ast.Attribute):
+        names.insert(0, func.attr)
+        func = func.value
+    if isinstance(func, ast.Name):
+        names.insert(0, func.id)
+    return ".".join(names)
+
+
+def _lhs(node: ast.AST) -> list[str]:
+    if isinstance(node, ast.Assign):
+        lhs_nodes = node.targets
+    elif isinstance(node, ast.AugAssign):
+        lhs_nodes = [node.target]
+    elif isinstance(node, ast.AnnAssign):
+        lhs_nodes = [node.target]
+    else:
+        return []
+    results = []
+    for target in lhs_nodes:
+        try:
+            results.append(ast.unparse(target).strip())
+        except AttributeError:
+            if isinstance(target, ast.Name):
+                results.append(target.id)
+            elif isinstance(target, ast.Attribute):
+                value = ast.unparse(target.value) if hasattr(ast, "unparse") else ""
+                results.append(f"{value}.{target.attr}")
+            else:
+                results.append(repr(target))
+    return results
+
+
+def _is_call_statement(node: ast.stmt) -> bool:
+    if isinstance(node, ast.Assign):
+        return isinstance(node.value, ast.Call)
+    if isinstance(node, ast.AnnAssign):
+        return isinstance(node.value, ast.Call)
+    if isinstance(node, ast.Expr):
+        return isinstance(node.value, ast.Call)
+    if isinstance(node, ast.Return):
+        return isinstance(node.value, ast.Call)
+    return False
+
+
+def _is_simple_op_assignment(node: ast.AST) -> bool:
+    return (
+        isinstance(node, ast.Assign)
+        and isinstance(node.value, ast.BinOp)
+        and any(isinstance(node.value.op, op) for op in SIMPLE_BINOPS)
+    )
+
+
+def _append_unique(values: list, seen: set, value) -> bool:
+    if value in seen:
+        return False
+    seen.add(value)
+    values.append(value)
+    return True
+
+
 class ProjectAnalysisCache:
     """Bounded, project-local caches for read-only source analysis."""
 
     def __init__(
         self,
-        file_limit: int = 128,
+        file_limit: int = 2048,
         statement_limit: int = 50000,
         use_limit: int = 100000,
         analyzer_limit: int = 256,
+        function_limit: int = 4096,
     ):
         self.file_limit = file_limit
         self.statement_limit = statement_limit
         self.use_limit = use_limit
         self.analyzer_limit = analyzer_limit
-        self._files = OrderedDict()
+        self.function_limit = function_limit
+        self._structures = OrderedDict()
         self._statements = OrderedDict()
         self._uses = OrderedDict()
         self._analyzers = OrderedDict()
+        self._function_uses = OrderedDict()
+        self._function_outputs = OrderedDict()
         self.hits = defaultdict(int)
         self.misses = defaultdict(int)
 
@@ -42,9 +121,9 @@ class ProjectAnalysisCache:
             cache.popitem(last=False)
 
     def file_analysis(self, file_path: str):
-        cached = self._files.get(file_path)
+        cached = self._structures.get(file_path)
         if cached is not None:
-            self._files.move_to_end(file_path)
+            self._structures.move_to_end(file_path)
             self.hits["file"] += 1
             return cached
         self.misses["file"] += 1
@@ -56,10 +135,22 @@ class ProjectAnalysisCache:
             if not isinstance(node, stmt_types) or not hasattr(node, "lineno"):
                 continue
             names = {child.id for child in ast.walk(node) if isinstance(child, ast.Name)}
+            call_target = None
+            if _is_call_statement(node):
+                call_target = _call_target_name(node.value)
+            statement = CachedStatement(
+                code_line=ast.unparse(node),
+                lineno=node.lineno,
+                call_target=call_target,
+                is_assign=isinstance(node, ast.Assign),
+                lhs=tuple(_lhs(node)),
+                names=tuple(names),
+                simple_op_assign=_is_simple_op_assignment(node),
+            )
             for name in names:
-                nodes_by_name[name].append(node)
-        cached = (source, tree, nodes_by_name)
-        self._remember(self._files, file_path, cached, self.file_limit)
+                nodes_by_name[name].append(statement)
+        cached = {name: tuple(nodes) for name, nodes in nodes_by_name.items()}
+        self._remember(self._structures, file_path, cached, self.file_limit)
         return cached
 
     def analyzer(self, file_path: str):
@@ -107,10 +198,40 @@ class ProjectAnalysisCache:
             self.use_limit,
         )
 
+    def function_use_events(self, key):
+        cached = self._function_uses.get(key)
+        if cached is None:
+            self.misses["function"] += 1
+            return None
+        self._function_uses.move_to_end(key)
+        self.hits["function"] += 1
+        return cached
+
+    def remember_function_use_events(self, key, events):
+        self._remember(
+            self._function_uses, key, tuple(events), self.function_limit
+        )
+
+    def function_output(self, key):
+        cached = self._function_outputs.get(key)
+        if cached is None:
+            self.misses["function_output"] += 1
+            return None
+        self._function_outputs.move_to_end(key)
+        self.hits["function_output"] += 1
+        return list(cached)
+
+    def remember_function_output(self, key, values):
+        self._remember(
+            self._function_outputs, key, tuple(values), self.function_limit
+        )
+
     def summary(self) -> str:
         return " ".join(
             f"{name}_hits={self.hits[name]:,} {name}_misses={self.misses[name]:,}"
-            for name in ("file", "statement", "use", "analyzer")
+            for name in (
+                "file", "statement", "use", "function", "function_output", "analyzer"
+            )
         )
 
 class Slicer:
@@ -129,18 +250,22 @@ class Slicer:
         self._domain_statement_indexes = {}
         self.other_prompts = []
         self.type_recommend = []
+        self._type_recommend_seen = set()
 
     def add_type_recommendations(self, definitions: Iterable[str], prepend: bool = False):
         values = [definition for definition in definitions if definition]
         if prepend:
             for definition in reversed(values):
-                if definition in self.type_recommend:
+                if definition in self._type_recommend_seen:
                     self.type_recommend.remove(definition)
+                else:
+                    self._type_recommend_seen.add(definition)
                 self.type_recommend.insert(0, definition)
             return
         for definition in values:
-            if definition not in self.type_recommend:
-                self.type_recommend.append(definition)
+            _append_unique(
+                self.type_recommend, self._type_recommend_seen, definition
+            )
 
     def is_simple_op_assign(self,node: ast.AST,
                             ops: Iterable[Type[ast.operator]] = SIMPLE_BINOPS
@@ -187,16 +312,27 @@ class Slicer:
         sorted_data = sorted(total_ans, key=lambda x: x[1])
         return sorted_data, func_sig_list
 
+    def get_cached_assign_var(
+        self, statement: CachedStatement, file_path: str, target_name: str
+    ):
+        total_ans = []
+        signatures = []
+        if target_name not in statement.lhs and not statement.simple_op_assign:
+            names = statement.lhs
+        else:
+            names = statement.names
+        for name in names:
+            if name == target_name:
+                continue
+            answers, nested_signatures = self.find_statements_for_var(
+                file_path, name, False
+            )
+            total_ans.extend(answers)
+            signatures.extend(nested_signatures)
+        return sorted(total_ans, key=lambda item: item[1]), signatures
+
     def is_call_stmt(self,node: ast.stmt) -> bool:
-        if isinstance(node, ast.Assign):
-            return isinstance(node.value, ast.Call)
-        elif isinstance(node, ast.AnnAssign):
-            return isinstance(node.value, ast.Call)
-        elif isinstance(node, ast.Expr):
-            return isinstance(node.value, ast.Call)
-        elif isinstance(node, ast.Return):
-            return isinstance(node.value, ast.Call)
-        return False
+        return _is_call_statement(node)
 
     def is_assignment(self,node: ast.AST) -> bool:
 
@@ -245,15 +381,9 @@ class Slicer:
         return f"{prefix}{node.name}({args_str}){ret}:"
 
     def get_call_func_names(self,node: ast.Call) -> list:
-        names = []
-        func = node.func
-        while isinstance(func, ast.Attribute):
-            names.insert(0, func.attr)
-            func = func.value
-        if isinstance(func, ast.Name):
-            names.insert(0, func.id)
+        return self.get_call_func_signatures(_call_target_name(node))
 
-        target_name = ".".join(names)
+    def get_call_func_signatures(self, target_name: str) -> list:
         fun_sig = self.Funcion_methods.get_target_name_signals(target_name)
         cls_sigs = self.Funcion_methods.get_class_by_names(target_name)
         if len(cls_sigs)>0:
@@ -268,29 +398,7 @@ class Slicer:
         return fun_sig
 
     def get_lhs(self,node: ast.AST) -> List[str]:
-        lhs_nodes = []
-        if isinstance(node, ast.Assign):
-            lhs_nodes = node.targets
-        elif isinstance(node, ast.AugAssign):
-            lhs_nodes = [node.target]
-        elif isinstance(node, ast.AnnAssign):
-            lhs_nodes = [node.target]
-        else:
-            return []
-        results = []
-        for target in lhs_nodes:
-            try:
-                results.append(ast.unparse(target).strip())
-            except AttributeError:
-                if isinstance(target, ast.Name):
-                    results.append(target.id)
-                elif isinstance(target, ast.Attribute):
-                    # obj.attr
-                    val = ast.unparse(target.value) if hasattr(ast, "unparse") else ""
-                    results.append(f"{val}.{target.attr}")
-                else:
-                    results.append(repr(target))
-        return results
+        return _lhs(node)
 
     def get_assign_targets(self,assign_node: ast.Assign) -> List[str]:
 
@@ -313,13 +421,15 @@ class Slicer:
             cached = self.analysis_cache.statement_result(cache_key)
             if cached is not None:
                 return cached
-            source, tree, nodes_by_name = self.analysis_cache.file_analysis(file_path)
+            nodes_by_name = self.analysis_cache.file_analysis(file_path)
             candidate_nodes = nodes_by_name.get(var_name, ())
+            compact_statements = True
         elif Domain is None:
             with open(file_path, 'r', encoding='utf-8') as f:
                 source = split_unpack_in_code(f.read())
             tree = ast.parse(source, filename=file_path)
             candidate_nodes = None
+            compact_statements = False
         else:
             tree = Domain[0]
             source = Domain[1]
@@ -335,11 +445,26 @@ class Slicer:
                         nodes_by_name[name].append(node)
                 self._domain_statement_indexes[domain_key] = nodes_by_name
             candidate_nodes = nodes_by_name.get(var_name, ())
+            compact_statements = False
 
         results = []
         func_sig_t = []
+        func_sig_seen = set()
         nodes = candidate_nodes if candidate_nodes is not None else ast.walk(tree)
         for node in nodes:
+            if compact_statements:
+                if node.call_target is not None:
+                    for signature in self.get_call_func_signatures(node.call_target):
+                        _append_unique(func_sig_t, func_sig_seen, signature)
+                if node.is_assign and is_for_defined:
+                    other_data, nested_signatures = self.get_cached_assign_var(
+                        node, file_path, var_name
+                    )
+                    results.extend(other_data)
+                    for signature in nested_signatures:
+                        _append_unique(func_sig_t, func_sig_seen, signature)
+                results.append((node.code_line, node.lineno))
+                continue
             if not isinstance(node, stmt_types) or not hasattr(node, 'lineno'):
                 continue
             if candidate_nodes is None and not any(
@@ -352,16 +477,14 @@ class Slicer:
                 call_node = node.value  # ast.Call
                 func_sigs = self.get_call_func_names(call_node)
                 for f in func_sigs:
-                    if f not in func_sig_t:
-                        func_sig_t.append(f)
+                    _append_unique(func_sig_t, func_sig_seen, f)
 
             if isinstance(node, ast.Assign) and is_for_defined:
                 other_data, temp_sig_list = self.get_assign_var(node, file_path, var_name, Domain)
                 for d in other_data:
                     results.append(d)
                 for f in temp_sig_list:
-                    if f not in func_sig_t:
-                        func_sig_t.append(f)
+                    _append_unique(func_sig_t, func_sig_seen, f)
             lineno = node.lineno
             code_line = ast.unparse(node)
             results.append((code_line, lineno))
@@ -492,6 +615,7 @@ class Slicer:
                 return cached
         fix_srcCode  = split_unpack_in_code(data.source_code)
         param_all_data = [fix_srcCode]
+        param_all_seen = {fix_srcCode}
         func_sig_used_list = []
         try:
             call_node = ast.parse(fix_srcCode)
@@ -501,8 +625,7 @@ class Slicer:
                     for p_identify in params_list:
                         identify_slicing, sigs = self.find_statements_for_var(data.file_name, p_identify, False)
                         for s in identify_slicing:
-                            if s[0] not in param_all_data:
-                                param_all_data.append(s[0])
+                            _append_unique(param_all_data, param_all_seen, s[0])
                         for f in sigs:
                             func_sig_used_list.append(f)
                     break
@@ -514,6 +637,43 @@ class Slicer:
                 cache_key, param_all_data, func_sig_used_list
             )
         return param_all_data, func_sig_used_list
+
+    def function_use_data(
+        self, function_name: str, excluded_signatures: Iterable[str] = ()
+    ) -> list[str]:
+        base_key = (self.file_name, function_name)
+        events = None
+        if self.analysis_cache is not None:
+            events = self.analysis_cache.function_use_events(base_key)
+        if events is None:
+            built_events = []
+            for use in self.Funcion_methods.get_function_use_data(function_name):
+                data, signatures = self.parse_use_data(use)
+                built_events.extend(("signature", value) for value in signatures)
+                built_events.extend(("data", value) for value in data)
+            events = tuple(built_events)
+            if self.analysis_cache is not None:
+                self.analysis_cache.remember_function_use_events(base_key, events)
+
+        excluded = frozenset(excluded_signatures)
+        output_key = (base_key, excluded)
+        if self.analysis_cache is not None:
+            cached = self.analysis_cache.function_output(output_key)
+            if cached is not None:
+                return cached
+
+        values = []
+        seen = set()
+        definition_marker = "def " + function_name
+        for kind, value in events:
+            if kind == "signature" and (
+                value in excluded or definition_marker in value
+            ):
+                continue
+            _append_unique(values, seen, value)
+        if self.analysis_cache is not None:
+            self.analysis_cache.remember_function_output(output_key, values)
+        return values
 
     def find_variable_nodes(self,file_path: str, var_name: str) -> List[ast.Name]:
         
@@ -538,6 +698,7 @@ class Slicer:
         tree = ast.parse(source, filename=file_path)
         res = []
         call_node_str = []
+        call_node_seen = set()
         func_return_data = []
         for node1 in ast.walk(node):
             if isinstance(node1, ast.Call):
@@ -550,8 +711,7 @@ class Slicer:
 
                 func_sigs = self.get_call_func_names(node1)
                 for i in func_sigs:
-                    if i not in call_node_str:
-                        call_node_str.append(i)
+                    _append_unique(call_node_str, call_node_seen, i)
 
             elif isinstance(node, ast.Return):
                 ret_expr = ast.get_source_segment(source, node.value) if node.value else ""
@@ -564,31 +724,23 @@ class Slicer:
                                 if node2.id in lhs:
                                     func_return_data.append(ast.get_source_segment(source, d))
 
-        other_Use = self.Funcion_methods.get_function_use_data(function_name)
-        total_use_data = []
-        for u in other_Use:
-            data, sig = self.parse_use_data(u)
-            for s in sig:
-                if s not in call_node_str and s not in func_sig_list and "def " + function_name not in s:
-                    total_use_data.append(s)
-            for d in data:
-                if d not in total_use_data:
-                    total_use_data.append(d)
+        total_use_data = self.function_use_data(
+            function_name, (*call_node_str, *func_sig_list)
+        )
 
         function_code = ast.unparse(node)
 
         total_code = ""
         total_code_list = []
+        total_code_seen = set()
         for f in call_node_str:
-            if f not in total_code_list:
-                total_code_list.append(f)
+            _append_unique(total_code_list, total_code_seen, f)
         for i in func_return_data:
-            if i not in total_code_list:
-                total_code_list.append(i)
+            _append_unique(total_code_list, total_code_seen, i)
         total_code_list.append(function_code)
+        total_code_seen.add(function_code)
         for p in total_use_data:
-            if p not in total_code_list:
-                total_code_list.append(p)
+            _append_unique(total_code_list, total_code_seen, p)
 
         total_code = "\n".join(total_code_list)
 
@@ -696,6 +848,7 @@ class Slicer:
         if self.maybe_class:
             self.other_prompts.append(OTHER_PROMPTS["class"])
         total_code_list = []
+        total_code_seen = set()
         with open(file_path, 'r', encoding='utf-8') as f:
             source = f.read()
         if var_node != None:
@@ -705,6 +858,7 @@ class Slicer:
         may_cls_data2 = self.Funcion_methods.calculate_similarity_for_class_name(target_var_name)
         if may_cls_data!="":
             total_code_list.append(may_cls_data)
+            total_code_seen.add(may_cls_data)
         if len(may_cls_data)>0:
             self.add_type_recommendations(may_cls_data2)
         self.add_type_recommendations(
@@ -716,14 +870,12 @@ class Slicer:
         total_code = ""
         import_infos = self.get_import_info(file_path, source)
         for i_f in import_infos:
-            if ast.get_source_segment(source, i_f) not in total_code_list:
-                total_code_list.append(ast.get_source_segment(source, i_f))
+            import_source = ast.get_source_segment(source, i_f)
+            _append_unique(total_code_list, total_code_seen, import_source)
         for fs in sigs:
-            if fs not in total_code_list:
-                total_code_list.append(fs)
+            _append_unique(total_code_list, total_code_seen, fs)
         for i in res:
-            if i[0] not in total_code_list:
-                total_code_list.append(i[0])
+            _append_unique(total_code_list, total_code_seen, i[0])
         total_code = "\n".join(total_code_list)
         self.add_type_recommendations(
             self.import_analyzer.calculate_similarity_for_class(total_code), prepend=True
@@ -749,6 +901,7 @@ class Slicer:
 
     def slicing_params(self,func_node: ast.AST, root: ast.AST, param_name: str, file_path: str):
         total_code_list = []
+        total_code_seen = set()
 
         with open(file_path, 'r', encoding='utf-8') as f:
             source = f.read()
@@ -758,8 +911,8 @@ class Slicer:
             total_code = ""
             import_infos = self.get_import_info(file_path, source)
             for i_f in import_infos:
-                if ast.get_source_segment(source, i_f) not in total_code_list:
-                    total_code_list.append(ast.get_source_segment(source, i_f))
+                import_source = ast.get_source_segment(source, i_f)
+                _append_unique(total_code_list, total_code_seen, import_source)
 
             # params_node = get_function_params_node(func_node, param_name)
             lines = source.splitlines()
@@ -768,6 +921,7 @@ class Slicer:
             may_class_2 = self.Funcion_methods.calculate_similarity_for_class_name(param_name)
             if may_class!="":
                 total_code_list.append(may_class)
+                total_code_seen.add(may_class)
             if len(may_class_2)>0:
                 self.add_type_recommendations(may_class_2)
             self.add_type_recommendations(
@@ -776,23 +930,14 @@ class Slicer:
 
             res, sigs = self.find_statements_for_var(file_path, param_name, is_for_defined=True, Domain=(func_node, ast.unparse(func_node)))
             for fs in sigs:
-                if fs not in total_code_list:
-                    total_code_list.append(fs)
-            total_code_list.append(ast.unparse(func_node))
+                _append_unique(total_code_list, total_code_seen, fs)
+            function_code = ast.unparse(func_node)
+            total_code_list.append(function_code)
+            total_code_seen.add(function_code)
 
-            other_Use = self.Funcion_methods.get_function_use_data(func_name)
-            total_use_data = []
-            for u in other_Use:
-                data, sigs2 = self.parse_use_data(u)
-                for s in sigs2:
-                    if s not in sigs and "def " + func_name not in s:
-                        total_use_data.append(s)
-                for d in data:
-                    if d not in total_use_data:
-                        total_use_data.append(d)
+            total_use_data = self.function_use_data(func_name, sigs)
             for fu in total_use_data:
-                if fu not in total_code_list:
-                    total_code_list.append(fu)
+                _append_unique(total_code_list, total_code_seen, fu)
 
             total_code = "\n".join(total_code_list)
             self.add_type_recommendations(
