@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 from typing import Any, Iterable
 
-from slicing_code_class import Slicer
+from slicing_code_class import ProjectAnalysisCache, Slicer
 from function_methods import Function_methods
 
 
@@ -185,6 +185,7 @@ def export_one(
     row: dict[str, Any],
     file_path: Path,
     function_methods: Function_methods | None = None,
+    analysis_cache: ProjectAnalysisCache | None = None,
 ) -> dict[str, Any] | None:
     source = file_path.read_text(encoding="utf-8")
     root = ast.parse(source, filename=str(file_path))
@@ -192,7 +193,11 @@ def export_one(
     target_name = str(row.get("name") or "")
     scope = str(row.get("scope") or "")
     local_function = str(row.get("loc") or "global").split("@")[0]
-    slicer = Slicer(str(file_path), function_methods=function_methods)
+    slicer = Slicer(
+        str(file_path),
+        function_methods=function_methods,
+        analysis_cache=analysis_cache,
+    )
     code_slice = ""
 
     if scope == "arg":
@@ -255,6 +260,7 @@ def main() -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     current_project: tuple[str, ...] | None = None
     function_methods: Function_methods | None = None
+    analysis_cache: ProjectAnalysisCache | None = None
     written = failed = 0
 
     with output.open("w", encoding="utf-8") as handle:
@@ -262,18 +268,23 @@ def main() -> None:
             try:
                 project = repository_parts(row)
                 if args.rebuild_index and project != current_project:
+                    if analysis_cache is not None:
+                        print(f"[export:cache] {analysis_cache.summary()}", flush=True)
                     project_root = repos_root.joinpath(*project)
                     print(f"[export:index:start] project={'/'.join(project)}", flush=True)
                     subprocess.run([sys.executable, "run_read_data.py", str(project_root)], check=True)
                     print(f"[export:index:done] project={'/'.join(project)}", flush=True)
                     current_project = project
                     function_methods = Function_methods()
+                    analysis_cache = ProjectAnalysisCache()
                 elif function_methods is None:
                     function_methods = Function_methods()
+                    analysis_cache = ProjectAnalysisCache()
                 result = export_one(
                     row,
                     resolve_file(row, repos_root),
                     function_methods=function_methods,
+                    analysis_cache=analysis_cache,
                 )
                 if result is None:
                     failed += 1
@@ -289,6 +300,8 @@ def main() -> None:
                     f"written={written:,} failed={failed:,}",
                     flush=True,
                 )
+    if analysis_cache is not None:
+        print(f"[export:cache] {analysis_cache.summary()}", flush=True)
     print(json.dumps({
         "input": original_count,
         "eligible": len(rows),

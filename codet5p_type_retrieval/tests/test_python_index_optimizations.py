@@ -9,6 +9,7 @@ sys.path.insert(0, str(PYTHON_DIR))
 import readFunctionUseData
 from export_slices import export_one
 from function_methods import Function_methods
+from slicing_code_class import ProjectAnalysisCache, Slicer
 from type_defined import ProjectClassDefine, ProjectDefined, ProjectUseData
 
 
@@ -100,3 +101,85 @@ def test_shared_project_index_produces_identical_export_record(tmp_path, monkeyp
     shared = export_one(row, source, function_methods=Function_methods())
 
     assert shared == uncached
+
+
+def test_statement_index_and_result_cache_preserve_exact_output(tmp_path):
+    source = tmp_path / "sample.py"
+    source.write_text(
+        "import pathlib\n"
+        "seed = make_seed()\n"
+        "value = seed + 1\n"
+        "if value:\n"
+        "    consume(value)\n"
+        "result = wrap(value)\n",
+        encoding="utf-8",
+    )
+    methods = make_methods()
+    uncached = Slicer(str(source), function_methods=methods)
+    cache = ProjectAnalysisCache(file_limit=4, statement_limit=20, use_limit=20)
+    cached = Slicer(str(source), function_methods=methods, analysis_cache=cache)
+
+    expected = uncached.find_statements_for_var(str(source), "value", True)
+    expected_seed = uncached.find_statements_for_var(str(source), "seed", True)
+    first = cached.find_statements_for_var(str(source), "value", True)
+    different_variable = cached.find_statements_for_var(str(source), "seed", True)
+    second = cached.find_statements_for_var(str(source), "value", True)
+
+    assert first == expected
+    assert different_variable == expected_seed
+    assert second == expected
+    assert cache.misses["file"] == 1
+    assert cache.hits["file"] >= 1
+    assert cache.hits["statement"] == 1
+
+
+def test_shared_analysis_cache_preserves_records_for_repeated_function_uses(
+    tmp_path, monkeypatch
+):
+    project = tmp_path / "owner" / "project"
+    project.mkdir(parents=True)
+    source = project / "sample.py"
+    source.write_text(
+        "def target(first, second):\n"
+        "    return first or second\n"
+        "\n"
+        "left = build_left()\n"
+        "right = build_right()\n"
+        "target(left, right)\n",
+        encoding="utf-8",
+    )
+    methods = make_methods()
+    methods.total_function_use_data = [
+        ProjectUseData("target", "target(left, right)", 7, str(source))
+    ]
+    methods._rebuild_indexes()
+    monkeypatch.setattr(
+        Function_methods, "project_data_path", str(tmp_path / "unused-functions.json")
+    )
+    rows = [
+        {
+            "file": str(source),
+            "url": "https://github.com/owner/project",
+            "name": name,
+            "loc": "target@1",
+            "scope": "arg",
+            "gttype": "CustomType",
+        }
+        for name in ("first", "second")
+    ]
+
+    expected = [export_one(row, source, function_methods=methods) for row in rows]
+    cache = ProjectAnalysisCache()
+    actual = [
+        export_one(
+            row,
+            source,
+            function_methods=methods,
+            analysis_cache=cache,
+        )
+        for row in rows
+    ]
+
+    assert actual == expected
+    assert cache.hits["use"] == 1
+    assert cache.hits["analyzer"] == 1

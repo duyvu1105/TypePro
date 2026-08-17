@@ -1,4 +1,5 @@
 import ast
+from collections import OrderedDict, defaultdict
 from loguru import logger
 from type_defined import ProjectDefined, ProjectUseData, stmt_types, FunctionInfo, OTHER_PROMPTS,SIMPLE_BINOPS
 from function_methods import Function_methods
@@ -11,13 +12,121 @@ FILE_PATH = ""
 file_lines = []
 func_sig_list = []
 
+
+class ProjectAnalysisCache:
+    """Bounded, project-local caches for read-only source analysis."""
+
+    def __init__(
+        self,
+        file_limit: int = 128,
+        statement_limit: int = 50000,
+        use_limit: int = 100000,
+        analyzer_limit: int = 256,
+    ):
+        self.file_limit = file_limit
+        self.statement_limit = statement_limit
+        self.use_limit = use_limit
+        self.analyzer_limit = analyzer_limit
+        self._files = OrderedDict()
+        self._statements = OrderedDict()
+        self._uses = OrderedDict()
+        self._analyzers = OrderedDict()
+        self.hits = defaultdict(int)
+        self.misses = defaultdict(int)
+
+    @staticmethod
+    def _remember(cache: OrderedDict, key, value, limit: int):
+        cache[key] = value
+        cache.move_to_end(key)
+        while len(cache) > limit:
+            cache.popitem(last=False)
+
+    def file_analysis(self, file_path: str):
+        cached = self._files.get(file_path)
+        if cached is not None:
+            self._files.move_to_end(file_path)
+            self.hits["file"] += 1
+            return cached
+        self.misses["file"] += 1
+        with open(file_path, "r", encoding="utf-8") as handle:
+            source = split_unpack_in_code(handle.read())
+        tree = ast.parse(source, filename=file_path)
+        nodes_by_name = defaultdict(list)
+        for node in ast.walk(tree):
+            if not isinstance(node, stmt_types) or not hasattr(node, "lineno"):
+                continue
+            names = {child.id for child in ast.walk(node) if isinstance(child, ast.Name)}
+            for name in names:
+                nodes_by_name[name].append(node)
+        cached = (source, tree, nodes_by_name)
+        self._remember(self._files, file_path, cached, self.file_limit)
+        return cached
+
+    def analyzer(self, file_path: str):
+        cached = self._analyzers.get(file_path)
+        if cached is not None:
+            self._analyzers.move_to_end(file_path)
+            self.hits["analyzer"] += 1
+            return cached
+        self.misses["analyzer"] += 1
+        cached = importAnalyzer(file_path)
+        self._remember(self._analyzers, file_path, cached, self.analyzer_limit)
+        return cached
+
+    def statement_result(self, key):
+        cached = self._statements.get(key)
+        if cached is None:
+            self.misses["statement"] += 1
+            return None
+        self._statements.move_to_end(key)
+        self.hits["statement"] += 1
+        return list(cached[0]), list(cached[1])
+
+    def remember_statement_result(self, key, results, signatures):
+        self._remember(
+            self._statements,
+            key,
+            (tuple(results), tuple(signatures)),
+            self.statement_limit,
+        )
+
+    def use_result(self, key):
+        cached = self._uses.get(key)
+        if cached is None:
+            self.misses["use"] += 1
+            return None
+        self._uses.move_to_end(key)
+        self.hits["use"] += 1
+        return list(cached[0]), list(cached[1])
+
+    def remember_use_result(self, key, data, signatures):
+        self._remember(
+            self._uses,
+            key,
+            (tuple(data), tuple(signatures)),
+            self.use_limit,
+        )
+
+    def summary(self) -> str:
+        return " ".join(
+            f"{name}_hits={self.hits[name]:,} {name}_misses={self.misses[name]:,}"
+            for name in ("file", "statement", "use", "analyzer")
+        )
+
 class Slicer:
 
     maybe_class = False
-    def __init__(self, file_name:str, function_methods: Function_methods | None = None):
+    def __init__(self, file_name:str, function_methods: Function_methods | None = None,
+                 analysis_cache: ProjectAnalysisCache | None = None):
         self.file_name = file_name
         self.Funcion_methods = function_methods or Function_methods()
-        self.import_analyzer = importAnalyzer(file_name)
+        self.analysis_cache = analysis_cache
+        self.import_analyzer = (
+            analysis_cache.analyzer(file_name)
+            if analysis_cache is not None
+            else importAnalyzer(file_name)
+        )
+        self._domain_statement_indexes = {}
         self.other_prompts = []
         self.type_recommend = []
 
@@ -65,9 +174,7 @@ class Slicer:
     def get_assign_var(self,node: ast.AST, file_path: str, target_name: str, Domain: (ast.AST, str) = None):
         total_ans = []
         func_sig_list = []
-        with open(file_path, 'r', encoding='utf-8') as f:
-            source = f.read()
-        if target_name not in self.get_lhs(node) and not self.is_simple_op_assign(node):  
+        if target_name not in self.get_lhs(node) and not self.is_simple_op_assign(node):
             data = self.get_lhs(node)
         else:
             data = {child.id for child in ast.walk(node) if isinstance(child, ast.Name)}
@@ -200,43 +307,64 @@ class Slicer:
     # 在文件中找到目标变量的名称的语句行
     def find_statements_for_var(self,file_path: str, var_name: str, is_for_defined: bool = True,
                                 Domain: (ast.AST, str) = None):
-
-        with open(file_path, 'r', encoding='utf-8') as f:
-            source = f.read()
-            source = split_unpack_in_code(source)
-        if Domain == None:
+        cache_key = None
+        if Domain is None and self.analysis_cache is not None:
+            cache_key = (self.file_name, file_path, var_name, is_for_defined)
+            cached = self.analysis_cache.statement_result(cache_key)
+            if cached is not None:
+                return cached
+            source, tree, nodes_by_name = self.analysis_cache.file_analysis(file_path)
+            candidate_nodes = nodes_by_name.get(var_name, ())
+        elif Domain is None:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                source = split_unpack_in_code(f.read())
             tree = ast.parse(source, filename=file_path)
+            candidate_nodes = None
         else:
             tree = Domain[0]
             source = Domain[1]
+            domain_key = id(tree)
+            nodes_by_name = self._domain_statement_indexes.get(domain_key)
+            if nodes_by_name is None:
+                nodes_by_name = defaultdict(list)
+                for node in ast.walk(tree):
+                    if not isinstance(node, stmt_types) or not hasattr(node, 'lineno'):
+                        continue
+                    names = {child.id for child in ast.walk(node) if isinstance(child, ast.Name)}
+                    for name in names:
+                        nodes_by_name[name].append(node)
+                self._domain_statement_indexes[domain_key] = nodes_by_name
+            candidate_nodes = nodes_by_name.get(var_name, ())
 
-        results = [] 
+        results = []
         func_sig_t = []
-        for node in ast.walk(tree):
-            if isinstance(node, stmt_types) and hasattr(node, 'lineno'):
-                for child in ast.walk(node):
-                    if isinstance(child, ast.Name) and child.id == var_name:
+        nodes = candidate_nodes if candidate_nodes is not None else ast.walk(tree)
+        for node in nodes:
+            if not isinstance(node, stmt_types) or not hasattr(node, 'lineno'):
+                continue
+            if candidate_nodes is None and not any(
+                isinstance(child, ast.Name) and child.id == var_name
+                for child in ast.walk(node)
+            ):
+                continue
 
-                        if self.is_call_stmt(node):
-                            call_node = node.value  # ast.Call
-                            func_sigs = self.get_call_func_names(call_node)
-                            for f in func_sigs:
-                                if f not in func_sig_t:
-                                    func_sig_t.append(f)
+            if self.is_call_stmt(node):
+                call_node = node.value  # ast.Call
+                func_sigs = self.get_call_func_names(call_node)
+                for f in func_sigs:
+                    if f not in func_sig_t:
+                        func_sig_t.append(f)
 
-                        if isinstance(node, ast.Assign) and is_for_defined:
-
-                            other_data, temp_sig_list = self.get_assign_var(node, file_path, var_name, Domain)
-                            for d in other_data:
-                                results.append(d)
-                            for f in temp_sig_list:
-                                if f not in func_sig_t:
-                                    func_sig_t.append(f)
-                        lineno = node.lineno
-                        # code_line = lines[lineno - 1].strip()
-                        code_line = ast.unparse(node)
-                        results.append((code_line, lineno))
-                        break
+            if isinstance(node, ast.Assign) and is_for_defined:
+                other_data, temp_sig_list = self.get_assign_var(node, file_path, var_name, Domain)
+                for d in other_data:
+                    results.append(d)
+                for f in temp_sig_list:
+                    if f not in func_sig_t:
+                        func_sig_t.append(f)
+            lineno = node.lineno
+            code_line = ast.unparse(node)
+            results.append((code_line, lineno))
 
         seen = set()
         res = []
@@ -244,6 +372,8 @@ class Slicer:
             if lineno not in seen:
                 res.append((code_line, lineno))
                 seen.add(lineno)
+        if cache_key is not None:
+            self.analysis_cache.remember_statement_result(cache_key, res, func_sig_t)
         return res, func_sig_t
 
     def get_name_fun_node(self, file_path: str, func_name: str):
@@ -354,7 +484,12 @@ class Slicer:
         return names
 
     def parse_use_data(self,data: ProjectUseData):
-
+        cache_key = None
+        if self.analysis_cache is not None:
+            cache_key = (self.file_name, data)
+            cached = self.analysis_cache.use_result(cache_key)
+            if cached is not None:
+                return cached
         fix_srcCode  = split_unpack_in_code(data.source_code)
         param_all_data = [fix_srcCode]
         func_sig_used_list = []
@@ -374,6 +509,10 @@ class Slicer:
         except:
             logger.warning(f"analysizer use data error {data.name}, code:{fix_srcCode}")
 
+        if cache_key is not None:
+            self.analysis_cache.remember_use_result(
+                cache_key, param_all_data, func_sig_used_list
+            )
         return param_all_data, func_sig_used_list
 
     def find_variable_nodes(self,file_path: str, var_name: str) -> List[ast.Name]:
