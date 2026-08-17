@@ -27,6 +27,18 @@ lexical retrieval, and structural BM25 retrieval. Each fuzzy branch keeps up to
 20 candidates; preprocessing then retains at most seven hard negatives. The
 contrastive positive is always the annotation's `gttype`.
 
+The high-recall union also performs five label-independent analyses. It extracts
+types from non-target annotations, guards, casts, constructors and base classes;
+resolves relative imports, aliases, `TYPE_CHECKING`, star imports and re-export
+chains; indexes project `.pyi` files and the Typeshed bundled by
+`typeshed-client`; propagates constructor and return types through assignments,
+wrappers and call-site arguments to a bounded fixed point; and recognizes pytest
+fixtures plus common factory, mock, Django and SQLAlchemy construction idioms.
+Parameter annotations from the original project index are intentionally ignored
+because one may be the masked evaluation label. Set `TYPEPRO_TYPESHED_PATH` (use
+the platform path separator for multiple roots) to add custom Typeshed/stub
+trees.
+
 The KB schema is versioned. A shard resumed after a retrieval-code update
 rebuilds stale cached package indexes instead of silently reusing records from
 the older class-only schema. Raw exported rows include recommendation counts by

@@ -6,7 +6,7 @@ from pathlib import Path
 PYTHON_DIR = Path(__file__).resolve().parents[2] / "Python"
 sys.path.insert(0, str(PYTHON_DIR))
 
-from build_third_party_kb import discover_imports, scan_package
+from build_third_party_kb import discover_imports, scan_package, typeshed_roots
 from import_analyzer import importAnalyzer
 from export_slices import recommendation_objects
 
@@ -141,3 +141,21 @@ def test_exact_import_fallback_adds_symbols_without_reading_masked_annotation(
     names = {item["name"] for item in recommendation_objects(exact)}
     assert "datetime" in names
     assert "Path" not in names
+
+
+def test_typeshed_root_discovers_stdlib_and_third_party_stubs(tmp_path):
+    typeshed = tmp_path / "typeshed"
+    (typeshed / "stdlib" / "pathlib").mkdir(parents=True)
+    (typeshed / "stdlib" / "pathlib" / "__init__.pyi").write_text(
+        "class Path: ...\n", encoding="utf-8"
+    )
+    package = typeshed / "stubs" / "requests" / "requests"
+    package.mkdir(parents=True)
+    (package / "__init__.pyi").write_text(
+        "class Session: ...\n", encoding="utf-8"
+    )
+
+    assert typeshed_roots("pathlib", [str(typeshed)]) == [
+        (typeshed / "stdlib" / "pathlib").resolve()
+    ]
+    assert typeshed_roots("requests", [str(typeshed)]) == [package.resolve()]

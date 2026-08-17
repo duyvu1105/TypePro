@@ -7,6 +7,7 @@ from function_methods import Function_methods
 from typing import List, Optional, Union, Dict, Iterable, Type, NamedTuple
 from import_analyzer import importAnalyzer
 from tool import split_unpack_in_code
+from type_signal_analyzer import visible_type_signals
 ScopeNode = Union[ast.FunctionDef, ast.ClassDef, ast.Module]
 
 FILE_PATH = ""
@@ -330,13 +331,18 @@ class Slicer:
             )
 
     def add_high_recall_recommendations(
-        self, target_name: str, source: str, file_path: str
+        self, target_name: str, source: str, file_path: str,
+        function_name: str = "",
     ) -> None:
         """Union exact, project, lexical, and structural retrieval signals."""
         exact = [
-            *class_definitions_from_text(source),
-            *self.Funcion_methods.exact_imported_class_definitions(file_path),
             *self.import_analyzer.get_exact_import_recommendations(source),
+            *class_definitions_from_text(source),
+            *visible_type_signals(source),
+            *self.Funcion_methods.exact_imported_class_definitions(file_path),
+            *self.Funcion_methods.semantic_type_recommendations(
+                file_path, target_name, function_name
+            ),
             *self.import_analyzer.get_imported_module_inventory(target_name),
         ]
         fuzzy = [
@@ -1005,7 +1011,9 @@ class Slicer:
                 _append_unique(total_code_list, total_code_seen, fu)
 
             total_code = "\n".join(total_code_list)
-            self.add_high_recall_recommendations(param_name, total_code, file_path)
+            self.add_high_recall_recommendations(
+                param_name, total_code, file_path, function_name=func_name
+            )
             return total_code
 
     def get_type_recommend(self):

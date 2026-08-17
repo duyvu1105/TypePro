@@ -43,7 +43,7 @@ IMPORT_TO_DISTRIBUTION = {
     "yaml": "PyYAML",
 }
 USEFUL_DUNDERS = {"__call__", "__enter__", "__exit__", "__getitem__", "__init__", "__iter__", "__len__"}
-KB_SCHEMA_VERSION = 2
+KB_SCHEMA_VERSION = 3
 
 
 def parse_args() -> argparse.Namespace:
@@ -57,6 +57,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-members-per-class", type=int, default=80)
     parser.add_argument("--max-definition-chars", type=int, default=16000)
     parser.add_argument("--summary-output")
+    parser.add_argument(
+        "--typeshed-root", action="append", default=[],
+        help="Optional Typeshed/stub root; repeat or set TYPEPRO_TYPESHED_PATH",
+    )
     return parser.parse_args()
 
 
@@ -110,6 +114,46 @@ def installed_roots(import_name: str) -> list[Path]:
         return [Path(value).resolve() for value in spec.submodule_search_locations if Path(value).exists()]
     origin = Path(spec.origin)
     return [origin.resolve()] if origin.suffix in {".py", ".pyi"} and origin.exists() else []
+
+
+def typeshed_roots(import_name: str, configured: Iterable[str]) -> list[Path]:
+    """Locate stdlib or third-party stub packages without importing them."""
+    roots = []
+    for value in configured:
+        base = Path(value).expanduser()
+        if not base.is_dir():
+            continue
+        candidates = [
+            base / "stdlib" / f"{import_name}.pyi",
+            base / "stdlib" / import_name,
+            base / f"{import_name}.pyi",
+            base / import_name,
+        ]
+        stubs = base / "stubs"
+        if stubs.is_dir():
+            candidates.extend(stubs.glob(f"*/{import_name}.pyi"))
+            candidates.extend(stubs.glob(f"*/{import_name}"))
+        roots.extend(path.resolve() for path in candidates if path.exists())
+    return list(dict.fromkeys(roots))
+
+
+def bundled_typeshed_paths() -> list[str]:
+    """Discover Typeshed bundled by typeshed-client when installed."""
+    try:
+        spec = importlib.machinery.PathFinder.find_spec("typeshed_client")
+    except (ImportError, AttributeError, ValueError):
+        return []
+    if spec is None:
+        return []
+    locations = list(spec.submodule_search_locations or ())
+    if spec.origin:
+        locations.append(str(Path(spec.origin).parent))
+    results = []
+    for location in locations:
+        candidate = Path(location) / "typeshed"
+        if candidate.is_dir():
+            results.append(str(candidate.resolve()))
+    return list(dict.fromkeys(results))
 
 
 def safe_extract_wheel(wheel: Path, destination: Path) -> None:
@@ -402,6 +446,11 @@ def main() -> None:
     project_root = Path(args.project_root).resolve()
     output_dir = Path(args.output_dir).resolve()
     cache = Path(args.download_cache).resolve()
+    configured_typeshed = [
+        *args.typeshed_root,
+        *(value for value in os.environ.get("TYPEPRO_TYPESHED_PATH", "").split(os.pathsep) if value),
+        *bundled_typeshed_paths(),
+    ]
     imports, discovery_stats = discover_imports(project_root)
     local_modules = local_module_names(project_root)
     stdlib = sorted(name for name in imports if name in sys.stdlib_module_names)
@@ -435,6 +484,7 @@ def main() -> None:
             ):
                 summary["packages"][import_name] = {"status": "reused", "records": len(existing)}
                 continue
+        stub_roots = typeshed_roots(import_name, configured_typeshed)
         roots = installed_roots(import_name)
         source = "installed"
         error = None
@@ -445,18 +495,47 @@ def main() -> None:
                 roots = download_roots(import_name, cache)
             except (OSError, subprocess.CalledProcessError, zipfile.BadZipFile, ValueError) as exception:
                 error = f"{type(exception).__name__}: {exception}"
-        if not roots:
+        if not roots and not stub_roots:
             summary["packages"][import_name] = {"status": "unresolved", "error": error}
             continue
-        records, stats = scan_package(
-            import_name, roots,
-            max_files=args.max_files_per_package,
-            max_members=args.max_members_per_class,
-            max_chars=args.max_definition_chars,
-            source_kind="stdlib" if is_stdlib else "third_party",
-        )
+        records = []
+        stats: Counter[str] = Counter()
+        if roots:
+            runtime_records, runtime_stats = scan_package(
+                import_name, roots,
+                max_files=args.max_files_per_package,
+                max_members=args.max_members_per_class,
+                max_chars=args.max_definition_chars,
+                source_kind="stdlib" if is_stdlib else "third_party",
+            )
+            records.extend(runtime_records)
+            stats.update(runtime_stats)
+        if stub_roots:
+            stub_records, stub_stats = scan_package(
+                import_name, stub_roots,
+                max_files=args.max_files_per_package,
+                max_members=args.max_members_per_class,
+                max_chars=args.max_definition_chars,
+                source_kind="typeshed",
+            )
+            # Stubs carry the authoritative public API, so replace an
+            # equivalent runtime record while retaining runtime-only symbols.
+            keyed = {
+                (item["type"], item["name"], item.get("module", "")): item
+                for item in records
+            }
+            keyed.update({
+                (item["type"], item["name"], item.get("module", "")): item
+                for item in stub_records
+            })
+            records = list(keyed.values())
+            stats.update(stub_stats)
+            stats["typeshed_records"] = len(stub_records)
         write_json(output_path, records)
-        summary["packages"][import_name] = {"status": "written", "source": source, "records": len(records), **stats}
+        summary["packages"][import_name] = {
+            "status": "written", "source": source,
+            "typeshed_roots": len(stub_roots), "records": len(records), **stats,
+        }
     summary["packages_written"] = sum(item.get("status") in {"written", "reused"} for item in summary["packages"].values())
     summary["packages_unresolved"] = sum(item.get("status") == "unresolved" for item in summary["packages"].values())
     summary["stdlib_packages_written"] = sum(

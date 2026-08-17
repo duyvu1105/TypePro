@@ -331,7 +331,7 @@ def main() -> None:
                     subprocess.run([sys.executable, "run_read_data.py", str(project_root)], check=True)
                     print(f"[export:index:done] project={'/'.join(project)}", flush=True)
                     current_project = project
-                    function_methods = Function_methods()
+                    function_methods = Function_methods(str(project_root))
                     analysis_cache = ProjectAnalysisCache()
                 elif function_methods is None:
                     function_methods = Function_methods()

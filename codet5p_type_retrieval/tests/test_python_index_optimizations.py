@@ -179,6 +179,56 @@ def test_exporter_adds_exact_import_symbol_without_ground_truth_lookup(
     assert result["recommendation_diagnostics"]["by_source"]["stdlib"] >= 1
 
 
+def test_exporter_uses_call_graph_without_reading_target_annotation(
+    tmp_path, monkeypatch
+):
+    project = tmp_path / "owner" / "project"
+    project.mkdir(parents=True)
+    source = project / "sample.py"
+    source.write_text(
+        "class User: pass\n"
+        "def create_user():\n"
+        "    return User()\n"
+        "def target(value: SecretGold):\n"
+        "    return value\n"
+        "target(create_user())\n",
+        encoding="utf-8",
+    )
+    index_dir = tmp_path / "index"
+    index_dir.mkdir()
+    for name in ("functions.json", "uses.json", "classes.json"):
+        (index_dir / name).write_text("[]", encoding="utf-8")
+    monkeypatch.setattr(
+        Function_methods, "project_data_path", str(index_dir / "functions.json")
+    )
+    monkeypatch.setattr(
+        Function_methods, "project_use_path", str(index_dir / "uses.json")
+    )
+    monkeypatch.setattr(
+        Function_methods, "project_class_path", str(index_dir / "classes.json")
+    )
+    empty_kb = tmp_path / "kb"
+    empty_kb.mkdir()
+    monkeypatch.setenv("TYPEPRO_THIRD_PARTY_DATASET", str(empty_kb))
+    row = {
+        "file": str(source),
+        "url": "https://github.com/owner/project",
+        "name": "value",
+        "loc": "target@4",
+        "scope": "arg",
+        "gttype": "DeliberatelyUnrelatedEvaluationLabel",
+    }
+
+    result = export_one(
+        row, source, function_methods=Function_methods(str(project))
+    )
+    candidate_names = {item["name"] for item in result["recommendation_types"]}
+
+    assert "User" in candidate_names
+    assert "SecretGold" not in candidate_names
+    assert "DeliberatelyUnrelatedEvaluationLabel" not in candidate_names
+
+
 def test_statement_index_and_result_cache_preserve_exact_output(tmp_path):
     source = tmp_path / "sample.py"
     source.write_text(

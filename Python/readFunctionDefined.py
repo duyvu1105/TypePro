@@ -17,7 +17,7 @@ def get_all_files(directory):
     for root, _, files in os.walk(directory):  
         for file in files:
             full_path = os.path.join(root, file)  
-            if full_path.endswith(".py"):
+            if full_path.endswith((".py", ".pyi")):
                 file_paths.append(full_path)
 
     return file_paths

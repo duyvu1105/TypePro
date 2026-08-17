@@ -8,6 +8,7 @@ from loguru import logger
 from difflib import SequenceMatcher
 import ast
 from collections import defaultdict
+from type_signal_analyzer import ProjectTypeAnalyzer
 
 IGNORE_FUNCTION_NAME = ["bind", "get", "set"]
 
@@ -17,13 +18,16 @@ class Function_methods:
     project_class_path  = "./data/project_class_defined.json"
     minimum_similarity_standard = 0.78
     recall_limit = 20
-    def __init__(self):
+    def __init__(self, project_root: str | None = None):
         self.total_function_data = self.read_projects_from_json(self.project_data_path)
         self.total_function_use_data = self.read_projects_from_json2(self.project_use_path)
         self.total_class_data = self.read_project_class_from_json(self.project_class_path)
+        self.project_type_analyzer = ProjectTypeAnalyzer(project_root)
         self._rebuild_indexes()
 
     def _rebuild_indexes(self):
+        if not hasattr(self, "project_type_analyzer"):
+            self.project_type_analyzer = ProjectTypeAnalyzer(None)
         self._function_sources_by_name = defaultdict(list)
         self._function_uses_by_name = defaultdict(list)
         self._classes_by_name = defaultdict(list)
@@ -208,6 +212,13 @@ class Function_methods:
         result = tuple(dict.fromkeys(definitions))
         self._exact_import_cache[file_path] = result
         return list(result)
+
+    def semantic_type_recommendations(
+        self, file_path: str, target_name: str, function_name: str = ""
+    ) -> list[str]:
+        return self.project_type_analyzer.recommendations(
+            file_path, target_name, function_name
+        )
     def find_file_class_name(self, file_path: str, name: str):
         cache_key = (file_path, name)
         if cache_key in self._file_class_cache:
