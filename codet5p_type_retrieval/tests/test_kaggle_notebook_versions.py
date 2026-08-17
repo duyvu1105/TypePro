@@ -233,7 +233,7 @@ def test_merge_kernel_metadata_attaches_exact_merge_plan_inputs():
 
     assert len(dataset_ids) == 16
     assert len(set(dataset_ids)) == 16
-    assert metadata["id"] == "duyvu1105/typepro-merge-finalize"
+    assert metadata["id"] == "duyvu1105/typepro-merge-16-verified-partitions"
     assert metadata["dataset_sources"] == dataset_ids
 
 

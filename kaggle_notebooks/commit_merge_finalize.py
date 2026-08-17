@@ -16,7 +16,7 @@ from commit_shard_versions import load_credential, run_push
 ROOT = Path(__file__).resolve().parent
 REPO_ROOT = ROOT.parent
 OWNER = "duyvu1105"
-KERNEL_SLUG = "typepro-merge-finalize"
+KERNEL_SLUG = "typepro-merge-16-verified-partitions"
 NOTEBOOK_PATH = ROOT / "03_merge_finalize.ipynb"
 MERGE_PLAN_PATH = ROOT / "shard_merge_plan.json"
 CREDENTIAL_PATH = REPO_ROOT / "kaggle.json"
