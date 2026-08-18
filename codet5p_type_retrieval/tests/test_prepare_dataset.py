@@ -8,6 +8,7 @@ from prepare_dataset import (
     annotation_timeout_for_project,
     build_splits,
     eligible_parameter_rows,
+    parse_args,
     project_from_row,
 )
 
@@ -67,3 +68,10 @@ def test_annotation_timeout_is_limited_to_configured_slow_projects():
     assert annotation_timeout_for_project(600, projects, "Opentrons/opentrons") == 600
     assert annotation_timeout_for_project(600, projects, "fast/project") == 0
     assert annotation_timeout_for_project(0, projects, "home-assistant/home-assistant") == 0
+
+
+def test_slice_trace_defaults_to_every_annotation():
+    with patch.object(sys, "argv", ["prepare_dataset.py"]):
+        args = parse_args()
+
+    assert args.slice_trace_every == 1

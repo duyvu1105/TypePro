@@ -83,6 +83,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--log-every", type=int, default=10000, help="Preprocess progress interval; 0 disables")
     parser.add_argument("--slice-log-every", type=int, default=100, help="Print progress every N annotations within a project")
     parser.add_argument(
+        "--slice-trace-every",
+        type=int,
+        default=1,
+        help="Print detailed timings every N annotations; 0 disables",
+    )
+    parser.add_argument(
         "--slice-annotation-timeout-seconds",
         type=int,
         default=0,
@@ -97,6 +103,8 @@ def parse_args() -> argparse.Namespace:
     args = parser.parse_args()
     if args.slice_annotation_timeout_seconds < 0:
         parser.error("--slice-annotation-timeout-seconds must be >= 0")
+    if args.slice_trace_every < 0:
+        parser.error("--slice-trace-every must be >= 0")
     return args
 
 
@@ -465,6 +473,7 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
         "repos_root_provided": bool(args.repos_root),
         "slice_annotation_timeout_seconds": args.slice_annotation_timeout_seconds,
         "slice_timeout_projects": sorted(timeout_projects),
+        "slice_trace_every": args.slice_trace_every,
         "retrieval_schema_version": args.retrieval_schema_version,
     })
 
@@ -534,7 +543,7 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
                 "--repos-root", str(clone_root), "--output", str(temporary_output), "--rebuild-index",
                 "--parameters-only", "--exclude-builtins",
                 "--log-every", str(1 if detailed_export_logging else args.slice_log_every),
-                "--trace-every", str(1 if detailed_export_logging else 0),
+                "--trace-every", str(args.slice_trace_every),
             ]
             annotation_timeout = annotation_timeout_for_project(
                 args.slice_annotation_timeout_seconds, timeout_projects, project
