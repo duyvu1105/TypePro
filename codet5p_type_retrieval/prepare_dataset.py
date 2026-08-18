@@ -69,6 +69,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--force-metadata", action="store_true")
     parser.add_argument("--force-projects", action="store_true")
     parser.add_argument(
+        "--skip-project",
+        action="append",
+        default=[],
+        help=(
+            "Skip owner/repository values containing this case-insensitive pattern; "
+            "repeatable"
+        ),
+    )
+    parser.add_argument(
         "--retrieval-schema-version",
         default="typepro-legacy-retrieval",
         help="Invalidates restored raw slices when recommendation logic changes",
@@ -423,6 +432,15 @@ def annotation_timeout_for_project(
     return seconds
 
 
+def matching_skip_pattern(project: str, patterns: Iterable[str]) -> str | None:
+    project_key = project.casefold()
+    for pattern in patterns:
+        normalized = pattern.strip().casefold()
+        if normalized and normalized in project_key:
+            return pattern
+    return None
+
+
 def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path) -> dict[str, Any]:
     python_dir = typepro_root / "Python"
     exporter = python_dir / "export_slices.py"
@@ -435,6 +453,7 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
     for row in load_prepared_annotations(work_dir):
         rows_by_project[project_from_row(row)].append(row)
     timeout_projects = set(args.slice_timeout_project)
+    skip_project_patterns = list(args.skip_project)
 
     projects = sorted(rows_by_project, key=lambda value: stable_number(value, args.seed + 3))
     projects = [project for project in projects if stable_number(project, args.seed + 4) % args.shard_count == args.shard_index]
@@ -474,6 +493,7 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
         "slice_annotation_timeout_seconds": args.slice_annotation_timeout_seconds,
         "slice_timeout_projects": sorted(timeout_projects),
         "slice_trace_every": args.slice_trace_every,
+        "skip_project_patterns": skip_project_patterns,
         "retrieval_schema_version": args.retrieval_schema_version,
     })
 
@@ -496,6 +516,27 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
             f"current={project} annotations={len(rows_by_project[project]):,} "
             f"done={counters['completed_projects']:,} failed={counters['failed_projects']:,}"
         )
+        skip_pattern = matching_skip_pattern(project, skip_project_patterns)
+        if skip_pattern is not None:
+            if output_path.exists():
+                output_path.unlink()
+            write_json(status_path, {
+                "project": project,
+                "annotations": len(rows_by_project[project]),
+                "exported": 0,
+                "failed_annotations": 0,
+                "skipped_annotations": len(rows_by_project[project]),
+                "skipped": True,
+                "skip_pattern": skip_pattern,
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+            })
+            counters["completed_projects"] += 1
+            counters["skipped_projects"] += 1
+            tqdm.write(
+                f"[project:skip] {project} pattern={skip_pattern!r} "
+                f"annotations={len(rows_by_project[project]):,}"
+            )
+            continue
         if output_path.exists() and status_path.exists() and not args.force_projects:
             counters["skipped_complete"] += 1
             if not args.keep_repos and not args.repos_root:
@@ -606,6 +647,9 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
     counters["status_files_total"] = len(all_statuses)
     counters["completed_projects_total"] = sum("error" not in status for status in all_statuses)
     counters["failed_projects_total"] = sum("error" in status for status in all_statuses)
+    counters["skipped_projects_total"] = sum(
+        bool(status.get("skipped")) for status in all_statuses
+    )
     counters["annotations_total"] = sum(int(status.get("annotations", 0)) for status in all_statuses)
     counters["exported_records_total"] = sum(int(status.get("exported", 0)) for status in all_statuses)
     print(f"\n[slice:full-counts]\n{json.dumps(dict(counters), indent=2, ensure_ascii=False)}", flush=True)

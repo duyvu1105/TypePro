@@ -8,6 +8,7 @@ from prepare_dataset import (
     annotation_timeout_for_project,
     build_splits,
     eligible_parameter_rows,
+    matching_skip_pattern,
     parse_args,
     project_from_row,
 )
@@ -75,3 +76,18 @@ def test_slice_trace_defaults_to_every_annotation():
         args = parse_args()
 
     assert args.slice_trace_every == 1
+    assert args.skip_project == []
+
+
+def test_skip_project_patterns_match_case_insensitive_owner_or_repository():
+    patterns = ["F-shakalaka", "home-assistant"]
+
+    assert (
+        matching_skip_pattern("F-Shakalaka/example-project", patterns)
+        == "F-shakalaka"
+    )
+    assert (
+        matching_skip_pattern("home-assistant/home-assistant", patterns)
+        == "home-assistant"
+    )
+    assert matching_skip_pattern("ocf/ocfweb", patterns) is None
