@@ -1,5 +1,6 @@
 import ast
 import re
+import time
 from collections import OrderedDict, defaultdict
 from loguru import logger
 from type_defined import ProjectDefined, ProjectUseData, stmt_types, FunctionInfo, OTHER_PROMPTS,SIMPLE_BINOPS
@@ -314,6 +315,17 @@ class Slicer:
         self.other_prompts = []
         self.type_recommend = []
         self._type_recommend_seen = set()
+        self.retrieval_timings = {}
+        self.retrieval_counts = {}
+
+    def timed_recommendations(self, name: str, operation):
+        started = time.monotonic()
+        values = list(operation())
+        self.retrieval_timings[name] = (
+            self.retrieval_timings.get(name, 0.0) + time.monotonic() - started
+        )
+        self.retrieval_counts[name] = self.retrieval_counts.get(name, 0) + len(values)
+        return values
 
     def add_type_recommendations(self, definitions: Iterable[str], prepend: bool = False):
         values = [definition for definition in definitions if definition]
@@ -336,21 +348,51 @@ class Slicer:
     ) -> None:
         """Union exact, project, lexical, and structural retrieval signals."""
         exact = [
-            *self.import_analyzer.get_exact_import_recommendations(source),
-            *class_definitions_from_text(source),
-            *visible_type_signals(source),
-            *self.Funcion_methods.exact_imported_class_definitions(file_path),
-            *self.Funcion_methods.semantic_type_recommendations(
-                file_path, target_name, function_name
+            *self.timed_recommendations(
+                "exact_imports",
+                lambda: self.import_analyzer.get_exact_import_recommendations(source),
             ),
-            *self.import_analyzer.get_imported_module_inventory(target_name),
+            *self.timed_recommendations(
+                "slice_classes", lambda: class_definitions_from_text(source)
+            ),
+            *self.timed_recommendations(
+                "visible_type_signals", lambda: visible_type_signals(source)
+            ),
+            *self.timed_recommendations(
+                "project_exact_imports",
+                lambda: self.Funcion_methods.exact_imported_class_definitions(file_path),
+            ),
+            *self.timed_recommendations(
+                "project_semantic",
+                lambda: self.Funcion_methods.semantic_type_recommendations(
+                    file_path, target_name, function_name
+                ),
+            ),
+            *self.timed_recommendations(
+                "module_inventory",
+                lambda: self.import_analyzer.get_imported_module_inventory(target_name),
+            ),
         ]
         fuzzy = [
-            *self.Funcion_methods.calculate_similarity_for_class_name(target_name),
-            *self.import_analyzer.get_class_recommendations(target_name),
-            *self.import_analyzer.calculate_similarity_for_class(source),
+            *self.timed_recommendations(
+                "project_name_similarity",
+                lambda: self.Funcion_methods.calculate_similarity_for_class_name(target_name),
+            ),
+            *self.timed_recommendations(
+                "package_name_similarity",
+                lambda: self.import_analyzer.get_class_recommendations(target_name),
+            ),
+            *self.timed_recommendations(
+                "structural_bm25",
+                lambda: self.import_analyzer.calculate_similarity_for_class(source),
+            ),
         ]
+        add_started = time.monotonic()
         self.add_type_recommendations([*exact, *fuzzy], prepend=True)
+        self.retrieval_timings["deduplicate_and_prepend"] = (
+            self.retrieval_timings.get("deduplicate_and_prepend", 0.0)
+            + time.monotonic() - add_started
+        )
 
     def is_simple_op_assign(self,node: ast.AST,
                             ops: Iterable[Type[ast.operator]] = SIMPLE_BINOPS

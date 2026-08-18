@@ -191,7 +191,6 @@ if __name__ == "__main__":
     for file in all_files:
         data = extract_class_summary(file)
     logger.info(len(total_class_data))
-    for i in total_class_data:
-        logger.debug(i.signature)
+    logger.info(f"indexed class and alias definitions: {len(total_class_data)}")
 
     save_projects_to_json(total_class_data, project_data_path)

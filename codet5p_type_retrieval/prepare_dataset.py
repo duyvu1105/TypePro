@@ -366,7 +366,7 @@ def run_logged(command: list[str], cwd: Path, log_path: Path) -> str:
             log_handle.write(line)
             log_handle.flush()
             tail = (tail + line)[-4000:]
-            if line.startswith(("[export:progress]", "[annotation:timeout]")):
+            if line.startswith(("[export:", "[annotation:", "[kb:")):
                 tqdm.write(line.rstrip())
         return_code = process.wait()
         if return_code:
@@ -528,11 +528,13 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
             task_path = task_dir / f"{slug}.json"
             write_json(task_path, project_rows)
             temporary_output = output_path.with_suffix(".jsonl.tmp")
+            detailed_export_logging = project in timeout_projects
             command = [
                 sys.executable, str(exporter), "--dataset", str(task_path),
                 "--repos-root", str(clone_root), "--output", str(temporary_output), "--rebuild-index",
                 "--parameters-only", "--exclude-builtins",
-                "--log-every", str(args.slice_log_every),
+                "--log-every", str(1 if detailed_export_logging else args.slice_log_every),
+                "--trace-every", str(1 if detailed_export_logging else 0),
             ]
             annotation_timeout = annotation_timeout_for_project(
                 args.slice_annotation_timeout_seconds, timeout_projects, project

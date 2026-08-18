@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import time
 import zipfile
 from collections import Counter
 from pathlib import Path
@@ -442,6 +443,7 @@ def write_json(path: Path, value: Any) -> None:
 
 
 def main() -> None:
+    build_started = time.monotonic()
     args = parse_args()
     project_root = Path(args.project_root).resolve()
     output_dir = Path(args.output_dir).resolve()
@@ -451,12 +453,20 @@ def main() -> None:
         *(value for value in os.environ.get("TYPEPRO_TYPESHED_PATH", "").split(os.pathsep) if value),
         *bundled_typeshed_paths(),
     ]
+    discovery_started = time.monotonic()
     imports, discovery_stats = discover_imports(project_root)
     local_modules = local_module_names(project_root)
     stdlib = sorted(name for name in imports if name in sys.stdlib_module_names)
     third_party = sorted(
         name for name in imports
         if name and name not in sys.stdlib_module_names and name not in local_modules
+    )
+    print(
+        "[kb:discovery:done] "
+        f"project={project_root} imports={len(imports)} "
+        f"stdlib={len(stdlib)} third_party={len(third_party)} "
+        f"seconds={time.monotonic() - discovery_started:.1f}",
+        flush=True,
     )
     summary: dict[str, Any] = {
         "project_root": str(project_root),
@@ -467,6 +477,8 @@ def main() -> None:
         **discovery_stats,
     }
     for import_name in [*stdlib, *third_party]:
+        package_started = time.monotonic()
+        print(f"[kb:package:start] package={import_name}", flush=True)
         output_path = output_dir / f"{import_name}.json"
         if args.reuse_existing and output_path.exists():
             try:
@@ -483,6 +495,11 @@ def main() -> None:
                 )
             ):
                 summary["packages"][import_name] = {"status": "reused", "records": len(existing)}
+                print(
+                    f"[kb:package:done] package={import_name} status=reused "
+                    f"records={len(existing)} seconds={time.monotonic() - package_started:.1f}",
+                    flush=True,
+                )
                 continue
         stub_roots = typeshed_roots(import_name, configured_typeshed)
         roots = installed_roots(import_name)
@@ -497,6 +514,11 @@ def main() -> None:
                 error = f"{type(exception).__name__}: {exception}"
         if not roots and not stub_roots:
             summary["packages"][import_name] = {"status": "unresolved", "error": error}
+            print(
+                f"[kb:package:done] package={import_name} status=unresolved "
+                f"seconds={time.monotonic() - package_started:.1f}",
+                flush=True,
+            )
             continue
         records = []
         stats: Counter[str] = Counter()
@@ -536,6 +558,13 @@ def main() -> None:
             "status": "written", "source": source,
             "typeshed_roots": len(stub_roots), "records": len(records), **stats,
         }
+        print(
+            f"[kb:package:done] package={import_name} status=written "
+            f"records={len(records)} files_scanned={stats['files_scanned']} "
+            f"classes={stats['classes']} aliases={stats['aliases']} "
+            f"seconds={time.monotonic() - package_started:.1f}",
+            flush=True,
+        )
     summary["packages_written"] = sum(item.get("status") in {"written", "reused"} for item in summary["packages"].values())
     summary["packages_unresolved"] = sum(item.get("status") == "unresolved" for item in summary["packages"].values())
     summary["stdlib_packages_written"] = sum(
@@ -544,6 +573,12 @@ def main() -> None:
     )
     if args.summary_output:
         write_json(Path(args.summary_output), summary)
+    print(
+        f"[kb:done] packages={len(summary['packages'])} "
+        f"written={summary['packages_written']} unresolved={summary['packages_unresolved']} "
+        f"seconds={time.monotonic() - build_started:.1f}",
+        flush=True,
+    )
     print(json.dumps(summary, ensure_ascii=False))
 
 

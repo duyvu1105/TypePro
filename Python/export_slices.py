@@ -12,6 +12,7 @@ import re
 import signal
 import subprocess
 import sys
+import time
 from collections import Counter
 from contextlib import contextmanager
 from pathlib import Path
@@ -77,6 +78,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--exclude-builtins", action="store_true")
     parser.add_argument("--log-every", type=int, default=100, help="Print progress every N annotations; 0 disables")
     parser.add_argument(
+        "--trace-every", type=int, default=0,
+        help="Print detailed per-annotation timings every N annotations; 0 disables",
+    )
+    parser.add_argument(
         "--annotation-timeout-seconds",
         type=int,
         default=0,
@@ -85,6 +90,8 @@ def parse_args() -> argparse.Namespace:
     args = parser.parse_args()
     if args.annotation_timeout_seconds < 0:
         parser.error("--annotation-timeout-seconds must be >= 0")
+    if args.trace_every < 0:
+        parser.error("--trace-every must be >= 0")
     return args
 
 
@@ -237,9 +244,12 @@ def export_one(
     function_methods: Function_methods | None = None,
     analysis_cache: ProjectAnalysisCache | None = None,
 ) -> dict[str, Any] | None:
+    export_started = time.monotonic()
+    parse_started = export_started
     source = file_path.read_text(encoding="utf-8")
     root = ast.parse(source, filename=str(file_path))
     add_parent_links(root)
+    parse_seconds = time.monotonic() - parse_started
     target_name = str(row.get("name") or "")
     scope = str(row.get("scope") or "")
     local_function = str(row.get("loc") or "global").split("@")[0]
@@ -248,7 +258,9 @@ def export_one(
         function_methods=function_methods,
         analysis_cache=analysis_cache,
     )
+    analyzer_seconds = time.monotonic() - parse_started - parse_seconds
     code_slice = ""
+    slicing_started = time.monotonic()
 
     if scope == "arg":
         for node in ast.walk(root):
@@ -283,6 +295,7 @@ def export_one(
 
     if not code_slice:
         return None
+    slicing_seconds = time.monotonic() - slicing_started
     result = dict(row)
     result["file"] = str(row.get("file") or row.get("path") or file_path)
     result["language"] = "python"
@@ -293,6 +306,17 @@ def export_one(
         "count": len(recommendations),
         "by_source": dict(Counter(item["source"] for item in recommendations)),
         "by_kind": dict(Counter(item["kind"] for item in recommendations)),
+        "timings_seconds": {
+            "read_parse_target": round(parse_seconds, 6),
+            "file_import_analyzer": round(analyzer_seconds, 6),
+            "slice_and_retrieval": round(slicing_seconds, 6),
+            **{
+                name: round(seconds, 6)
+                for name, seconds in slicer.retrieval_timings.items()
+            },
+            "export_total": round(time.monotonic() - export_started, 6),
+        },
+        "retrieval_counts": dict(slicer.retrieval_counts),
     }
     result["other_prompt"] = list(slicer.get_other_prompt())
     return result
@@ -327,15 +351,44 @@ def main() -> None:
                     if analysis_cache is not None:
                         print(f"[export:cache] {analysis_cache.summary()}", flush=True)
                     project_root = repos_root.joinpath(*project)
+                    index_started = time.monotonic()
                     print(f"[export:index:start] project={'/'.join(project)}", flush=True)
                     subprocess.run([sys.executable, "run_read_data.py", str(project_root)], check=True)
-                    print(f"[export:index:done] project={'/'.join(project)}", flush=True)
+                    print(
+                        f"[export:index:done] project={'/'.join(project)} "
+                        f"seconds={time.monotonic() - index_started:.1f}",
+                        flush=True,
+                    )
                     current_project = project
+                    analysis_started = time.monotonic()
+                    print(
+                        f"[export:project-analysis:start] project={'/'.join(project)}",
+                        flush=True,
+                    )
                     function_methods = Function_methods(str(project_root))
                     analysis_cache = ProjectAnalysisCache()
+                    print(
+                        f"[export:project-analysis:done] project={'/'.join(project)} "
+                        f"functions={len(function_methods.total_function_data)} "
+                        f"function_uses={len(function_methods.total_function_use_data)} "
+                        f"classes={len(function_methods.total_class_data)} "
+                        f"seconds={time.monotonic() - analysis_started:.1f}",
+                        flush=True,
+                    )
                 elif function_methods is None:
                     function_methods = Function_methods()
                     analysis_cache = ProjectAnalysisCache()
+                trace_annotation = bool(
+                    args.trace_every
+                    and (index % args.trace_every == 0 or index + 1 == len(rows))
+                )
+                annotation_started = time.monotonic()
+                if trace_annotation:
+                    print(
+                        f"[export:annotation:start] index={index + 1}/{len(rows)} "
+                        f"file={row.get('file')!r} name={row.get('name')!r}",
+                        flush=True,
+                    )
                 with annotation_deadline(args.annotation_timeout_seconds):
                     result = export_one(
                         row,
@@ -348,6 +401,20 @@ def main() -> None:
                 else:
                     handle.write(json.dumps(result, ensure_ascii=False) + "\n")
                     written += 1
+                if trace_annotation:
+                    diagnostics = (
+                        result.get("recommendation_diagnostics", {})
+                        if result is not None else {}
+                    )
+                    print(
+                        "[export:annotation:done] "
+                        f"index={index + 1}/{len(rows)} written={result is not None} "
+                        f"candidates={diagnostics.get('count', 0)} "
+                        f"seconds={time.monotonic() - annotation_started:.3f} "
+                        f"timings={json.dumps(diagnostics.get('timings_seconds', {}), sort_keys=True)} "
+                        f"retrieval_counts={json.dumps(diagnostics.get('retrieval_counts', {}), sort_keys=True)}",
+                        flush=True,
+                    )
             except AnnotationTimeoutError as error:
                 failed += 1
                 timed_out += 1
@@ -360,7 +427,13 @@ def main() -> None:
                 )
             except Exception as error:  # Continue a long dataset export and retain actionable diagnostics.
                 failed += 1
-                print(f"[{index}] {row.get('file')}: {type(error).__name__}: {error}", file=sys.stderr)
+                print(
+                    f"[export:annotation:error] index={index + 1}/{len(rows)} "
+                    f"file={row.get('file')!r} name={row.get('name')!r} "
+                    f"error={type(error).__name__}: {error}",
+                    file=sys.stderr,
+                    flush=True,
+                )
             if args.log_every and ((index + 1) % args.log_every == 0 or index + 1 == len(rows)):
                 print(
                     f"[export:progress] annotations={index + 1:,}/{len(rows):,} "
