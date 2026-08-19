@@ -52,6 +52,8 @@ def included(relative: PurePosixPath) -> bool:
         return relative.suffix == ".jsonl"
     if relative.parts[0] == "project_status":
         return relative.suffix == ".json"
+    if relative.parts[0] == "project_kb":
+        return relative.suffix == ".json" and relative.name == "knowledge_base.json"
     if relative.parts[0] == "metadata":
         return relative.suffix == ".json"
     return len(relative.parts) == 1 and relative.name in {
@@ -71,6 +73,7 @@ def package_shard(work_dir: Path, payload_dir: Path) -> tuple[Path, dict[str, An
         work_dir / "metadata" / "split_manifest.json",
         work_dir / "raw_slices",
         work_dir / "project_status",
+        work_dir / "project_kb",
     ]
     missing = [str(path) for path in required if not path.exists()]
     if missing:
@@ -80,7 +83,10 @@ def package_shard(work_dir: Path, payload_dir: Path) -> tuple[Path, dict[str, An
     payload_dir.mkdir(parents=True, exist_ok=True)
     archive = payload_dir / f"{directory_name}.zip"
     seen: dict[str, str] = {}
-    counts = {"metadata": 0, "raw_slices": 0, "project_status": 0, "root": 0}
+    counts = {
+        "metadata": 0, "raw_slices": 0, "project_status": 0,
+        "project_kb": 0, "root": 0,
+    }
     with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
         for path in sorted(work_dir.rglob("*")):
             if not path.is_file() or path.is_symlink():
@@ -117,7 +123,9 @@ def package_shard(work_dir: Path, payload_dir: Path) -> tuple[Path, dict[str, An
             bundle.write(path, output_name)
             counts[relative.parts[0] if len(relative.parts) > 1 else "root"] += 1
 
-    if counts["metadata"] == 0 or counts["raw_slices"] == 0 or counts["project_status"] == 0:
+    if any(counts[name] == 0 for name in (
+        "metadata", "raw_slices", "project_status", "project_kb"
+    )):
         raise RuntimeError(f"Packaged shard is missing required file groups: {counts}")
     print(json.dumps({
         "archive": str(archive),

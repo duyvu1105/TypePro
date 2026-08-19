@@ -39,7 +39,7 @@ TYPEGEN_FILES = (
     "data/testset_randomsampled.json",
 )
 PROJECT_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
-SCHEMA_VERSION = "typepro-codet5p-parameter-third-party-v2"
+SCHEMA_VERSION = "typepro-codet5p-generative-project-kb-v1"
 
 
 def parse_args() -> argparse.Namespace:
@@ -494,10 +494,13 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
     python_dir = typepro_root / "Python"
     exporter = python_dir / "export_slices.py"
     kb_builder = python_dir / "build_third_party_kb.py"
+    project_kb_builder = python_dir / "project_kb.py"
     if not exporter.exists():
         raise FileNotFoundError(exporter)
     if args.build_import_kb and not kb_builder.exists():
         raise FileNotFoundError(kb_builder)
+    if not project_kb_builder.exists():
+        raise FileNotFoundError(project_kb_builder)
     rows_by_project: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in load_prepared_annotations(work_dir):
         rows_by_project[project_from_row(row)].append(row)
@@ -512,19 +515,17 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
     raw_dir = work_dir / "raw_slices"
     task_dir = work_dir / "tasks"
     status_dir = work_dir / "project_status"
-    generated_kb = work_dir / "third_party_kb" / "dataset"
+    project_kb_root = work_dir / "project_kb"
     # Wheels/extracted sources are transient and intentionally live outside the
     # shard build directory so Kaggle archives only retain compact JSON KB data.
     download_cache = work_dir.parent / f".{work_dir.name}_package_downloads"
     clone_root = Path(args.repos_root).resolve() if args.repos_root else work_dir / "repository_cache"
     for directory in (
-        raw_dir, task_dir, status_dir, clone_root, generated_kb, download_cache,
+        raw_dir, task_dir, status_dir, clone_root, project_kb_root, download_cache,
         python_dir / "data", python_dir / "Third-party-data/dataset",
     ):
         directory.mkdir(parents=True, exist_ok=True)
     knowledge_base_paths = []
-    if args.build_import_kb:
-        knowledge_base_paths.append(generated_kb)
     if args.third_party_kb:
         knowledge_base = Path(args.third_party_kb).resolve()
         if not knowledge_base.is_dir():
@@ -536,7 +537,7 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
         "third_party_knowledge_base_provided": bool(args.third_party_kb),
         "third_party_knowledge_base_path": str(Path(args.third_party_kb).resolve()) if args.third_party_kb else None,
         "import_knowledge_base_built": bool(args.build_import_kb),
-        "import_knowledge_base_path": str(generated_kb) if args.build_import_kb else None,
+        "project_knowledge_base_path": str(project_kb_root),
         "download_missing_imports": bool(args.download_missing_imports),
         "package_download_timeout_seconds": args.package_download_timeout_seconds,
         "kb_phase_timeout_seconds": args.kb_phase_timeout_seconds,
@@ -564,6 +565,9 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
         output_path = raw_dir / f"{slug}.jsonl"
         status_path = status_dir / f"{slug}.json"
         repository_path = clone_root.joinpath(*project.split("/"))
+        project_kb_dir = project_kb_root / slug
+        imports_kb_dir = project_kb_dir / "imports"
+        project_kb_path = project_kb_dir / "knowledge_base.json"
         project_progress.set_postfix_str(
             f"current={project} annotations={len(rows_by_project[project]):,} "
             f"done={counters['completed_projects']:,} failed={counters['failed_projects']:,}"
@@ -589,7 +593,10 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
                 f"annotations={len(rows_by_project[project]):,}"
             )
             continue
-        if output_path.exists() and status_path.exists() and not args.force_projects:
+        if (
+            output_path.exists() and status_path.exists() and project_kb_path.exists()
+            and not args.force_projects
+        ):
             counters["skipped_complete"] += 1
             if not args.keep_repos and not args.repos_root:
                 safe_remove_repo(repository_path, clone_root)
@@ -610,7 +617,7 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
                 kb_command = [
                     sys.executable, str(kb_builder),
                     "--project-root", str(repository_path),
-                    "--output-dir", str(generated_kb),
+                    "--output-dir", str(imports_kb_dir),
                     "--download-cache", str(download_cache),
                     "--max-files-per-package", str(args.kb_max_files_per_package),
                     "--download-timeout-seconds",
@@ -642,6 +649,27 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
                 tqdm.write(
                     f"[project:kb:done] {project} seconds={time.monotonic() - phase_started:.1f}"
                 )
+            project_kb_dir.mkdir(parents=True, exist_ok=True)
+            project_kb_command = [
+                sys.executable, str(project_kb_builder),
+                "--project-root", str(repository_path),
+                "--output", str(project_kb_path),
+            ]
+            if args.build_import_kb:
+                project_kb_command.extend(["--imports-dir", str(imports_kb_dir)])
+            run_logged(
+                project_kb_command,
+                python_dir,
+                status_dir / f"{slug}.project-kb.log",
+                timeout_seconds=args.project_analysis_timeout_seconds,
+            )
+            # Import retrieval must see only this project's package records.
+            isolated_paths = [imports_kb_dir]
+            if args.third_party_kb:
+                isolated_paths.append(Path(args.third_party_kb).resolve())
+            os.environ["TYPEPRO_THIRD_PARTY_DATASET"] = os.pathsep.join(
+                map(str, isolated_paths)
+            )
             project_rows = []
             for row in rows_by_project[project]:
                 item = dict(row)
@@ -659,6 +687,8 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
                 "--trace-every", str(args.slice_trace_every),
                 "--project-analysis-timeout-seconds",
                 str(args.project_analysis_timeout_seconds),
+                "--project-kb", str(project_kb_path),
+                "--recommendation-limit", "10",
             ]
             annotation_timeout = annotation_timeout_for_project(
                 args.slice_annotation_timeout_seconds, timeout_projects, project
@@ -683,6 +713,10 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
                 "failed_annotations": len(project_rows) - exported,
                 "annotation_timeout_seconds": annotation_timeout,
                 "third_party_kb": kb_summary,
+                "project_kb": {
+                    "path": str(project_kb_path.relative_to(work_dir)),
+                    "bytes": project_kb_path.stat().st_size,
+                },
                 "completed_at": datetime.now(timezone.utc).isoformat(),
                 "exporter_tail": exporter_tail,
             }
@@ -749,18 +783,23 @@ def finalize_dataset(args: argparse.Namespace, work_dir: Path, output_dir: Path,
     if not any(raw_dir.glob("*.jsonl")):
         raise ValueError(f"No raw slice shards found in {raw_dir}")
     output_dir.mkdir(parents=True, exist_ok=True)
-    preprocess_script = Path(__file__).with_name("preprocess.py")
+    preprocess_script = Path(__file__).with_name("preprocess_generative.py")
     command = [
         sys.executable, str(preprocess_script), "--input", str(raw_dir),
         "--output-dir", str(output_dir), "--label-field", "gttype",
-        "--max-negatives", str(args.max_negatives), "--missing-positive", args.missing_positive,
-        "--missing-positive-eval", "append", "--positive-policy", "ground-truth",
-        "--seed", str(args.seed),
-        "--preview-samples", str(args.preview_samples),
-        "--preview-max-chars", str(args.preview_max_chars),
-        "--log-every", str(args.log_every),
+        "--recommendation-limit", "10",
     ]
     run(command, cwd=preprocess_script.parent)
+    source_kb = work_dir / "project_kb"
+    destination_kb = output_dir / "project_kb"
+    if not source_kb.is_dir() or not any(source_kb.glob("*/knowledge_base.json")):
+        raise ValueError(f"No project knowledge bases found in {source_kb}")
+    if destination_kb.exists():
+        shutil.rmtree(destination_kb)
+    shutil.copytree(
+        source_kb, destination_kb,
+        ignore=shutil.ignore_patterns("imports", "*.log"),
+    )
     with (work_dir / "metadata" / "split_manifest.json").open(encoding="utf-8") as handle:
         split_manifest = json.load(handle)
     with (output_dir / "preprocess_stats.json").open(encoding="utf-8") as handle:
@@ -796,9 +835,10 @@ def finalize_dataset(args: argparse.Namespace, work_dir: Path, output_dir: Path,
         },
         "split": split_manifest,
         "preprocessing": {
-            "max_negatives": args.max_negatives,
-            "positive_policy": "ground-truth",
-            "positive_field": "gttype",
+            "task": "sequence_to_sequence_type_generation",
+            "label_field": "gttype",
+            "recommendation_limit": 10,
+            "recommendation_source": "isolated_project_kb",
             "scope": "arg",
             "exclude_builtins": True,
             "stats": preprocess_stats,
@@ -821,26 +861,28 @@ def finalize_dataset(args: argparse.Namespace, work_dir: Path, output_dir: Path,
             "expected": len(expected_projects),
             "missing": missing_projects,
             "failures": failures,
+            "knowledge_bases": len(list(destination_kb.glob("*/knowledge_base.json"))),
         },
     }
     write_json(output_dir / "manifest.json", manifest)
-    card = f"""# TypePro CodeT5+ contrastive dataset
+    card = f"""# TypePro CodeT5+ generative dataset
 
 Generated once by `prepare_dataset.py`; fine-tuning must consume these immutable files directly.
 
 - schema: `{SCHEMA_VERSION}`
 - language: Python
 - target scope: function parameters only
-- positive: `gttype`
+- task: generate the exact `gttype` label from the tagged input
 - built-in annotations: excluded
-- third-party recommendations: structural definitions built from project imports
+- recommendations: top 10 from the isolated KB stored for that project
+- project KBs: stored under `project_kb/<owner>__<repo>/knowledge_base.json`
 - split profile: `{split_manifest['split_profile']}`
 - train rows: {manifest['output']['train']['rows']}
 - validation rows: {manifest['output']['validation']['rows']}
 - test rows: {manifest['output']['test']['rows']}
 - failed repositories: {len(failures)}
 
-See `manifest.json` and `preprocess_stats.json` for provenance, checksums, and candidate recall counts.
+See `manifest.json` and `preprocess_stats.json` for provenance and checksums.
 """
     (output_dir / "DATASET_CARD.md").write_text(card, encoding="utf-8")
     final_counts = {

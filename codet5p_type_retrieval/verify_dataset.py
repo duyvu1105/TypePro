@@ -22,6 +22,9 @@ def main() -> None:
     with (root / "manifest.json").open(encoding="utf-8") as handle:
         manifest = json.load(handle)
     errors = []
+    kb_key_cache: dict[Path, set[str]] = {}
+    if manifest.get("schema_version") != "typepro-codet5p-generative-project-kb-v1":
+        errors.append(f"unexpected schema: {manifest.get('schema_version')!r}")
     for split, expected in manifest["output"].items():
         path = root / expected["file"]
         if not path.exists():
@@ -33,6 +36,66 @@ def main() -> None:
             errors.append(f"{split}: sha256 mismatch")
         if actual_rows != expected["rows"]:
             errors.append(f"{split}: row count {actual_rows} != {expected['rows']}")
+        with path.open(encoding="utf-8") as handle:
+            for line_number, line in enumerate(handle, start=1):
+                if not line.strip():
+                    continue
+                row = json.loads(line)
+                required = {
+                    "target_name", "target_function", "interprocedural_slice",
+                    "recommendation_types", "input", "label", "project",
+                }
+                missing = required - row.keys()
+                if missing:
+                    errors.append(f"{split}:{line_number}: missing fields {sorted(missing)}")
+                    break
+                if not 1 <= len(row["recommendation_types"]) <= 10:
+                    errors.append(f"{split}:{line_number}: recommendation count is not 1..10")
+                    break
+                if any(
+                    not item.get("type") or not item.get("definition")
+                    for item in row["recommendation_types"]
+                ):
+                    errors.append(f"{split}:{line_number}: invalid recommendation entry")
+                    break
+                if not all(tag in row["input"] for tag in (
+                    "[TARGET_NAME]", "[TARGET_FUNCTION]", "[INTERPROCEDURAL_SLICE]",
+                    "[RECOMMENDATION_TYPES]", "[TYPE]", "[DEFINITION]",
+                )):
+                    errors.append(f"{split}:{line_number}: tagged input is incomplete")
+                    break
+                kb_path = (
+                    root / "project_kb" /
+                    str(row["project"]).replace("/", "__") /
+                    "knowledge_base.json"
+                )
+                if not kb_path.exists():
+                    errors.append(f"{split}:{line_number}: missing project KB {kb_path}")
+                    break
+                if kb_path not in kb_key_cache:
+                    kb = json.loads(kb_path.read_text(encoding="utf-8"))
+                    kb_key_cache[kb_path] = {
+                        str(item.get("qualified_name") or item.get("name") or "").casefold()
+                        for item in kb.get("records", []) if isinstance(item, dict)
+                    }
+                kb_keys = kb_key_cache[kb_path]
+                outside = [
+                    item.get("qualified_name") or item.get("type")
+                    for item in row["recommendation_types"]
+                    if str(item.get("qualified_name") or item.get("type") or "").casefold()
+                    not in kb_keys
+                ]
+                if outside:
+                    errors.append(
+                        f"{split}:{line_number}: recommendations outside project KB {outside}"
+                    )
+                    break
+    kb_files = list((root / "project_kb").glob("*/knowledge_base.json"))
+    expected_kbs = manifest.get("projects", {}).get("knowledge_bases")
+    if not kb_files or expected_kbs != len(kb_files):
+        errors.append(
+            f"project KB count {len(kb_files)} != manifest {expected_kbs!r}"
+        )
     if errors:
         raise SystemExit("Dataset verification failed:\n- " + "\n- ".join(errors))
     print(json.dumps({"verified": True, "schema": manifest["schema_version"], "output": manifest["output"]}, indent=2))

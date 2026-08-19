@@ -32,7 +32,7 @@ Do not edit generated notebooks manually when the change belongs in
 | `05-09` | `duymign` | `duymign/typepro-python-shard-XX` | public |
 
 The merge runs under `duyvu1105` and publishes the private Dataset
-`duyvu1105/typepro-python-contrastive`. The second account's shards must remain
+`duyvu1105/typepro-python-generative`. The second account's shards must remain
 public so the final owner can attach them.
 
 Unsplit manifests use physical coordinates `index/10`. Shard `01` uses
@@ -46,12 +46,21 @@ other parts.
 
 ## Candidate retrieval
 
-Each shard keeps non-built-in function parameters and builds a cached
-stdlib/third-party KB. Candidate retrieval unions exact imports, declarations
+Each shard keeps non-built-in function parameters and builds an isolated KB
+for every project. Candidate retrieval unions exact imports, declarations
 visible in the masked slice, project classes and aliases, lexical/structural
 retrieval, `.pyi`/Typeshed symbols, project call/data flow, fixtures and common
-factory/framework idioms. The target parameter annotation is never used as a
-retrieval signal.
+factory/framework idioms. It then filters and ranks only records stored in that
+project's KB and emits at most 10 recommendations. The target annotation is
+never used as a retrieval signal. Each KB retains project classes/type aliases,
+imported library types, functions with return types, and re-export aliases.
+
+Final JSONL rows are generative CodeT5 examples, not contrastive pairs. Their
+`input` contains `[TARGET_NAME]`, `[TARGET_FUNCTION]`,
+`[INTERPROCEDURAL_SLICE]`, and `[RECOMMENDATION_TYPES]` entries represented by
+`[TYPE]` plus `[DEFINITION]`; `label` is the exact `gttype`. The final Dataset
+also contains `project_kb/<owner>__<repo>/knowledge_base.json` for every
+completed project.
 
 `RETRIEVAL_SCHEMA_VERSION` is embedded in every shard notebook and stored in
 `runtime_manifest.json`. A restored Dataset with a missing/different version is

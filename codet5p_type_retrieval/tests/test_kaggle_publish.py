@@ -20,6 +20,7 @@ def make_shard(tmp_path: Path) -> Path:
     (work / "metadata").mkdir(parents=True)
     (work / "raw_slices").mkdir()
     (work / "project_status").mkdir()
+    (work / "project_kb" / "owner__repo").mkdir(parents=True)
     (work / "third_party_kb" / "dataset").mkdir(parents=True)
     manifest = {
         "shard_index": 0,
@@ -34,6 +35,9 @@ def make_shard(tmp_path: Path) -> Path:
     (work / "raw_slices" / "owner__repo.jsonl").write_text("{}\n", encoding="utf-8")
     (work / "project_status" / "owner__repo.json").write_text("{}", encoding="utf-8")
     (work / "project_status" / "owner__repo.log").write_text("large log", encoding="utf-8")
+    (work / "project_kb" / "owner__repo" / "knowledge_base.json").write_text(
+        '{"schema_version":"typepro-project-kb-v1","records":[]}', encoding="utf-8"
+    )
     # This is the exact class of collision that previously made Kaggle reject
     # the Dataset. Build-time KB files must not enter the published archive.
     (work / "third_party_kb" / "dataset" / "Cython.json").write_text("{}", encoding="utf-8")
@@ -238,6 +242,7 @@ def test_package_contains_only_merge_inputs(tmp_path):
         names = bundle.namelist()
     assert "typepro_build_shard_00/raw_slices/owner__repo.jsonl" in names
     assert "typepro_build_shard_00/project_status/owner__repo.json" in names
+    assert "typepro_build_shard_00/project_kb/owner__repo/knowledge_base.json" in names
     assert not any("third_party_kb" in name for name in names)
     assert not any(name.endswith(".log") for name in names)
     assert len(names) == len({name.casefold() for name in names})

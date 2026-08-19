@@ -20,6 +20,7 @@ from typing import Any, Iterable
 from slicing_code_class import ProjectAnalysisCache, Slicer
 from function_methods import Function_methods
 from project_index import build_project_index, scan_project
+from project_kb import top_project_types
 
 
 FUNCTION_NODES = (ast.FunctionDef, ast.AsyncFunctionDef)
@@ -72,6 +73,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dataset", required=True, help="ManyTypes4Py/TypeGen-style JSON or JSONL")
     parser.add_argument("--repos-root", required=True, help="Root containing checked-out repositories")
     parser.add_argument("--output", required=True, help="Output JSONL")
+    parser.add_argument(
+        "--project-kb",
+        help="Self-contained project KB JSON; restrict recommendations to this KB",
+    )
+    parser.add_argument("--recommendation-limit", type=int, default=10)
     parser.add_argument("--rebuild-index", action="store_true", help="Run run_read_data.py once per project")
     parser.add_argument("--limit", type=int, default=0)
     parser.add_argument("--parameters-only", action="store_true")
@@ -251,6 +257,8 @@ def export_one(
     file_path: Path,
     function_methods: Function_methods | None = None,
     analysis_cache: ProjectAnalysisCache | None = None,
+    project_kb: dict[str, Any] | None = None,
+    recommendation_limit: int = 10,
 ) -> dict[str, Any] | None:
     export_started = time.monotonic()
     parse_started = export_started
@@ -308,7 +316,14 @@ def export_one(
     result["file"] = str(row.get("file") or row.get("path") or file_path)
     result["language"] = "python"
     result["interprocedural_slice"] = code_slice
-    recommendations = recommendation_objects(slicer.get_type_recommend())
+    seed_recommendations = recommendation_objects(slicer.get_type_recommend())
+    recommendations = (
+        top_project_types(
+            project_kb, target_name, code_slice, seed_recommendations,
+            limit=recommendation_limit,
+        )
+        if project_kb is not None else seed_recommendations
+    )
     result["recommendation_types"] = recommendations
     result["recommendation_diagnostics"] = {
         "count": len(recommendations),
@@ -336,6 +351,10 @@ def main() -> None:
     Path("data").mkdir(parents=True, exist_ok=True)
     Path("Third-party-data/dataset").mkdir(parents=True, exist_ok=True)
     rows = read_rows(Path(args.dataset))
+    project_kb = (
+        json.loads(Path(args.project_kb).read_text(encoding="utf-8"))
+        if args.project_kb else None
+    )
     original_count = len(rows)
     if args.parameters_only:
         rows = [row for row in rows if str(row.get("scope") or "").casefold() == "arg"]
@@ -428,6 +447,8 @@ def main() -> None:
                         resolve_file(row, repos_root),
                         function_methods=function_methods,
                         analysis_cache=analysis_cache,
+                        project_kb=project_kb,
+                        recommendation_limit=args.recommendation_limit,
                     )
                 if result is None:
                     failed += 1

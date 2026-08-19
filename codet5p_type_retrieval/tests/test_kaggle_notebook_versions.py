@@ -52,7 +52,7 @@ def test_standalone_notebook_locks_publish_owner_and_single_shard():
     assert "KB_PHASE_TIMEOUT_SECONDS = 300" in config
     assert "PROJECT_ANALYSIS_TIMEOUT_SECONDS = 300" in config
     assert "SLICE_TRACE_EVERY = 10" in config
-    assert 'RETRIEVAL_SCHEMA_VERSION = "typepro-high-recall-v5-phase-timeouts"' in config
+    assert 'RETRIEVAL_SCHEMA_VERSION = "typepro-project-kb-top10-generative-v1"' in config
     assert "--slice-annotation-timeout-seconds" in serialized
     assert "--package-download-timeout-seconds" in serialized
     assert "--kb-phase-timeout-seconds" in serialized
@@ -312,6 +312,8 @@ def test_merge_notebook_uses_attached_inputs_and_final_owner_for_publish():
     assert '\\"datasets\\", \\"download\\"' not in serialized
     assert "INPUT_ROOT.rglob(\\\"shard_manifest.json\\\")" in serialized
     assert "dataset_id.rsplit" not in serialized
+    assert "project_kb" in serialized
+    assert "typepro-python-generative" in serialized
 
 
 def test_merge_kernel_metadata_attaches_exact_merge_plan_inputs():
@@ -322,6 +324,18 @@ def test_merge_kernel_metadata_attaches_exact_merge_plan_inputs():
     assert len(set(dataset_ids)) == 15
     assert metadata["id"] == "duyvu1105/merge-dataset"
     assert metadata["dataset_sources"] == dataset_ids
+
+
+def test_train_notebook_uses_generative_model_not_contrastive_retrieval():
+    serialized = json.dumps(generate_notebooks.train_notebook(
+        "https://github.com/duyvu1105/TypePro.git", "main"
+    ))
+
+    assert "train_generative.py" in serialized
+    assert "infer_generative.py" in serialized
+    assert "typepro-codet5p-generative-project-kb-v1" in serialized
+    assert "projection-dim" not in serialized
+    assert 'PIPELINE_DIR / \\"train.py\\"' not in serialized
 
 
 def test_kernel_push_rejects_invalid_dataset_sources(tmp_path, monkeypatch):

@@ -433,7 +433,7 @@ def shard_notebook(
         PACKAGE_DOWNLOAD_TIMEOUT_SECONDS = 30
         KB_PHASE_TIMEOUT_SECONDS = 300
         PROJECT_ANALYSIS_TIMEOUT_SECONDS = 300
-        RETRIEVAL_SCHEMA_VERSION = "typepro-high-recall-v5-phase-timeouts"
+        RETRIEVAL_SCHEMA_VERSION = "typepro-project-kb-top10-generative-v1"
 
         from pathlib import Path
 
@@ -1094,7 +1094,7 @@ def merge_notebook(
         EXPECTED_DATASET_OWNER = {expected_dataset_owner!r}
         SHARD_SOURCE_CONFIG = {shard_source_config!r}
         MERGE_DATASETS = {merge_datasets!r}
-        FINAL_DATASET_SLUG = "typepro-python-contrastive"
+        FINAL_DATASET_SLUG = "typepro-python-generative"
         SEED = 13
 
         import json
@@ -1174,7 +1174,7 @@ def merge_notebook(
         INPUT_ROOT = Path("/kaggle/input")
         EXTRACTED_INPUT_ROOT = Path("/kaggle/working/extracted_shard_inputs")
         MERGED_BUILD = Path("/kaggle/working/typepro_build")
-        FINAL_DIR = Path("/kaggle/working/typepro_python_contrastive")
+        FINAL_DIR = Path("/kaggle/working/typepro_python_generative")
 
         def run(command, cwd=None):
             print("+", " ".join(map(str, command)), flush=True)
@@ -1288,6 +1288,7 @@ def merge_notebook(
                 build / "metadata" / "split_manifest.json",
                 build / "raw_slices",
                 build / "project_status",
+                build / "project_kb",
             ]
             missing = [str(path) for path in required if not path.exists()]
             if missing:
@@ -1305,7 +1306,7 @@ def merge_notebook(
             "--work-dir", MERGED_BUILD,
         ])
         """),
-        markdown("## Finalize contrastive train/validation/test"),
+        markdown("## Finalize generative train/validation/test and retain project KBs"),
         code("""
         prepare = PIPELINE_DIR / "prepare_dataset.py"
         run([
@@ -1317,7 +1318,6 @@ def merge_notebook(
             "--split-profile", "paper_project",
             "--test-projects", 100,
             "--validation-project-ratio", 0.10,
-            "--max-negatives", 7,
             "--seed", SEED,
             "--preview-samples", 2,
             "--preview-max-chars", 1600,
@@ -1329,30 +1329,13 @@ def merge_notebook(
         code("""
         manifest = json.loads((FINAL_DIR / "manifest.json").read_text(encoding="utf-8"))
         stats = json.loads((FINAL_DIR / "preprocess_stats.json").read_text(encoding="utf-8"))
-        recommendation_coverage = {}
-        for split in ("train", "validation", "test"):
-            found = stats.get(f"{split}_gold_recommended", 0)
-            missing = stats.get(f"{split}_gold_not_recommended", 0)
-            total = found + missing
-            recommendation_coverage[split] = {
-                "total_samples": total,
-                "ground_truth_in_recommendation_types": found,
-                "ground_truth_not_in_recommendation_types": missing,
-                "percentage": round(100.0 * found / total, 2) if total else 0.0,
-            }
         print(json.dumps({
             "output": manifest["output"],
             "prepared_counts": manifest["split"]["prepared_counts"],
             "prepared_projects": manifest["split"]["prepared_projects"],
             "preprocess_stats": stats,
-            "recommendation_coverage": recommendation_coverage,
+            "project_knowledge_bases": manifest["projects"]["knowledge_bases"],
         }, indent=2, ensure_ascii=False))
-        print("\\n===== GROUND TRUTH IN RECOMMENDATION TYPES =====")
-        for split, values in recommendation_coverage.items():
-            print(
-                f"{split}: {values['ground_truth_in_recommendation_types']:,}/"
-                f"{values['total_samples']:,} samples ({values['percentage']:.2f}%)"
-            )
         for split in ("train", "validation", "test"):
             print(f"\\n===== {split.upper()} SAMPLES =====")
             with (FINAL_DIR / f"{split}.jsonl").open(encoding="utf-8") as handle:
@@ -1367,7 +1350,7 @@ def merge_notebook(
             sys.executable, PIPELINE_DIR / "publish_kaggle.py",
             "--data-dir", FINAL_DIR,
             "--dataset-id", final_id,
-            "--title", "TypePro Python Third-Party Contrastive Data",
+            "--title", "TypePro Python Generative Project-KB Data",
             "--message", f"Merge {len(MERGE_DATASETS)} verified partitions covering {SHARD_COUNT} shards",
         ])
         completion = {
@@ -1390,14 +1373,14 @@ def train_notebook(repository: str, branch: str) -> dict:
         # Fine-tune CodeT5+ and infer on the TypePro test split
 
         Settings: **Internet ON**, accelerator **GPU**. Attach the final private
-        dataset `typepro-python-contrastive` using **Add Input**.
+        dataset `typepro-python-generative` using **Add Input**.
         """),
         code(f"""
         REPOSITORY = {repository!r}
         BRANCH = {branch!r}
         MODEL_NAME = "Salesforce/codet5p-220m-py"
-        QUERY_LENGTH = 768
-        CANDIDATE_LENGTH = 256
+        INPUT_LENGTH = 768
+        LABEL_LENGTH = 64
         EPOCHS = 3
 
         import json
@@ -1425,7 +1408,7 @@ def train_notebook(repository: str, branch: str) -> dict:
                 value = json.loads(path.read_text(encoding="utf-8"))
             except Exception:
                 continue
-            if value.get("schema_version", "").startswith("typepro-codet5p-contrastive"):
+            if value.get("schema_version") == "typepro-codet5p-generative-project-kb-v1":
                 candidates.append(path.parent)
         if len(candidates) != 1:
             raise RuntimeError(f"Expected exactly one TypePro processed dataset, found {candidates}")
@@ -1433,24 +1416,21 @@ def train_notebook(repository: str, branch: str) -> dict:
         print("Using dataset:", DATA_DIR)
         run([sys.executable, PIPELINE_DIR / "verify_dataset.py", "--data-dir", DATA_DIR])
         """),
-        markdown("## Contrastive fine-tuning"),
+        markdown("## Generative sequence-to-sequence fine-tuning"),
         code("""
         run([
-            sys.executable, "-u", PIPELINE_DIR / "train.py",
+            sys.executable, "-u", PIPELINE_DIR / "train_generative.py",
             "--data-dir", DATA_DIR,
             "--output-dir", OUTPUT_DIR,
             "--model-name", MODEL_NAME,
-            "--projection-dim", 256,
-            "--query-length", QUERY_LENGTH,
-            "--candidate-length", CANDIDATE_LENGTH,
+            "--input-length", INPUT_LENGTH,
+            "--label-length", LABEL_LENGTH,
             "--batch-size", 2,
             "--gradient-accumulation-steps", 8,
             "--epochs", EPOCHS,
             "--learning-rate", "2e-5",
             "--mixed-precision", "fp16",
             "--gradient-checkpointing",
-            "--preview-samples", 2,
-            "--preview-max-chars", 1600,
             "--seed", 13,
         ])
         """),
@@ -1458,16 +1438,13 @@ def train_notebook(repository: str, branch: str) -> dict:
         code("""
         predictions = Path("/kaggle/working/test_predictions.jsonl")
         run([
-            sys.executable, "-u", PIPELINE_DIR / "infer.py",
+            sys.executable, "-u", PIPELINE_DIR / "infer_generative.py",
             "--checkpoint", OUTPUT_DIR / "best",
             "--input", DATA_DIR / "test.jsonl",
             "--output", predictions,
-            "--query-length", QUERY_LENGTH,
-            "--candidate-length", CANDIDATE_LENGTH,
+            "--input-length", INPUT_LENGTH,
+            "--label-length", LABEL_LENGTH,
             "--batch-size", 4,
-            "--top-k", 5,
-            "--preview-samples", 3,
-            "--log-every", 1000,
         ])
         print("Predictions:", predictions)
         """),

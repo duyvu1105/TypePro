@@ -45,7 +45,7 @@ def main() -> None:
     destination = Path(args.work_dir).resolve()
     builds = [locate_build_dir(Path(value).resolve()) for value in args.shard_build_dirs]
     reference_manifest = None
-    copied = {"raw_slices": 0, "project_status": 0}
+    copied = {"raw_slices": 0, "project_status": 0, "project_kb": 0}
     for build in builds:
         manifest_path = build / "metadata" / "split_manifest.json"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -59,9 +59,13 @@ def main() -> None:
         elif manifest != reference_manifest:
             raise ValueError(f"Shard split manifest differs: {build}")
 
-        for directory, pattern in (("raw_slices", "*.jsonl"), ("project_status", "*.json"), ("project_status", "*.log")):
+        for directory, pattern in (
+            ("raw_slices", "*.jsonl"), ("project_status", "*.json"),
+            ("project_status", "*.log"), ("project_kb", "*/knowledge_base.json"),
+        ):
             for source in (build / directory).glob(pattern):
-                copy_checked(source, destination / directory / source.name)
+                relative = source.relative_to(build / directory)
+                copy_checked(source, destination / directory / relative)
                 copied[directory] += 1
     print(json.dumps({"merged_builds": [str(path) for path in builds], **copied}, indent=2))
 
