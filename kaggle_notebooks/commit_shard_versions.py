@@ -306,6 +306,27 @@ def run_push(directory: Path, credential: dict[str, str], config_dir: Path) -> s
     return output
 
 
+def kernel_status(
+    kernel: str, credential: dict[str, str], config_dir: Path
+) -> str:
+    environment = os.environ.copy()
+    environment["KAGGLE_CONFIG_DIR"] = str(config_dir)
+    environment["KAGGLE_USERNAME"] = credential["username"]
+    environment["KAGGLE_KEY"] = credential["key"]
+    environment.pop("KAGGLE_API_TOKEN", None)
+    result = subprocess.run(
+        ["kaggle", "kernels", "status", kernel],
+        env=environment,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    output = (result.stdout or "").strip()
+    if result.returncode:
+        raise RuntimeError(f"Cannot query {kernel}: {output}")
+    return output
+
+
 def parse_credentials(values: list[str], plans: list[AccountPlan]) -> dict[str, Path]:
     if not values:
         defaults = [REPO_ROOT / "kaggle.json", REPO_ROOT / "kaggle2.json"]
@@ -362,7 +383,10 @@ def main(argv: list[str] | None = None) -> None:
         help="Push/render only this 1-based part; requires exactly one --shard",
     )
     parser.add_argument("--push", action="store_true")
+    parser.add_argument("--check-status", action="store_true")
     args = parser.parse_args(argv)
+    if args.push and args.check_status:
+        parser.error("--push and --check-status are mutually exclusive")
 
     plan_path = args.plan.resolve()
     final_dataset_owner, _, plans = load_plan(plan_path)
@@ -419,7 +443,13 @@ def main(argv: list[str] | None = None) -> None:
                     f"typepro-build-shard-{physical_shard_index:02d}"
                 ),
             }
-            if args.push:
+            if args.check_status:
+                with tempfile.TemporaryDirectory(prefix="typepro_kernel_status_") as temp:
+                    auth_dir = Path(temp) / "auth"
+                    auth_dir.mkdir(parents=True)
+                    status = kernel_status(summary["kernel"], credential, auth_dir)
+                summaries.append({**summary, "status": status})
+            elif args.push:
                 with tempfile.TemporaryDirectory(prefix="typepro_kernel_push_") as temp:
                     push_dir = Path(temp) / "payload"
                     auth_dir = Path(temp) / "auth"

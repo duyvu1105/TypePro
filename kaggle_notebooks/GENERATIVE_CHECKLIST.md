@@ -31,7 +31,7 @@ version, manifest, or exact Dataset file listing.
 
 ## Kaggle execution evidence
 
-- [ ] All shard kernels pushed under their planned owners.
+- [x] All 10 shard kernels pushed under their planned owners (version 1).
 - [ ] All 10 shard kernel versions completed successfully.
 - [ ] Exact Dataset file listings show `raw_slices`, `project_status`, and
   `project_kb/*/knowledge_base.json` in every shard payload.
