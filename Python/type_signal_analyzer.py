@@ -167,7 +167,11 @@ def visible_type_signals(source: str) -> list[str]:
 class ProjectTypeAnalyzer:
     """A bounded project-wide semantic index used by every annotation."""
 
-    def __init__(self, project_root: str | os.PathLike[str] | None):
+    def __init__(
+        self,
+        project_root: str | os.PathLike[str] | None,
+        parsed_files=None,
+    ):
         self.root = Path(project_root).resolve() if project_root else None
         self.definitions: dict[str, list[str]] = defaultdict(list)
         self.module_symbols: dict[str, set[str]] = defaultdict(set)
@@ -179,7 +183,7 @@ class ProjectTypeAnalyzer:
         self._functions: dict[str, list[ast.FunctionDef | ast.AsyncFunctionDef]] = defaultdict(list)
         self._star_imports: list[tuple[str, str, str]] = []
         if self.root and self.root.is_dir():
-            self._build()
+            self._build(parsed_files)
 
     def _files(self) -> Iterable[Path]:
         assert self.root is not None
@@ -205,13 +209,22 @@ class ProjectTypeAnalyzer:
             self.definitions[name].append(value)
         self.module_symbols[module].add(name)
 
-    def _build(self) -> None:
-        for path in self._files():
-            try:
-                source = path.read_text(encoding="utf-8", errors="replace")
-                tree = ast.parse(source, filename=str(path))
-            except (OSError, SyntaxError, ValueError):
-                continue
+    def _build(self, parsed_files=None) -> None:
+        if parsed_files is None:
+            sources = []
+            for path in self._files():
+                try:
+                    source = path.read_text(encoding="utf-8", errors="replace")
+                    tree = ast.parse(source, filename=str(path))
+                except (OSError, SyntaxError, ValueError):
+                    continue
+                sources.append((path, source, tree))
+        else:
+            sources = [
+                (Path(path), source, tree)
+                for path, _module, source, tree in parsed_files
+            ]
+        for path, source, tree in sources:
             module = self._module(path)
             self._trees.append((path.resolve(), module, tree))
             source_kind = "project_stub" if path.suffix == ".pyi" else "project"

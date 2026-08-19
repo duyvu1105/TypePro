@@ -1,4 +1,6 @@
+import json
 import sys
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
@@ -10,6 +12,7 @@ sys.path.insert(0, str(PYTHON_DIR))
 
 import export_slices
 import readFunctionUseData
+from project_index import build_project_index
 from export_slices import AnnotationTimeoutError, annotation_deadline, export_one
 from function_methods import Function_methods
 from slicing_code_class import (
@@ -41,6 +44,12 @@ def make_methods() -> Function_methods:
     ]
     methods._rebuild_indexes()
     return methods
+
+
+def without_runtime_timings(record):
+    value = deepcopy(record)
+    value.get("recommendation_diagnostics", {}).pop("timings_seconds", None)
+    return value
 
 
 def test_indexed_lookups_preserve_legacy_order_and_dotted_fallbacks():
@@ -98,6 +107,54 @@ def test_function_call_membership_set_matches_original_exact_name_semantics():
     assert readFunctionUseData.is_project_function("missing") is False
 
 
+def test_unified_index_qualifies_same_named_methods_and_constructor_calls(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    source = project / "models.py"
+    source.write_text(
+        "class Left:\n"
+        "    def __init__(self): pass\n"
+        "    def update(self): return 1\n"
+        "\n"
+        "class Right:\n"
+        "    def __init__(self): pass\n"
+        "    def update(self): return 2\n"
+        "\n"
+        "left = Left()\n"
+        "right = Right()\n"
+        "left.update()\n",
+        encoding="utf-8",
+    )
+    index = tmp_path / "index"
+
+    summary = build_project_index(project, index)
+    functions = json.loads(
+        (index / "project_function_defined.json").read_text(encoding="utf-8")
+    )
+    uses = json.loads(
+        (index / "project_function_use.json").read_text(encoding="utf-8")
+    )
+
+    assert summary["files"] == 1
+    assert {item["qualified_name"] for item in functions if item["name"] == "update"} == {
+        "models.Left.update", "models.Right.update"
+    }
+    constructor_targets = {
+        item["qualified_name"] for item in uses if item["name"] == "__init__"
+    }
+    assert constructor_targets == {"models.Left.__init__", "models.Right.__init__"}
+
+    methods = Function_methods.__new__(Function_methods)
+    methods.total_function_data = [ProjectDefined(**item) for item in functions]
+    methods.total_function_use_data = [ProjectUseData(**item) for item in uses]
+    methods.total_class_data = []
+    methods._rebuild_indexes()
+    left_uses = methods.get_function_use_data("models.Left.__init__")
+    right_uses = methods.get_function_use_data("models.Right.__init__")
+    assert [item.source_code for item in left_uses] == ["Left()"]
+    assert [item.source_code for item in right_uses] == ["Right()"]
+
+
 def test_shared_project_index_produces_identical_export_record(tmp_path, monkeypatch):
     project = tmp_path / "owner" / "project"
     project.mkdir(parents=True)
@@ -129,7 +186,7 @@ def test_shared_project_index_produces_identical_export_record(tmp_path, monkeyp
     uncached = export_one(row, source)
     shared = export_one(row, source, function_methods=Function_methods())
 
-    assert shared == uncached
+    assert without_runtime_timings(shared) == without_runtime_timings(uncached)
 
 
 def test_exporter_adds_exact_import_symbol_without_ground_truth_lookup(
@@ -312,7 +369,9 @@ def test_shared_analysis_cache_preserves_records_for_repeated_function_uses(
         for row in rows
     ]
 
-    assert actual == expected
+    assert [without_runtime_timings(item) for item in actual] == [
+        without_runtime_timings(item) for item in expected
+    ]
     assert cache.hits["function"] == 1
     assert cache.hits["function_output"] == 1
     assert cache.hits["analyzer"] == 1

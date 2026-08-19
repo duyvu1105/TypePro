@@ -1,4 +1,5 @@
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -46,12 +47,12 @@ def test_standalone_notebook_locks_publish_owner_and_single_shard():
     assert "use_explicit_credential" in serialized
     assert 'os.environ[\\"KAGGLE_USERNAME\\"] = publish_username' in serialized
     assert "credentials_printed" in serialized
-    assert "SLICE_ANNOTATION_TIMEOUT_SECONDS = 600" in config
-    assert 'RETRIEVAL_SCHEMA_VERSION = "typepro-high-recall-v3"' in config
-    assert '"home-assistant/home-assistant"' in config
-    assert '"Opentrons/opentrons"' in config
+    assert "SLICE_ANNOTATION_TIMEOUT_SECONDS = 120" in config
+    assert "SLICE_TRACE_EVERY = 10" in config
+    assert 'RETRIEVAL_SCHEMA_VERSION = "typepro-high-recall-v4-qualified-index"' in config
     assert "--slice-annotation-timeout-seconds" in serialized
-    assert "--slice-timeout-project" in serialized
+    assert "--slice-trace-every" in serialized
+    assert "--slice-timeout-project" not in serialized
     assert "--retrieval-schema-version" in serialized
     assert "restored_runtime.get" in serialized
     assert notebook["metadata"]["typepro"] == {
@@ -108,6 +109,31 @@ def test_render_rejects_shard_owned_by_other_account():
         )
 
 
+def test_render_split_partition_uses_physical_modulo_coordinates():
+    template = generate_notebooks.shard_notebook(
+        1,
+        10,
+        "https://github.com/duyvu1105/TypePro.git",
+        "main",
+        assigned_shards=[1],
+        expected_dataset_owner="duyvu1105",
+    )
+    rendered = commit_shard_versions.render_shard_version(
+        template,
+        1,
+        (1,),
+        "duyvu1105",
+        False,
+        physical_shard_index=11,
+        physical_shard_count=30,
+    )
+    config = source_with_tag(rendered, "typepro-shard-config")
+
+    assert "ASSIGNED_SHARDS = [11]" in config
+    assert "SHARD_INDEX = 11" in config
+    assert "SHARD_COUNT = 30" in config
+
+
 def test_plan_requires_ten_notebooks_and_five_shards_per_account(tmp_path):
     shards_plan = []
     for account, shards in (("duyvu1105", range(5)), ("duymign", range(5, 10))):
@@ -116,6 +142,7 @@ def test_plan_requires_ten_notebooks_and_five_shards_per_account(tmp_path):
             (tmp_path / notebook_name).write_text("{}", encoding="utf-8")
             shards_plan.append({
                 "shard_index": shard_index,
+                "part_count": generate_notebooks.SHARD_PART_COUNTS.get(shard_index, 1),
                 "runner_account": account,
                 "dataset_owner": account,
                 "public_dataset": account == "duymign",
@@ -141,7 +168,7 @@ def test_plan_requires_ten_notebooks_and_five_shards_per_account(tmp_path):
     assert [index for plan in plans for index in plan.assigned_shards] == list(range(10))
 
 
-def test_generated_artifacts_are_ten_standalone_notebooks_and_direct_merge():
+def test_generated_artifacts_are_ten_standalone_notebooks_and_partitioned_merge():
     owner, count, plans = commit_shard_versions.load_plan(
         NOTEBOOK_DIR / "shard_account_plan.json"
     )
@@ -154,6 +181,7 @@ def test_generated_artifacts_are_ten_standalone_notebooks_and_direct_merge():
         for index in range(10)
     ]
     assert len({plan.kernel_slug for plan in plans}) == 10
+    assert [plan.part_count for plan in plans] == [1, 3, 1, 1, 1, 2, 1, 1, 1, 3]
     for index, plan in enumerate(plans):
         notebook = json.loads(plan.notebook_path.read_text(encoding="utf-8"))
         config = source_with_tag(notebook, "typepro-shard-config")
@@ -175,6 +203,7 @@ def test_plan_rejects_private_non_final_account(tmp_path):
             (tmp_path / notebook_name).write_text("{}", encoding="utf-8")
             shards_plan.append({
                 "shard_index": shard_index,
+                "part_count": generate_notebooks.SHARD_PART_COUNTS.get(shard_index, 1),
                 "runner_account": account,
                 "dataset_owner": account,
                 "public_dataset": False,
@@ -217,9 +246,29 @@ def test_kernel_metadata_is_private_cpu_notebook():
     )
     metadata = commit_shard_versions.kernel_metadata(plan, "typepro_shard.ipynb")
     assert metadata["id"] == "duymign/typepro-python-shard-05"
+    assert metadata["title"] == "TypePro Python Shard 05"
     assert metadata["is_private"] is True
     assert metadata["enable_gpu"] is False
     assert metadata["enable_internet"] is True
+
+
+def test_split_kernel_metadata_targets_exact_part_slug():
+    plan = commit_shard_versions.AccountPlan(
+        runner_account="duyvu1105",
+        dataset_owner="duyvu1105",
+        public_dataset=False,
+        notebook_path=Path("template.ipynb"),
+        kernel_slug="typepro-python-shard-01",
+        assigned_shards=(1,),
+        part_count=3,
+    )
+
+    metadata = commit_shard_versions.kernel_metadata(
+        plan, "typepro_shard.ipynb", part_index=1
+    )
+
+    assert metadata["id"] == "duyvu1105/typepro-python-shard-01-part-2-of-3"
+    assert metadata["title"] == "TypePro Python Shard 01 Part 2 of 3"
 
 
 def test_merge_notebook_uses_attached_inputs_and_final_owner_for_publish():
@@ -263,10 +312,26 @@ def test_merge_kernel_metadata_attaches_exact_merge_plan_inputs():
     dataset_ids = commit_merge_finalize.merge_dataset_ids()
     metadata = commit_merge_finalize.kernel_metadata("typepro_merge_finalize.ipynb")
 
-    assert len(dataset_ids) == 10
-    assert len(set(dataset_ids)) == 10
-    assert metadata["id"] == "duyvu1105/typepro-merge-10-shards"
+    assert len(dataset_ids) == 15
+    assert len(set(dataset_ids)) == 15
+    assert metadata["id"] == "duyvu1105/merge-dataset"
     assert metadata["dataset_sources"] == dataset_ids
+
+
+def test_kernel_push_rejects_invalid_dataset_sources(tmp_path, monkeypatch):
+    result = subprocess.CompletedProcess(
+        args=["kaggle", "kernels", "push"],
+        returncode=0,
+        stdout="The following are not valid dataset sources and could not be added",
+    )
+    monkeypatch.setattr(commit_shard_versions.subprocess, "run", lambda *args, **kwargs: result)
+
+    with pytest.raises(RuntimeError, match="Kaggle kernel push failed"):
+        commit_shard_versions.run_push(
+            tmp_path,
+            {"username": "duyvu1105", "key": "redacted"},
+            tmp_path,
+        )
 
 
 def test_merge_plan_covers_all_logical_shards_without_overlap():
@@ -277,9 +342,14 @@ def test_merge_plan_covers_all_logical_shards_without_overlap():
         plan["datasets"], 10, "duyvu1105"
     )
 
-    assert len(datasets) == 10
+    assert len(datasets) == 15
     assert [(item["shard_index"], item["shard_count"]) for item in datasets] == [
-        (index, 10) for index in range(10)
+        (0, 10),
+        (1, 30), (11, 30), (21, 30),
+        (2, 10), (3, 10), (4, 10),
+        (5, 20), (15, 20),
+        (6, 10), (7, 10), (8, 10),
+        (9, 30), (19, 30), (29, 30),
     ]
 
 

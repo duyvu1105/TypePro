@@ -791,7 +791,7 @@ class Slicer:
 
         values = []
         seen = set()
-        definition_marker = "def " + function_name
+        definition_marker = "def " + function_name.rsplit(".", 1)[-1]
         for kind, value in events:
             if kind == "signature" and (
                 value in excluded or definition_marker in value
@@ -851,8 +851,11 @@ class Slicer:
                                 if node2.id in lhs:
                                     func_return_data.append(ast.get_source_segment(source, d))
 
+        qualified_function_name = self.Funcion_methods.resolve_function_qualified_name(
+            file_path, function_name
+        )
         total_use_data = self.function_use_data(
-            function_name, (*call_node_str, *func_sig_list)
+            qualified_function_name, (*call_node_str, *func_sig_list)
         )
 
         function_code = ast.unparse(node)
@@ -1048,7 +1051,10 @@ class Slicer:
             total_code_list.append(function_code)
             total_code_seen.add(function_code)
 
-            total_use_data = self.function_use_data(func_name, sigs)
+            qualified_function_name = self.Funcion_methods.resolve_function_qualified_name(
+                file_path, func_name
+            )
+            total_use_data = self.function_use_data(qualified_function_name, sigs)
             for fu in total_use_data:
                 _append_unique(total_code_list, total_code_seen, fu)
 

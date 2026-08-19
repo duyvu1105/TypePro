@@ -8,12 +8,15 @@ stmt_types = (ast.Assign, ast.AugAssign, ast.AnnAssign, ast.Expr, ast.Global, as
 class ProjectDefined(NamedTuple):
     name: str
     source_code: str
+    qualified_name: str = ""
+    file_name: str = ""
 
 class ProjectUseData(NamedTuple):
     name: str
     source_code: str
     lineno: int
     file_name: str
+    qualified_name: str = ""
 
 class ProjectClassDefine(NamedTuple):
     name: str

@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from generate_notebooks import SHARD_PART_COUNTS
+
 
 ROOT = Path(__file__).resolve().parent
 REPO_ROOT = ROOT.parent
@@ -20,11 +22,13 @@ CONFIG_TAG = "typepro-shard-config"
 OWNER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{1,49}$")
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{2,49}$")
 SHARD_LINE_RE = re.compile(r"^SHARD_INDEX = \d+$", re.MULTILINE)
-SHARD_COUNT_LINE_RE = re.compile(r"^SHARD_COUNT = 10$", re.MULTILINE)
+SHARD_COUNT_LINE_RE = re.compile(r"^SHARD_COUNT = \d+$", re.MULTILINE)
+ASSIGNED_SHARDS_LINE_RE = re.compile(r"^ASSIGNED_SHARDS = \[\d+\]$", re.MULTILINE)
 PUSH_ERROR_MARKERS = (
     "kernel push error:",
     "notebook not found",
     "not valid kernel sources",
+    "not valid dataset sources",
 )
 
 
@@ -36,6 +40,7 @@ class AccountPlan:
     notebook_path: Path
     kernel_slug: str
     assigned_shards: tuple[int, ...]
+    part_count: int = 1
 
 
 def load_plan(path: Path) -> tuple[str, int, list[AccountPlan]]:
@@ -62,6 +67,7 @@ def load_plan(path: Path) -> tuple[str, int, list[AccountPlan]]:
         notebook_name = item.get("notebook")
         kernel_slug = item.get("kernel_slug")
         shard_index = item.get("shard_index")
+        part_count = item.get("part_count", 1)
         if not isinstance(account, str) or not OWNER_RE.fullmatch(account):
             raise RuntimeError(f"Invalid runner account: {account!r}")
         if not isinstance(dataset_owner, str) or not OWNER_RE.fullmatch(dataset_owner):
@@ -79,6 +85,12 @@ def load_plan(path: Path) -> tuple[str, int, list[AccountPlan]]:
             raise RuntimeError(f"Invalid kernel slug: {kernel_slug!r}")
         if not isinstance(shard_index, int) or shard_index not in range(shard_count):
             raise RuntimeError(f"Invalid shard index: {shard_index!r}")
+        expected_parts = SHARD_PART_COUNTS.get(shard_index, 1)
+        if part_count != expected_parts:
+            raise RuntimeError(
+                f"Shard {shard_index:02d} must have {expected_parts} part(s), "
+                f"found {part_count!r}"
+            )
         plans.append(
             AccountPlan(
                 runner_account=account,
@@ -87,6 +99,7 @@ def load_plan(path: Path) -> tuple[str, int, list[AccountPlan]]:
                 notebook_path=path.parent / notebook_name,
                 kernel_slug=kernel_slug,
                 assigned_shards=(shard_index,),
+                part_count=part_count,
             )
         )
     if len(plans) != shard_count:
@@ -150,6 +163,9 @@ def render_shard_version(
     expected_shards: tuple[int, ...],
     dataset_owner: str,
     public_dataset: bool,
+    *,
+    physical_shard_index: int | None = None,
+    physical_shard_count: int = 10,
 ) -> dict[str, Any]:
     if shard_index not in expected_shards:
         raise ValueError(f"Shard {shard_index} is not assigned to {expected_shards}")
@@ -165,12 +181,34 @@ def render_shard_version(
     if not isinstance(source, str):
         raise RuntimeError("Tagged shard config cell must contain string source")
     if not SHARD_COUNT_LINE_RE.search(source):
-        raise RuntimeError("Standalone shard notebook must hard-code SHARD_COUNT = 10")
+        raise RuntimeError("Standalone shard notebook must hard-code SHARD_COUNT")
     if f"ASSIGNED_SHARDS = [{shard_index}]" not in source:
         raise RuntimeError("Standalone shard notebook must assign exactly one shard")
-    source, replacements = SHARD_LINE_RE.subn(f"SHARD_INDEX = {shard_index}", source)
-    if replacements != 1:
-        raise RuntimeError(f"Expected one SHARD_INDEX assignment, replaced {replacements}")
+    physical_shard_index = (
+        shard_index if physical_shard_index is None else physical_shard_index
+    )
+    if (
+        physical_shard_count <= 0
+        or physical_shard_index not in range(physical_shard_count)
+        or physical_shard_count % 10
+        or physical_shard_index % 10 != shard_index
+    ):
+        raise ValueError(
+            f"Invalid physical partition {physical_shard_index}/{physical_shard_count} "
+            f"for logical shard {shard_index}"
+        )
+    replacements = []
+    source, count = ASSIGNED_SHARDS_LINE_RE.subn(
+        f"ASSIGNED_SHARDS = [{physical_shard_index}]", source
+    )
+    replacements.append(("ASSIGNED_SHARDS", count))
+    source, count = SHARD_LINE_RE.subn(f"SHARD_INDEX = {physical_shard_index}", source)
+    replacements.append(("SHARD_INDEX", count))
+    source, count = SHARD_COUNT_LINE_RE.subn(f"SHARD_COUNT = {physical_shard_count}", source)
+    replacements.append(("SHARD_COUNT", count))
+    invalid = [name for name, count in replacements if count != 1]
+    if invalid:
+        raise RuntimeError(f"Expected one assignment for each of {invalid}")
     tagged[0]["source"] = source
 
     typepro = rendered.setdefault("metadata", {}).setdefault("typepro", {})
@@ -185,11 +223,18 @@ def render_shard_version(
     return rendered
 
 
-def kernel_metadata(plan: AccountPlan, code_file: str) -> dict[str, Any]:
+def kernel_metadata(
+    plan: AccountPlan, code_file: str, *, part_index: int = 0
+) -> dict[str, Any]:
     shard_index = plan.assigned_shards[0]
+    kernel_slug = partition_kernel_slug(plan, part_index)
+    title = f"TypePro Python Shard {shard_index:02d}"
+    if plan.part_count > 1:
+        title += f" Part {part_index + 1} of {plan.part_count}"
     return {
-        "id": f"{plan.runner_account}/{plan.kernel_slug}",
-        "title": f"TypePro Python shard {shard_index:02d} of 10",
+        "id": f"{plan.runner_account}/{kernel_slug}",
+        # Kaggle derives the effective slug from title even when `id` is set.
+        "title": title,
         "code_file": code_file,
         "language": "python",
         "kernel_type": "notebook",
@@ -204,10 +249,23 @@ def kernel_metadata(plan: AccountPlan, code_file: str) -> dict[str, Any]:
     }
 
 
+def partition_kernel_slug(plan: AccountPlan, part_index: int) -> str:
+    if part_index not in range(plan.part_count):
+        raise ValueError(
+            f"Part {part_index + 1} is outside shard {plan.assigned_shards[0]:02d} "
+            f"with {plan.part_count} part(s)"
+        )
+    if plan.part_count == 1:
+        return plan.kernel_slug
+    return f"{plan.kernel_slug}-part-{part_index + 1}-of-{plan.part_count}"
+
+
 def write_version(
     destination: Path,
     plan: AccountPlan,
     rendered: dict[str, Any],
+    *,
+    part_index: int = 0,
 ) -> tuple[Path, Path]:
     destination.mkdir(parents=True, exist_ok=True)
     code_path = destination / "typepro_shard.ipynb"
@@ -217,7 +275,7 @@ def write_version(
         encoding="utf-8",
     )
     metadata_path.write_text(
-        json.dumps(kernel_metadata(plan, code_path.name), indent=2),
+        json.dumps(kernel_metadata(plan, code_path.name, part_index=part_index), indent=2),
         encoding="utf-8",
     )
     # Read both files back so a partial write can never be pushed.
@@ -298,6 +356,11 @@ def main(argv: list[str] | None = None) -> None:
         default=[],
         help="Render/push only this shard; repeat for multiple shards",
     )
+    parser.add_argument(
+        "--part",
+        type=int,
+        help="Push/render only this 1-based part; requires exactly one --shard",
+    )
     parser.add_argument("--push", action="store_true")
     args = parser.parse_args(argv)
 
@@ -311,6 +374,14 @@ def main(argv: list[str] | None = None) -> None:
     invalid_shards = requested_shards - planned_shards
     if invalid_shards:
         raise ValueError(f"Requested shards are outside the plan: {sorted(invalid_shards)}")
+    if args.part is not None and len(requested_shards) != 1:
+        raise ValueError("--part requires exactly one --shard")
+    if args.part is not None:
+        selected_plan = next(
+            plan for plan in plans
+            if plan.assigned_shards[0] in requested_shards
+        )
+        partition_kernel_slug(selected_plan, args.part - 1)
     summaries = []
     for plan in plans:
         template = json.loads(plan.notebook_path.read_text(encoding="utf-8"))
@@ -319,37 +390,57 @@ def main(argv: list[str] | None = None) -> None:
         shard_index = plan.assigned_shards[0]
         if shard_index not in requested_shards:
             continue
-        rendered = render_shard_version(
-            template,
-            shard_index,
-            plan.assigned_shards,
-            plan.dataset_owner,
-            plan.public_dataset,
-        )
-        summary = {
-            "runner_account": plan.runner_account,
-            "kernel": f"{plan.runner_account}/{plan.kernel_slug}",
-            "notebook": plan.notebook_path.name,
-            "shard_index": shard_index,
-        }
-        if args.push:
-            with tempfile.TemporaryDirectory(prefix="typepro_kernel_push_") as temp:
-                push_dir = Path(temp) / "payload"
-                auth_dir = Path(temp) / "auth"
-                auth_dir.mkdir(parents=True)
-                write_version(push_dir, plan, rendered)
-                output = run_push(push_dir, credential, auth_dir)
-            summaries.append({**summary, "pushed": True, "cli_output": output})
-        else:
-            destination = (
-                args.output_dir.resolve()
-                / plan.runner_account
-                / f"shard_{shard_index:02d}"
+        for part_index in range(plan.part_count):
+            if args.part is not None and part_index != args.part - 1:
+                continue
+            physical_shard_count = 10 * plan.part_count
+            physical_shard_index = shard_index + 10 * part_index
+            rendered = render_shard_version(
+                template,
+                shard_index,
+                plan.assigned_shards,
+                plan.dataset_owner,
+                plan.public_dataset,
+                physical_shard_index=physical_shard_index,
+                physical_shard_count=physical_shard_count,
             )
-            write_version(destination, plan, rendered)
-            summaries.append({
-                **summary, "pushed": False, "rendered_to": str(destination),
-            })
+            kernel_slug = partition_kernel_slug(plan, part_index)
+            summary = {
+                "runner_account": plan.runner_account,
+                "kernel": f"{plan.runner_account}/{kernel_slug}",
+                "notebook": plan.notebook_path.name,
+                "logical_shard_index": shard_index,
+                "part_index": part_index,
+                "part_count": plan.part_count,
+                "shard_index": physical_shard_index,
+                "shard_count": physical_shard_count,
+                "dataset_id": (
+                    f"{plan.dataset_owner}/"
+                    f"typepro-build-shard-{physical_shard_index:02d}"
+                ),
+            }
+            if args.push:
+                with tempfile.TemporaryDirectory(prefix="typepro_kernel_push_") as temp:
+                    push_dir = Path(temp) / "payload"
+                    auth_dir = Path(temp) / "auth"
+                    auth_dir.mkdir(parents=True)
+                    write_version(
+                        push_dir, plan, rendered, part_index=part_index
+                    )
+                    output = run_push(push_dir, credential, auth_dir)
+                summaries.append({**summary, "pushed": True, "cli_output": output})
+            else:
+                destination = (
+                    args.output_dir.resolve()
+                    / plan.runner_account
+                    / f"shard_{shard_index:02d}_part_{part_index + 1:02d}"
+                )
+                write_version(
+                    destination, plan, rendered, part_index=part_index
+                )
+                summaries.append({
+                    **summary, "pushed": False, "rendered_to": str(destination),
+                })
     print(json.dumps({
         "final_dataset_owner": final_dataset_owner,
         "shard_dataset_owners": {

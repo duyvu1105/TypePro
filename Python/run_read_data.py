@@ -1,35 +1,13 @@
-import os
-from loguru import logger
-import time
+"""Compatibility entry point for the unified project index builder."""
+import json
 import sys
+from pathlib import Path
 
-args = sys.argv[1:]
-if len(args) == 0:
-    logger.error("")
-    sys.exit()
-target_dir = args[0]
-logger.warning("")
-exit_code = os.system("python readFunctionDefined.py {}".format(target_dir))
-
-if exit_code == 0:
-    logger.debug("")
-else:
-    logger.debug(f"{exit_code}")
-
-logger.warning("")
-
-exit_code = os.system("python readClassDefined.py {}".format(target_dir))
-
-if exit_code == 0:
-    logger.debug("")
-else:
-    logger.debug(f"{exit_code}")
+from project_index import build_project_index
 
 
-logger.warning("")
-exit_code = os.system("python readFunctionUseData.py {}".format(target_dir))
+if len(sys.argv) != 2:
+    raise SystemExit("usage: run_read_data.py PROJECT_ROOT")
 
-if exit_code == 0:
-    logger.debug("")
-else:
-    logger.debug(f"{exit_code}")
+summary = build_project_index(Path(sys.argv[1]).resolve(), Path("data"))
+print(json.dumps(summary, sort_keys=True), flush=True)

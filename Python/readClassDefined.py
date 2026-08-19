@@ -63,18 +63,25 @@ def get_method_signature(source: str, fn: ast.FunctionDef) -> str:
         ret = f" -> {ret}"
     return f"def {fn.name}({param_list}){ret}:"
 
-def extract_class_summary(file_path: str) -> List[str]:
-    with open(file_path, encoding="utf-8") as f:
-        src = f.read()
-
-    try:
-        tree = ast.parse(src, filename=file_path)
-    except:
-        logger.error(f"ast.parse file error:{file_path}")
-        tree = None
+def extract_class_summary(
+    file_path: str,
+    source: str | None = None,
+    tree: ast.Module | None = None,
+    *,
+    collect: bool = True,
+) -> List[ProjectClassDefine]:
+    if source is None:
+        with open(file_path, encoding="utf-8") as f:
+            source = f.read()
+    src = source
+    if tree is None:
+        try:
+            tree = ast.parse(src, filename=file_path)
+        except (SyntaxError, ValueError):
+            logger.error(f"ast.parse file error:{file_path}")
     if tree == None:
         return []
-    summaries: List[str] = []
+    definitions: List[ProjectClassDefine] = []
 
     for node in ast.walk(tree):
         if not isinstance(node, ast.ClassDef):
@@ -136,9 +143,10 @@ def extract_class_summary(file_path: str) -> List[str]:
             parts.append("    # methods")
             for m in methods:
                 parts.append(f"    {m}")
-        summaries.append("\n".join(parts))
         temp_data = ProjectClassDefine(class_name, "\n".join(parts), file_path)
-        total_class_data.append(temp_data)
+        definitions.append(temp_data)
+        if collect:
+            total_class_data.append(temp_data)
 
     # Type aliases participate in retrieval even though the legacy index only
     # stored concrete classes. Render them as class-like definitions so the
@@ -149,10 +157,12 @@ def extract_class_summary(file_path: str) -> List[str]:
             continue
         name, value = alias
         signature = f"class {name}:\n    # type alias: {value}"
-        summaries.append(signature)
-        total_class_data.append(ProjectClassDefine(name, signature, file_path))
+        definition = ProjectClassDefine(name, signature, file_path)
+        definitions.append(definition)
+        if collect:
+            total_class_data.append(definition)
 
-    return summaries
+    return definitions
 
 
 def extract_type_alias(node: ast.AST) -> tuple[str, str] | None:

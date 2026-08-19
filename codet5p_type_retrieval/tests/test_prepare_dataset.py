@@ -71,6 +71,11 @@ def test_annotation_timeout_is_limited_to_configured_slow_projects():
     assert annotation_timeout_for_project(0, projects, "home-assistant/home-assistant") == 0
 
 
+def test_annotation_timeout_applies_to_every_project_when_allowlist_is_empty():
+    assert annotation_timeout_for_project(120, set(), "fast/project") == 120
+    assert annotation_timeout_for_project(120, set(), "henne90gen/tower_defense") == 120
+
+
 def test_slice_trace_defaults_to_every_annotation():
     with patch.object(sys, "argv", ["prepare_dataset.py"]):
         args = parse_args()

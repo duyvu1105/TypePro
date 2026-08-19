@@ -10,7 +10,6 @@ import ast
 import json
 import re
 import signal
-import subprocess
 import sys
 import time
 from collections import Counter
@@ -20,6 +19,7 @@ from typing import Any, Iterable
 
 from slicing_code_class import ProjectAnalysisCache, Slicer
 from function_methods import Function_methods
+from project_index import build_project_index, scan_project
 
 
 FUNCTION_NODES = (ast.FunctionDef, ast.AsyncFunctionDef)
@@ -353,9 +353,17 @@ def main() -> None:
                     project_root = repos_root.joinpath(*project)
                     index_started = time.monotonic()
                     print(f"[export:index:start] project={'/'.join(project)}", flush=True)
-                    subprocess.run([sys.executable, "run_read_data.py", str(project_root)], check=True)
+                    parsed_files, parse_failures = scan_project(project_root)
+                    index_summary = build_project_index(
+                        project_root,
+                        Path("data"),
+                        parsed_files=parsed_files,
+                        parse_failures=parse_failures,
+                    )
                     print(
                         f"[export:index:done] project={'/'.join(project)} "
+                        f"files={index_summary['files']} "
+                        f"parse_failures={index_summary['parse_failures']} "
                         f"seconds={time.monotonic() - index_started:.1f}",
                         flush=True,
                     )
@@ -365,7 +373,9 @@ def main() -> None:
                         f"[export:project-analysis:start] project={'/'.join(project)}",
                         flush=True,
                     )
-                    function_methods = Function_methods(str(project_root))
+                    function_methods = Function_methods(
+                        str(project_root), parsed_files=parsed_files
+                    )
                     analysis_cache = ProjectAnalysisCache()
                     print(
                         f"[export:project-analysis:done] project={'/'.join(project)} "

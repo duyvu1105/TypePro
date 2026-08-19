@@ -501,11 +501,12 @@ def main() -> None:
                     flush=True,
                 )
                 continue
-        stub_roots = typeshed_roots(import_name, configured_typeshed)
-        roots = installed_roots(import_name)
-        source = "installed"
-        error = None
         is_stdlib = import_name in sys.stdlib_module_names
+        stub_roots = typeshed_roots(import_name, configured_typeshed)
+        skip_runtime_stdlib = bool(is_stdlib and stub_roots)
+        roots = [] if skip_runtime_stdlib else installed_roots(import_name)
+        source = "typeshed" if skip_runtime_stdlib else "installed"
+        error = None
         if not roots and args.download_missing and not is_stdlib:
             source = "downloaded-archive"
             try:
@@ -556,7 +557,9 @@ def main() -> None:
         write_json(output_path, records)
         summary["packages"][import_name] = {
             "status": "written", "source": source,
-            "typeshed_roots": len(stub_roots), "records": len(records), **stats,
+            "typeshed_roots": len(stub_roots),
+            "runtime_stdlib_skipped": skip_runtime_stdlib,
+            "records": len(records), **stats,
         }
         print(
             f"[kb:package:done] package={import_name} status=written "

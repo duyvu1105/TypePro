@@ -6,6 +6,7 @@ from pathlib import Path
 PYTHON_DIR = Path(__file__).resolve().parents[2] / "Python"
 sys.path.insert(0, str(PYTHON_DIR))
 
+import build_third_party_kb
 from build_third_party_kb import discover_imports, scan_package, typeshed_roots
 from import_analyzer import importAnalyzer
 from export_slices import recommendation_objects
@@ -159,3 +160,37 @@ def test_typeshed_root_discovers_stdlib_and_third_party_stubs(tmp_path):
         (typeshed / "stdlib" / "pathlib").resolve()
     ]
     assert typeshed_roots("requests", [str(typeshed)]) == [package.resolve()]
+
+
+def test_stdlib_runtime_is_not_scanned_when_typeshed_exists(tmp_path, monkeypatch):
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "app.py").write_text("import pathlib\n", encoding="utf-8")
+    typeshed = tmp_path / "typeshed"
+    stub = typeshed / "stdlib" / "pathlib"
+    stub.mkdir(parents=True)
+    (stub / "__init__.pyi").write_text("class Path: ...\n", encoding="utf-8")
+    output = tmp_path / "kb"
+    summary_path = tmp_path / "summary.json"
+
+    def reject_runtime_scan(_import_name):
+        raise AssertionError("installed stdlib roots must not be inspected")
+
+    monkeypatch.setattr(build_third_party_kb, "installed_roots", reject_runtime_scan)
+    monkeypatch.setattr(build_third_party_kb, "bundled_typeshed_paths", lambda: [])
+    monkeypatch.setattr(sys, "argv", [
+        "build_third_party_kb.py",
+        "--project-root", str(project),
+        "--output-dir", str(output),
+        "--download-cache", str(tmp_path / "downloads"),
+        "--typeshed-root", str(typeshed),
+        "--summary-output", str(summary_path),
+        "--no-download-missing",
+    ])
+
+    build_third_party_kb.main()
+
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    package = summary["packages"]["pathlib"]
+    assert package["source"] == "typeshed"
+    assert package["runtime_stdlib_skipped"] is True

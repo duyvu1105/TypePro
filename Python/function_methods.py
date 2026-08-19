@@ -18,28 +18,49 @@ class Function_methods:
     project_class_path  = "./data/project_class_defined.json"
     minimum_similarity_standard = 0.78
     recall_limit = 20
-    def __init__(self, project_root: str | None = None):
+    def __init__(self, project_root: str | None = None, parsed_files=None):
         self.total_function_data = self.read_projects_from_json(self.project_data_path)
         self.total_function_use_data = self.read_projects_from_json2(self.project_use_path)
         self.total_class_data = self.read_project_class_from_json(self.project_class_path)
-        self.project_type_analyzer = ProjectTypeAnalyzer(project_root)
+        self.project_type_analyzer = ProjectTypeAnalyzer(project_root, parsed_files)
         self._rebuild_indexes()
 
     def _rebuild_indexes(self):
         if not hasattr(self, "project_type_analyzer"):
             self.project_type_analyzer = ProjectTypeAnalyzer(None)
         self._function_sources_by_name = defaultdict(list)
+        self._function_sources_by_qualified_name = defaultdict(list)
+        self._function_definitions_by_file_and_name = defaultdict(list)
         self._function_uses_by_name = defaultdict(list)
+        self._function_uses_by_qualified_name = defaultdict(list)
+        self._unqualified_function_uses_by_name = defaultdict(list)
+        self._names_with_qualified_uses = set()
         self._classes_by_name = defaultdict(list)
         for item in self.total_function_data:
             self._function_sources_by_name[item.name].append(item.source_code)
+            if item.qualified_name:
+                self._function_sources_by_qualified_name[item.qualified_name].append(
+                    item.source_code
+                )
+            if item.file_name:
+                key = (self._normalized_path(item.file_name), item.name)
+                self._function_definitions_by_file_and_name[key].append(item)
         for item in self.total_function_use_data:
             self._function_uses_by_name[item.name].append(item)
+            if item.qualified_name:
+                self._function_uses_by_qualified_name[item.qualified_name].append(item)
+                self._names_with_qualified_uses.add(item.name)
+            else:
+                self._unqualified_function_uses_by_name[item.name].append(item)
         for item in self.total_class_data:
             self._classes_by_name[item.name].append(item.signature)
         self._class_name_similarity_cache = {}
         self._file_class_cache = {}
         self._exact_import_cache = {}
+
+    @staticmethod
+    def _normalized_path(value: str) -> str:
+        return str(value).replace("\\", "/").casefold()
 
     def load_func_data(self):
 
@@ -93,7 +114,9 @@ class Function_methods:
         # logger.info(total_function_data)
         if target_name in IGNORE_FUNCTION_NAME :
             return []
-        res = list(self._function_sources_by_name.get(target_name, ()))
+        res = list(self._function_sources_by_qualified_name.get(target_name, ()))
+        if not res:
+            res = list(self._function_sources_by_name.get(target_name, ()))
         if "." in target_name and len(res) == 0:
             new_name = target_name.split(".")[-1]
             res = list(self._function_sources_by_name.get(new_name, ()))
@@ -108,12 +131,25 @@ class Function_methods:
 
         return res
 
-    def get_function_use_data(self, func_name: str) -> [ProjectUseData]:
+    def resolve_function_qualified_name(self, file_path: str, func_name: str) -> str:
+        candidates = self._function_definitions_by_file_and_name.get(
+            (self._normalized_path(file_path), func_name), ()
+        )
+        qualified_names = [item.qualified_name for item in candidates if item.qualified_name]
+        return qualified_names[0] if len(qualified_names) == 1 else func_name
 
-        res = list(self._function_uses_by_name.get(func_name, ()))
-        if "." in func_name and len(res) == 0:
-            new_name = func_name.split(".")[-1]
-            res = list(self._function_uses_by_name.get(new_name, ()))
+    def get_function_use_data(self, func_name: str) -> [ProjectUseData]:
+        res = list(self._function_uses_by_qualified_name.get(func_name, ()))
+        if "." in func_name:
+            # Do not mix unresolved dynamic calls into a confidently qualified
+            # function; that recreates the same-name collision this index avoids.
+            leaf = func_name.rsplit(".", 1)[-1]
+            if not res and leaf not in self._names_with_qualified_uses:
+                # Backward compatibility for legacy indexes without qualified_name.
+                return list(self._function_uses_by_name.get(leaf, ()))
+            return res
+        if not res:
+            res = list(self._function_uses_by_name.get(func_name, ()))
         return res
 
     def get_function_data(self):

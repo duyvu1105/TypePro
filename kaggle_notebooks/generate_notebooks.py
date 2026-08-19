@@ -14,6 +14,7 @@ from textwrap import dedent
 
 
 OWNER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{1,49}$")
+SHARD_PART_COUNTS = {1: 3, 5: 2, 9: 3}
 
 
 if "__file__" in globals():
@@ -425,12 +426,10 @@ def shard_notebook(
         TEST_PROJECTS = 100
         VALIDATION_PROJECT_RATIO = 0.10
         SLICE_LOG_EVERY = 50
-        SLICE_ANNOTATION_TIMEOUT_SECONDS = 600
-        RETRIEVAL_SCHEMA_VERSION = "typepro-high-recall-v3"
-        SLICE_TIMEOUT_PROJECTS = [
-            "home-assistant/home-assistant",
-            "Opentrons/opentrons",
-        ]
+        SLICE_TRACE_EVERY = 10
+        # Bound every annotation so one pathological slice cannot stall a shard.
+        SLICE_ANNOTATION_TIMEOUT_SECONDS = 120
+        RETRIEVAL_SCHEMA_VERSION = "typepro-high-recall-v4-qualified-index"
 
         from pathlib import Path
 
@@ -678,13 +677,9 @@ def shard_notebook(
             "--shard-count", SHARD_COUNT,
             "--shard-index", SHARD_INDEX,
             "--slice-log-every", SLICE_LOG_EVERY,
+            "--slice-trace-every", SLICE_TRACE_EVERY,
             "--slice-annotation-timeout-seconds", SLICE_ANNOTATION_TIMEOUT_SECONDS,
             "--retrieval-schema-version", RETRIEVAL_SCHEMA_VERSION,
-            *[
-                value
-                for project in SLICE_TIMEOUT_PROJECTS
-                for value in ("--slice-timeout-project", project)
-            ],
             "--build-import-kb",
             "--download-missing-imports",
             "--kb-max-files-per-package", 3000,
@@ -761,13 +756,22 @@ def canonical_merge_datasets(shard_accounts: list[dict]) -> list[dict]:
     datasets = []
     for account in shard_accounts:
         for index in account["assigned_shards"]:
-            datasets.append({
-                "dataset_id": f"{account['dataset_owner']}/typepro-build-shard-{index:02d}",
-                "logical_shard_index": index,
-                "shard_index": index,
-                "shard_count": 10,
-                "public_dataset": bool(account["public_dataset"]),
-            })
+            part_count = SHARD_PART_COUNTS.get(index, 1)
+            physical_count = 10 * part_count
+            for part_index in range(part_count):
+                physical_index = index + 10 * part_index
+                datasets.append({
+                    "dataset_id": (
+                        f"{account['dataset_owner']}/"
+                        f"typepro-build-shard-{physical_index:02d}"
+                    ),
+                    "logical_shard_index": index,
+                    "part_index": part_index,
+                    "part_count": part_count,
+                    "shard_index": physical_index,
+                    "shard_count": physical_count,
+                    "public_dataset": bool(account["public_dataset"]),
+                })
     return datasets
 
 
@@ -1551,6 +1555,7 @@ def main(argv: list[str] | None = None) -> None:
             generated.append(path.name)
             shard_notebooks.append({
                 "shard_index": shard_index,
+                "part_count": SHARD_PART_COUNTS.get(shard_index, 1),
                 "runner_account": account,
                 "dataset_owner": account,
                 "public_dataset": public_dataset,
@@ -1561,7 +1566,7 @@ def main(argv: list[str] | None = None) -> None:
     merge_plan_path = ROOT / "shard_merge_plan.json"
     merge_plan_path.write_text(
         json.dumps({
-            "schema_version": "typepro-shard-merge-plan-v2",
+            "schema_version": "typepro-shard-merge-plan-v3",
             "logical_shard_count": args.shards,
             "final_dataset_owner": args.dataset_owner,
             "datasets": merge_datasets,
