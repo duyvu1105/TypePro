@@ -1,6 +1,9 @@
+import subprocess
 import sys
 from pathlib import Path
 from unittest.mock import patch
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -11,6 +14,7 @@ from prepare_dataset import (
     matching_skip_pattern,
     parse_args,
     project_from_row,
+    run_logged,
 )
 
 
@@ -82,6 +86,19 @@ def test_slice_trace_defaults_to_every_annotation():
 
     assert args.slice_trace_every == 1
     assert args.skip_project == []
+    assert args.package_download_timeout_seconds == 60
+    assert args.kb_phase_timeout_seconds == 0
+    assert args.project_analysis_timeout_seconds == 0
+
+
+def test_run_logged_terminates_a_timed_out_phase(tmp_path):
+    with pytest.raises(subprocess.TimeoutExpired):
+        run_logged(
+            [sys.executable, "-c", "import time; time.sleep(10)"],
+            tmp_path,
+            tmp_path / "phase.log",
+            timeout_seconds=0.1,
+        )
 
 
 def test_skip_project_patterns_match_case_insensitive_owner_or_repository():

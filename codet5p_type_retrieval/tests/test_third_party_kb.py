@@ -1,4 +1,5 @@
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -7,9 +8,40 @@ PYTHON_DIR = Path(__file__).resolve().parents[2] / "Python"
 sys.path.insert(0, str(PYTHON_DIR))
 
 import build_third_party_kb
-from build_third_party_kb import discover_imports, scan_package, typeshed_roots
+import pytest
+
+from build_third_party_kb import (
+    discover_imports,
+    download_roots,
+    scan_package,
+    typeshed_roots,
+)
 from import_analyzer import importAnalyzer
 from export_slices import recommendation_objects
+
+
+def test_download_roots_applies_timeout_to_wheel_and_source_attempts(
+    tmp_path, monkeypatch
+):
+    timeouts = []
+
+    def fake_run(command, **kwargs):
+        timeouts.append(kwargs["timeout"])
+        if "--only-binary=:all:" in command:
+            return subprocess.CompletedProcess(command, 1, "")
+        raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        build_third_party_kb.importlib.metadata,
+        "packages_distributions",
+        lambda: {},
+    )
+
+    with pytest.raises(subprocess.TimeoutExpired):
+        download_roots("definitely_missing_typepro_package", tmp_path, 17)
+
+    assert timeouts == [17, 17]
 
 
 def test_discovers_imports_and_extracts_structural_class_definition(tmp_path, monkeypatch):

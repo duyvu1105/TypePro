@@ -64,6 +64,13 @@ is logged and omitted while the project and shard keep running. Applying the
 deadline globally prevents a previously unknown pathological slice from
 stalling an entire shard indefinitely.
 
+Work before annotation export is bounded too: each missing-package download is
+limited to 30 seconds, the complete per-project KB phase to 300 seconds, and
+the shared project scan/index/semantic analysis to 300 seconds. A KB deadline
+keeps the files already generated and continues with that partial KB. An
+analysis deadline switches the project to file-local slicing, so either slow
+phase degrades candidate recall instead of blocking the shard.
+
 Project indexing parses every source file once and emits function, class and
 call-site indexes from the shared ASTs. Function uses carry module/class-qualified
 names to keep common methods such as `__init__` and `update` separate. Stdlib KB

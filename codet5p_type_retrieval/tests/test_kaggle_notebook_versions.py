@@ -48,9 +48,15 @@ def test_standalone_notebook_locks_publish_owner_and_single_shard():
     assert 'os.environ[\\"KAGGLE_USERNAME\\"] = publish_username' in serialized
     assert "credentials_printed" in serialized
     assert "SLICE_ANNOTATION_TIMEOUT_SECONDS = 120" in config
+    assert "PACKAGE_DOWNLOAD_TIMEOUT_SECONDS = 30" in config
+    assert "KB_PHASE_TIMEOUT_SECONDS = 300" in config
+    assert "PROJECT_ANALYSIS_TIMEOUT_SECONDS = 300" in config
     assert "SLICE_TRACE_EVERY = 10" in config
-    assert 'RETRIEVAL_SCHEMA_VERSION = "typepro-high-recall-v4-qualified-index"' in config
+    assert 'RETRIEVAL_SCHEMA_VERSION = "typepro-high-recall-v5-phase-timeouts"' in config
     assert "--slice-annotation-timeout-seconds" in serialized
+    assert "--package-download-timeout-seconds" in serialized
+    assert "--kb-phase-timeout-seconds" in serialized
+    assert "--project-analysis-timeout-seconds" in serialized
     assert "--slice-trace-every" in serialized
     assert "--slice-timeout-project" not in serialized
     assert "--retrieval-schema-version" in serialized

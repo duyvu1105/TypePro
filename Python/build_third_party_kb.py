@@ -57,12 +57,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-files-per-package", type=int, default=3000)
     parser.add_argument("--max-members-per-class", type=int, default=80)
     parser.add_argument("--max-definition-chars", type=int, default=16000)
+    parser.add_argument(
+        "--download-timeout-seconds", type=int, default=60,
+        help="Timeout for each wheel/source download attempt; 0 disables",
+    )
     parser.add_argument("--summary-output")
     parser.add_argument(
         "--typeshed-root", action="append", default=[],
         help="Optional Typeshed/stub root; repeat or set TYPEPRO_TYPESHED_PATH",
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.download_timeout_seconds < 0:
+        parser.error("--download-timeout-seconds must be >= 0")
+    return args
 
 
 def iter_python_files(root: Path) -> Iterable[Path]:
@@ -168,7 +175,9 @@ def safe_extract_wheel(wheel: Path, destination: Path) -> None:
         bundle.extractall(destination)
 
 
-def download_roots(import_name: str, cache: Path) -> list[Path]:
+def download_roots(
+    import_name: str, cache: Path, timeout_seconds: int = 60
+) -> list[Path]:
     installed_distributions = importlib.metadata.packages_distributions().get(
         import_name, []
     )
@@ -186,7 +195,11 @@ def download_roots(import_name: str, cache: Path) -> list[Path]:
                 "--no-deps", "--only-binary=:all:", "--dest", str(destination), distribution,
             ]
             wheel_result = subprocess.run(
-                wheel_command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+                wheel_command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                timeout=timeout_seconds or None,
             )
             if wheel_result.returncode:
                 source_command = [
@@ -194,8 +207,12 @@ def download_roots(import_name: str, cache: Path) -> list[Path]:
                     "--no-deps", "--no-binary=:all:", "--dest", str(destination), distribution,
                 ]
                 subprocess.run(
-                    source_command, check=True, stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT, text=True,
+                    source_command,
+                    check=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    timeout=timeout_seconds or None,
                 )
             wheels = sorted(destination.glob("*.whl"))
         archives = [*wheels, *sorted(destination.glob("*.tar.gz")), *sorted(destination.glob("*.zip"))]
@@ -510,8 +527,16 @@ def main() -> None:
         if not roots and args.download_missing and not is_stdlib:
             source = "downloaded-archive"
             try:
-                roots = download_roots(import_name, cache)
-            except (OSError, subprocess.CalledProcessError, zipfile.BadZipFile, ValueError) as exception:
+                roots = download_roots(
+                    import_name, cache, args.download_timeout_seconds
+                )
+            except (
+                OSError,
+                subprocess.CalledProcessError,
+                subprocess.TimeoutExpired,
+                zipfile.BadZipFile,
+                ValueError,
+            ) as exception:
                 error = f"{type(exception).__name__}: {exception}"
         if not roots and not stub_roots:
             summary["packages"][import_name] = {"status": "unresolved", "error": error}

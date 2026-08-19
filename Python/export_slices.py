@@ -87,9 +87,17 @@ def parse_args() -> argparse.Namespace:
         default=0,
         help="Skip one annotation after this many seconds; 0 disables",
     )
+    parser.add_argument(
+        "--project-analysis-timeout-seconds",
+        type=int,
+        default=0,
+        help="Fall back to file-local slicing if project indexing exceeds this deadline",
+    )
     args = parser.parse_args()
     if args.annotation_timeout_seconds < 0:
         parser.error("--annotation-timeout-seconds must be >= 0")
+    if args.project_analysis_timeout_seconds < 0:
+        parser.error("--project-analysis-timeout-seconds must be >= 0")
     if args.trace_every < 0:
         parser.error("--trace-every must be >= 0")
     return args
@@ -353,29 +361,44 @@ def main() -> None:
                     project_root = repos_root.joinpath(*project)
                     index_started = time.monotonic()
                     print(f"[export:index:start] project={'/'.join(project)}", flush=True)
-                    parsed_files, parse_failures = scan_project(project_root)
-                    index_summary = build_project_index(
-                        project_root,
-                        Path("data"),
-                        parsed_files=parsed_files,
-                        parse_failures=parse_failures,
-                    )
-                    print(
-                        f"[export:index:done] project={'/'.join(project)} "
-                        f"files={index_summary['files']} "
-                        f"parse_failures={index_summary['parse_failures']} "
-                        f"seconds={time.monotonic() - index_started:.1f}",
-                        flush=True,
-                    )
+                    try:
+                        with annotation_deadline(
+                            args.project_analysis_timeout_seconds
+                        ):
+                            parsed_files, parse_failures = scan_project(project_root)
+                            index_summary = build_project_index(
+                                project_root,
+                                Path("data"),
+                                parsed_files=parsed_files,
+                                parse_failures=parse_failures,
+                            )
+                            print(
+                                f"[export:index:done] project={'/'.join(project)} "
+                                f"files={index_summary['files']} "
+                                f"parse_failures={index_summary['parse_failures']} "
+                                f"seconds={time.monotonic() - index_started:.1f}",
+                                flush=True,
+                            )
+                            analysis_started = time.monotonic()
+                            print(
+                                f"[export:project-analysis:start] project={'/'.join(project)}",
+                                flush=True,
+                            )
+                            function_methods = Function_methods(
+                                str(project_root), parsed_files=parsed_files
+                            )
+                    except AnnotationTimeoutError:
+                        function_methods = Function_methods.empty()
+                        print(
+                            "[export:project-analysis:timeout] "
+                            f"project={'/'.join(project)} "
+                            f"seconds={args.project_analysis_timeout_seconds} "
+                            "fallback=file-local",
+                            file=sys.stderr,
+                            flush=True,
+                        )
+                        analysis_started = time.monotonic()
                     current_project = project
-                    analysis_started = time.monotonic()
-                    print(
-                        f"[export:project-analysis:start] project={'/'.join(project)}",
-                        flush=True,
-                    )
-                    function_methods = Function_methods(
-                        str(project_root), parsed_files=parsed_files
-                    )
                     analysis_cache = ProjectAnalysisCache()
                     print(
                         f"[export:project-analysis:done] project={'/'.join(project)} "

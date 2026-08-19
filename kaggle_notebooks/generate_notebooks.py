@@ -429,7 +429,11 @@ def shard_notebook(
         SLICE_TRACE_EVERY = 10
         # Bound every annotation so one pathological slice cannot stall a shard.
         SLICE_ANNOTATION_TIMEOUT_SECONDS = 120
-        RETRIEVAL_SCHEMA_VERSION = "typepro-high-recall-v4-qualified-index"
+        # Bound work that happens before annotation export as well.
+        PACKAGE_DOWNLOAD_TIMEOUT_SECONDS = 30
+        KB_PHASE_TIMEOUT_SECONDS = 300
+        PROJECT_ANALYSIS_TIMEOUT_SECONDS = 300
+        RETRIEVAL_SCHEMA_VERSION = "typepro-high-recall-v5-phase-timeouts"
 
         from pathlib import Path
 
@@ -679,6 +683,9 @@ def shard_notebook(
             "--slice-log-every", SLICE_LOG_EVERY,
             "--slice-trace-every", SLICE_TRACE_EVERY,
             "--slice-annotation-timeout-seconds", SLICE_ANNOTATION_TIMEOUT_SECONDS,
+            "--package-download-timeout-seconds", PACKAGE_DOWNLOAD_TIMEOUT_SECONDS,
+            "--kb-phase-timeout-seconds", KB_PHASE_TIMEOUT_SECONDS,
+            "--project-analysis-timeout-seconds", PROJECT_ANALYSIS_TIMEOUT_SECONDS,
             "--retrieval-schema-version", RETRIEVAL_SCHEMA_VERSION,
             "--build-import-kb",
             "--download-missing-imports",

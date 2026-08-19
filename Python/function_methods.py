@@ -18,6 +18,17 @@ class Function_methods:
     project_class_path  = "./data/project_class_defined.json"
     minimum_similarity_standard = 0.78
     recall_limit = 20
+
+    @classmethod
+    def empty(cls):
+        instance = cls.__new__(cls)
+        instance.total_function_data = []
+        instance.total_function_use_data = []
+        instance.total_class_data = []
+        instance.project_type_analyzer = ProjectTypeAnalyzer(None)
+        instance._rebuild_indexes()
+        return instance
+
     def __init__(self, project_root: str | None = None, parsed_files=None):
         self.total_function_data = self.read_projects_from_json(self.project_data_path)
         self.total_function_use_data = self.read_projects_from_json2(self.project_use_path)

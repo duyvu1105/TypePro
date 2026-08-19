@@ -13,11 +13,13 @@ import json
 import os
 import random
 import re
+import signal
 import stat
 import shutil
 import subprocess
 import sys
 import time
+import threading
 import urllib.request
 import zipfile
 from collections import Counter, defaultdict
@@ -65,6 +67,18 @@ def parse_args() -> argparse.Namespace:
         help="Download a wheel without dependencies when an imported package is not installed",
     )
     parser.add_argument("--kb-max-files-per-package", type=int, default=3000)
+    parser.add_argument(
+        "--package-download-timeout-seconds", type=int, default=60,
+        help="Timeout for each missing-package download attempt; 0 disables",
+    )
+    parser.add_argument(
+        "--kb-phase-timeout-seconds", type=int, default=0,
+        help="Continue with the partial KB after this many seconds; 0 disables",
+    )
+    parser.add_argument(
+        "--project-analysis-timeout-seconds", type=int, default=0,
+        help="Fall back to file-local slicing after this indexing deadline",
+    )
     parser.add_argument("--keep-repos", action="store_true")
     parser.add_argument("--force-metadata", action="store_true")
     parser.add_argument("--force-projects", action="store_true")
@@ -114,6 +128,13 @@ def parse_args() -> argparse.Namespace:
         parser.error("--slice-annotation-timeout-seconds must be >= 0")
     if args.slice_trace_every < 0:
         parser.error("--slice-trace-every must be >= 0")
+    for name in (
+        "package_download_timeout_seconds",
+        "kb_phase_timeout_seconds",
+        "project_analysis_timeout_seconds",
+    ):
+        if getattr(args, name) < 0:
+            parser.error(f"--{name.replace('_', '-')} must be >= 0")
     return args
 
 
@@ -366,7 +387,9 @@ def run(command: list[str], cwd: Path | None = None, capture: bool = False) -> s
     )
 
 
-def run_logged(command: list[str], cwd: Path, log_path: Path) -> str:
+def run_logged(
+    command: list[str], cwd: Path, log_path: Path, timeout_seconds: int = 0
+) -> str:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     tail = ""
     with log_path.open("w", encoding="utf-8") as log_handle:
@@ -377,15 +400,41 @@ def run_logged(command: list[str], cwd: Path, log_path: Path) -> str:
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             bufsize=1,
+            start_new_session=bool(timeout_seconds and os.name != "nt"),
         )
+        timed_out = threading.Event()
+
+        def terminate_process() -> None:
+            if process.poll() is not None:
+                return
+            timed_out.set()
+            if os.name != "nt":
+                os.killpg(process.pid, signal.SIGKILL)
+            else:
+                process.kill()
+
+        timer = (
+            threading.Timer(timeout_seconds, terminate_process)
+            if timeout_seconds else None
+        )
+        if timer is not None:
+            timer.start()
         assert process.stdout is not None
-        for line in process.stdout:
-            log_handle.write(line)
-            log_handle.flush()
-            tail = (tail + line)[-4000:]
-            if line.startswith(("[export:", "[annotation:", "[kb:")):
-                tqdm.write(line.rstrip())
-        return_code = process.wait()
+        try:
+            for line in process.stdout:
+                log_handle.write(line)
+                log_handle.flush()
+                tail = (tail + line)[-4000:]
+                if line.startswith(("[export:", "[annotation:", "[kb:")):
+                    tqdm.write(line.rstrip())
+            return_code = process.wait()
+        finally:
+            if timer is not None:
+                timer.cancel()
+        if timed_out.is_set():
+            raise subprocess.TimeoutExpired(
+                command, timeout_seconds, output=tail
+            )
         if return_code:
             raise subprocess.CalledProcessError(return_code, command, output=tail)
     return tail
@@ -489,6 +538,9 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
         "import_knowledge_base_built": bool(args.build_import_kb),
         "import_knowledge_base_path": str(generated_kb) if args.build_import_kb else None,
         "download_missing_imports": bool(args.download_missing_imports),
+        "package_download_timeout_seconds": args.package_download_timeout_seconds,
+        "kb_phase_timeout_seconds": args.kb_phase_timeout_seconds,
+        "project_analysis_timeout_seconds": args.project_analysis_timeout_seconds,
         "repos_root_provided": bool(args.repos_root),
         "slice_annotation_timeout_seconds": args.slice_annotation_timeout_seconds,
         "slice_timeout_projects": sorted(timeout_projects),
@@ -561,12 +613,32 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
                     "--output-dir", str(generated_kb),
                     "--download-cache", str(download_cache),
                     "--max-files-per-package", str(args.kb_max_files_per_package),
+                    "--download-timeout-seconds",
+                    str(args.package_download_timeout_seconds),
                     "--summary-output", str(kb_summary_path),
                 ]
                 if not args.download_missing_imports:
                     kb_command.append("--no-download-missing")
-                run_logged(kb_command, python_dir, status_dir / f"{slug}.kb.log")
-                kb_summary = json.loads(kb_summary_path.read_text(encoding="utf-8"))
+                try:
+                    run_logged(
+                        kb_command,
+                        python_dir,
+                        status_dir / f"{slug}.kb.log",
+                        timeout_seconds=args.kb_phase_timeout_seconds,
+                    )
+                    kb_summary = json.loads(
+                        kb_summary_path.read_text(encoding="utf-8")
+                    )
+                except subprocess.TimeoutExpired:
+                    kb_summary = {
+                        "timed_out": True,
+                        "timeout_seconds": args.kb_phase_timeout_seconds,
+                    }
+                    tqdm.write(
+                        f"[project:kb:timeout] {project} "
+                        f"seconds={args.kb_phase_timeout_seconds} "
+                        "continuing_with_partial_kb=True"
+                    )
                 tqdm.write(
                     f"[project:kb:done] {project} seconds={time.monotonic() - phase_started:.1f}"
                 )
@@ -585,6 +657,8 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
                 "--parameters-only", "--exclude-builtins",
                 "--log-every", str(1 if detailed_export_logging else args.slice_log_every),
                 "--trace-every", str(args.slice_trace_every),
+                "--project-analysis-timeout-seconds",
+                str(args.project_analysis_timeout_seconds),
             ]
             annotation_timeout = annotation_timeout_for_project(
                 args.slice_annotation_timeout_seconds, timeout_projects, project
