@@ -7,7 +7,7 @@ version, manifest, or exact Dataset file listing.
 ## Implementation
 
 - [x] Ten logical shard notebooks mapped five per Kaggle account.
-- [x] Fifteen physical partitions represented in `shard_merge_plan.json`.
+- [x] Ten native `index/10` coordinates represented in `shard_merge_plan.json`.
 - [x] Shard notebooks support same-account host auth and optional
   `TYPEPRO_PUBLISH_USERNAME` / `TYPEPRO_PUBLISH_KEY` Secrets.
 - [x] Merge notebook supports optional `TYPEPRO_FINAL_USERNAME` /
@@ -26,13 +26,13 @@ version, manifest, or exact Dataset file listing.
 
 - [x] Full `codet5p_type_retrieval/tests` suite passes (80 passed, 1 Windows-only skip).
 - [x] Notebook generation is reproducible with no unexpected diff.
-- [x] Shard dry-run validates 10 notebooks and 15 partitions.
-- [x] Merge dry-run validates exactly 15 Dataset inputs.
+- [x] Shard dry-run validates exactly 10 notebooks and 10 Dataset shards.
+- [x] Merge dry-run validates exactly 10 Dataset inputs.
 
 ## Kaggle execution evidence
 
 - [ ] All shard kernels pushed under their planned owners.
-- [ ] All 15 physical shard versions completed successfully.
+- [ ] All 10 shard kernel versions completed successfully.
 - [ ] Exact Dataset file listings show `raw_slices`, `project_status`, and
   `project_kb/*/knowledge_base.json` in every shard payload.
 - [ ] Merge kernel completed under `duyvu1105`.

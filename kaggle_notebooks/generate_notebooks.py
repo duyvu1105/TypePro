@@ -14,7 +14,9 @@ from textwrap import dedent
 
 
 OWNER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{1,49}$")
-SHARD_PART_COUNTS = {1: 3, 5: 2, 9: 3}
+# The production contract is one notebook and one Dataset for each logical
+# shard. Keep this mapping empty so every shard uses its native index/10.
+SHARD_PART_COUNTS = {}
 
 
 if "__file__" in globals():

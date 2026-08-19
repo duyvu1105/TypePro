@@ -187,7 +187,7 @@ def test_generated_artifacts_are_ten_standalone_notebooks_and_partitioned_merge(
         for index in range(10)
     ]
     assert len({plan.kernel_slug for plan in plans}) == 10
-    assert [plan.part_count for plan in plans] == [1, 3, 1, 1, 1, 2, 1, 1, 1, 3]
+    assert [plan.part_count for plan in plans] == [1] * 10
     for index, plan in enumerate(plans):
         notebook = json.loads(plan.notebook_path.read_text(encoding="utf-8"))
         config = source_with_tag(notebook, "typepro-shard-config")
@@ -320,8 +320,8 @@ def test_merge_kernel_metadata_attaches_exact_merge_plan_inputs():
     dataset_ids = commit_merge_finalize.merge_dataset_ids()
     metadata = commit_merge_finalize.kernel_metadata("typepro_merge_finalize.ipynb")
 
-    assert len(dataset_ids) == 15
-    assert len(set(dataset_ids)) == 15
+    assert len(dataset_ids) == 10
+    assert len(set(dataset_ids)) == 10
     assert metadata["id"] == "duyvu1105/merge-dataset"
     assert metadata["dataset_sources"] == dataset_ids
 
@@ -362,14 +362,9 @@ def test_merge_plan_covers_all_logical_shards_without_overlap():
         plan["datasets"], 10, "duyvu1105"
     )
 
-    assert len(datasets) == 15
+    assert len(datasets) == 10
     assert [(item["shard_index"], item["shard_count"]) for item in datasets] == [
-        (0, 10),
-        (1, 30), (11, 30), (21, 30),
-        (2, 10), (3, 10), (4, 10),
-        (5, 20), (15, 20),
-        (6, 10), (7, 10), (8, 10),
-        (9, 30), (19, 30), (29, 30),
+        (index, 10) for index in range(10)
     ]
 
 

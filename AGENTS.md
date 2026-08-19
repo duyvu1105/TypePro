@@ -28,8 +28,12 @@ Workflow hiện tại có đúng mười notebook shard độc lập, một note
 | `00-04` | `duyvu1105` | `duyvu1105/typepro-python-shard-XX` | private |
 | `05-09` | `duymign` | `duymign/typepro-python-shard-XX` | public |
 
+Mỗi logical shard chạy đúng một version với physical coordinate `index/10`.
+Merge gắn đúng 10 Dataset inputs từ `shard_merge_plan.json`; không chia shard
+thành các part `/20` hoặc `/30`.
+
 Final merge chạy dưới `duyvu1105` và tạo private Dataset
-`duyvu1105/typepro-python-contrastive`. Shards `05-09` phải public để tài khoản
+`duyvu1105/typepro-python-generative`. Shards `05-09` phải public để tài khoản
 final đọc được; không đổi visibility/owner riêng lẻ nếu chưa cập nhật và kiểm
 tra lại toàn bộ `shard_account_plan.json`.
 
@@ -137,14 +141,16 @@ Dataset chỉ sau verify/merge:
 
 ```bash
 python -u /kaggle/working/TypePro/codet5p_type_retrieval/publish_kaggle.py \
-  --data-dir /kaggle/working/typepro_python_contrastive \
-  --dataset-id duyvu1105/typepro-python-contrastive \
-  --title "TypePro Python Third-Party Contrastive Data" \
+  --data-dir /kaggle/working/typepro_python_generative \
+  --dataset-id duyvu1105/typepro-python-generative \
+  --title "TypePro Python Generative Project-KB Data" \
   --message "Merge 10 verified TypePro shards"
 ```
 
-`third_party_kb` là build cache, không phải merge input và không được đóng vào
-shard archive. Payload shard chỉ cần metadata, `raw_slices`, `project_status`,
+`third_party_kb` cũ không phải merge input. Mỗi project phải có
+`project_kb/<owner>__<repo>/knowledge_base.json` độc lập và file này phải được
+đóng vào shard archive, merge, rồi giữ lại trong Dataset cuối. Payload shard
+gồm metadata, `raw_slices`, `project_status`, `project_kb`,
 `runtime_manifest.json` và `shard_manifest.json`; publisher phải từ chối path
 collision không phân biệt hoa/thường.
 
@@ -159,7 +165,7 @@ collision không phân biệt hoa/thường.
   có thể trông như không tồn tại.
 - Chỉ coi shard sẵn sàng merge khi `shard_manifest.json` có đúng
   `shard_index`, `shard_count=10`, `missing_projects=[]`, và đủ các thư mục
-  `metadata`, `raw_slices`, `project_status`.
+  `metadata`, `raw_slices`, `project_status`, `project_kb`.
 
 ## Resume và recovery
 

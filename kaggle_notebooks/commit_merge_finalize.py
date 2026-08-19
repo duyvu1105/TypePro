@@ -30,14 +30,10 @@ def merge_dataset_ids() -> list[str]:
     if plan.get("final_dataset_owner") != OWNER:
         raise RuntimeError("Merge plan final owner does not match merge kernel owner")
     datasets = plan.get("datasets")
-    if not isinstance(datasets, list) or len(datasets) != 15:
-        raise RuntimeError("Merge plan must contain exactly 15 partition Datasets")
+    if not isinstance(datasets, list) or len(datasets) != 10:
+        raise RuntimeError("Merge plan must contain exactly 10 shard Datasets")
     validated = validate_merge_datasets(datasets, 10, OWNER)
-    expected_coordinates = {
-        (0, 10), (1, 30), (11, 30), (21, 30), (2, 10), (3, 10),
-        (4, 10), (5, 20), (15, 20), (6, 10), (7, 10), (8, 10),
-        (9, 30), (19, 30), (29, 30),
-    }
+    expected_coordinates = {(index, 10) for index in range(10)}
     actual_coordinates = {
         (item["shard_index"], item["shard_count"]) for item in validated
     }
