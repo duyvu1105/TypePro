@@ -904,6 +904,10 @@ def finalize_dataset(args: argparse.Namespace, work_dir: Path, output_dir: Path,
         "--recommendation-limit", "10",
     ]
     run(command, cwd=preprocess_script.parent)
+    # Raw slices are consumed entirely by preprocessing. Drop them before
+    # duplicating the project KBs so the merged finalize fits on constrained
+    # Kaggle working disks.
+    shutil.rmtree(raw_dir, ignore_errors=True)
     source_kb = work_dir / "project_kb"
     destination_kb = output_dir / "project_kb"
     if not source_kb.is_dir() or not any(source_kb.glob("*/knowledge_base.json")):
@@ -914,6 +918,9 @@ def finalize_dataset(args: argparse.Namespace, work_dir: Path, output_dir: Path,
         source_kb, destination_kb,
         ignore=shutil.ignore_patterns("imports", "*.log"),
     )
+    # The final Dataset now holds the immutable KB copy; free the merged
+    # build's source so publishing has headroom on the same disk.
+    shutil.rmtree(source_kb, ignore_errors=True)
     with (work_dir / "metadata" / "split_manifest.json").open(encoding="utf-8") as handle:
         split_manifest = json.load(handle)
     with (output_dir / "preprocess_stats.json").open(encoding="utf-8") as handle:

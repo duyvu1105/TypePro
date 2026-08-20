@@ -11,6 +11,7 @@ from prepare_dataset import (
     annotation_timeout_for_project,
     build_splits,
     eligible_parameter_rows,
+    finalize_dataset,
     matching_skip_pattern,
     parse_args,
     project_from_row,
@@ -172,6 +173,49 @@ def test_run_logged_cancels_index_timer_when_analysis_finishes(tmp_path):
     )
 
     assert "[export:project-analysis:done]" in tail
+
+
+def test_finalize_dataset_prunes_consumed_sources(tmp_path):
+    work = tmp_path / "build"
+    output = tmp_path / "final"
+    raw = work / "raw_slices"
+    kb = work / "project_kb" / "owner__repo"
+    metadata = work / "metadata"
+    (raw).mkdir(parents=True)
+    (raw / "owner__repo.jsonl").write_text("{}\n", encoding="utf-8")
+    kb.mkdir(parents=True)
+    (kb / "knowledge_base.json").write_text('{"x": 1}', encoding="utf-8")
+    (work / "project_status").mkdir()
+    (work / "project_status" / "owner__repo.json").write_text(
+        '{"project": "owner/repo"}', encoding="utf-8"
+    )
+    metadata.mkdir()
+    (metadata / "split_manifest.json").write_text(
+        '{"split_profile": "paper_project"}', encoding="utf-8"
+    )
+    (output).mkdir(parents=True)
+    for split in ("train", "validation", "test"):
+        (metadata / f"{split}.json").write_text("[]", encoding="utf-8")
+        (output / f"{split}.jsonl").write_text("", encoding="utf-8")
+    (output / "preprocess_stats.json").write_text("{}", encoding="utf-8")
+
+    args = Args()
+    args.allow_partial = True
+    args.strict_projects = False
+    args.preview_samples = 0
+    args.preview_max_chars = 1600
+
+    with patch("prepare_dataset.run") as fake_run:
+        fake_run.return_value.stdout = "deadbeef"
+        finalize_dataset(args, work, output, Path("."))
+    fake_run.assert_called()
+
+    assert not raw.exists()
+    assert not (work / "project_kb").exists()
+    assert (
+        output / "project_kb" / "owner__repo" / "knowledge_base.json"
+    ).exists()
+    assert (output / "manifest.json").exists()
 
 
 def test_skip_project_patterns_match_case_insensitive_owner_or_repository():
