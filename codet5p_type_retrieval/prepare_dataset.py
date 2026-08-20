@@ -388,7 +388,11 @@ def run(command: list[str], cwd: Path | None = None, capture: bool = False) -> s
 
 
 def run_logged(
-    command: list[str], cwd: Path, log_path: Path, timeout_seconds: int = 0
+    command: list[str],
+    cwd: Path,
+    log_path: Path,
+    timeout_seconds: float = 0,
+    annotation_stall_timeout_seconds: float = 0,
 ) -> str:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     tail = ""
@@ -400,18 +404,51 @@ def run_logged(
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             bufsize=1,
-            start_new_session=bool(timeout_seconds and os.name != "nt"),
+            start_new_session=bool(
+                (timeout_seconds or annotation_stall_timeout_seconds)
+                and os.name != "nt"
+            ),
         )
         timed_out = threading.Event()
+        annotation_timed_out = threading.Event()
+        annotation_timer: threading.Timer | None = None
+        annotation_timer_lock = threading.Lock()
 
-        def terminate_process() -> None:
+        def kill_process(timeout_event: threading.Event) -> None:
             if process.poll() is not None:
                 return
-            timed_out.set()
+            timeout_event.set()
             if os.name != "nt":
                 os.killpg(process.pid, signal.SIGKILL)
             else:
                 process.kill()
+
+        def terminate_process() -> None:
+            kill_process(timed_out)
+
+        def terminate_stalled_annotation() -> None:
+            kill_process(annotation_timed_out)
+
+        def cancel_annotation_timer() -> None:
+            nonlocal annotation_timer
+            with annotation_timer_lock:
+                if annotation_timer is not None:
+                    annotation_timer.cancel()
+                    annotation_timer = None
+
+        def arm_annotation_timer() -> None:
+            nonlocal annotation_timer
+            if not annotation_stall_timeout_seconds:
+                return
+            with annotation_timer_lock:
+                if annotation_timer is not None:
+                    annotation_timer.cancel()
+                annotation_timer = threading.Timer(
+                    annotation_stall_timeout_seconds,
+                    terminate_stalled_annotation,
+                )
+                annotation_timer.daemon = True
+                annotation_timer.start()
 
         timer = (
             threading.Timer(timeout_seconds, terminate_process)
@@ -427,10 +464,23 @@ def run_logged(
                 tail = (tail + line)[-4000:]
                 if line.startswith(("[export:", "[annotation:", "[kb:")):
                     tqdm.write(line.rstrip())
+                if line.startswith("[export:annotation:start]"):
+                    arm_annotation_timer()
+                elif line.startswith((
+                    "[export:annotation:done]",
+                    "[export:annotation:error]",
+                    "[annotation:timeout]",
+                )):
+                    cancel_annotation_timer()
             return_code = process.wait()
         finally:
+            cancel_annotation_timer()
             if timer is not None:
                 timer.cancel()
+        if annotation_timed_out.is_set():
+            raise subprocess.TimeoutExpired(
+                command, annotation_stall_timeout_seconds, output=tail
+            )
         if timed_out.is_set():
             raise subprocess.TimeoutExpired(
                 command, timeout_seconds, output=tail
@@ -699,7 +749,17 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
                 ])
             phase_started = time.monotonic()
             tqdm.write(f"[project:export:start] {project}")
-            exporter_tail = run_logged(command, python_dir, status_dir / f"{slug}.log")
+            exporter_tail = run_logged(
+                command,
+                python_dir,
+                status_dir / f"{slug}.log",
+                # SIGALRM is only a soft interrupt: native code may never return
+                # control to Python. The parent therefore kills an exporter that
+                # remains inside one annotation beyond the deadline plus grace.
+                annotation_stall_timeout_seconds=(
+                    annotation_timeout + 30 if annotation_timeout else 0
+                ),
+            )
             tqdm.write(
                 f"[project:export:done] {project} seconds={time.monotonic() - phase_started:.1f}"
             )

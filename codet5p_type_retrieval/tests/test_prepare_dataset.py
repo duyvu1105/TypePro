@@ -101,6 +101,30 @@ def test_run_logged_terminates_a_timed_out_phase(tmp_path):
         )
 
 
+def test_run_logged_hard_kills_annotation_when_soft_timeout_stalls(tmp_path):
+    command = [
+        sys.executable,
+        "-u",
+        "-c",
+        (
+            "import time; "
+            "print('[export:annotation:start] index=1/1', flush=True); "
+            "time.sleep(10)"
+        ),
+    ]
+
+    with pytest.raises(subprocess.TimeoutExpired) as error:
+        run_logged(
+            command,
+            tmp_path,
+            tmp_path / "annotation.log",
+            annotation_stall_timeout_seconds=0.1,
+        )
+
+    assert error.value.timeout == 0.1
+    assert "[export:annotation:start]" in (error.value.output or "")
+
+
 def test_skip_project_patterns_match_case_insensitive_owner_or_repository():
     patterns = ["F-shakalaka", "home-assistant"]
 
