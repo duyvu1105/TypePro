@@ -17,7 +17,7 @@ from generate_notebooks import SHARD_PART_COUNTS, validate_merge_datasets
 ROOT = Path(__file__).resolve().parent
 REPO_ROOT = ROOT.parent
 OWNER = "duyvu1105"
-KERNEL_SLUG = "merge-dataset-v1"
+KERNEL_SLUG = "merge-dataset"
 NOTEBOOK_PATH = ROOT / "11_merge_finalize.ipynb"
 MERGE_PLAN_PATH = ROOT / "shard_merge_plan.json"
 CREDENTIAL_PATH = REPO_ROOT / "kaggle.json"
