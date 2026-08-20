@@ -339,8 +339,6 @@ def test_train_notebook_uses_generative_model_not_contrastive_retrieval():
     assert "typepro-codet5p-generative-project-kb-v1" in serialized
     assert "projection-dim" not in serialized
     assert 'PIPELINE_DIR / \\"train.py\\"' not in serialized
-    assert "project_kb.zip" in serialized
-    assert "bundle.extractall(DATA_DIR)" in serialized
     assert "TOKEN LENGTH STATISTICS (NO TRUNCATION)" in serialized
     assert "average_tokens" in serialized
     assert "min_tokens" in serialized

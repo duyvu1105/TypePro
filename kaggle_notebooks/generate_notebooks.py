@@ -1395,7 +1395,6 @@ def train_notebook(repository: str, branch: str) -> dict:
         import json
         import subprocess
         import sys
-        import zipfile
         from pathlib import Path
 
         REPO_DIR = Path("/kaggle/working/TypePro")
@@ -1424,12 +1423,6 @@ def train_notebook(repository: str, branch: str) -> dict:
             raise RuntimeError(f"Expected exactly one TypePro processed dataset, found {candidates}")
         DATA_DIR = candidates[0]
         print("Using dataset:", DATA_DIR)
-        kb_archive = DATA_DIR / "project_kb.zip"
-        if kb_archive.exists():
-            with zipfile.ZipFile(kb_archive) as bundle:
-                bundle.extractall(DATA_DIR)
-            kb_archive.unlink()
-            print("Restored project KBs from project_kb.zip:", DATA_DIR / "project_kb")
         run([sys.executable, PIPELINE_DIR / "verify_dataset.py", "--data-dir", DATA_DIR])
         """),
         markdown("## Measure token lengths before training"),

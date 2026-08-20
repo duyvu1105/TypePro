@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import shutil
-import zipfile
 from pathlib import Path
 
 from kaggle_dataset_utils import publish_dataset
@@ -18,31 +16,6 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def archive_project_kb(data_dir: Path) -> Path:
-    """Zip the project KBs into ``project_kb.zip`` and free the source tree.
-
-    The Kaggle CLI's default ``--dir-mode skip`` drops directories and Kaggle
-    auto-extracts uploaded archives into a folder named after the archive.
-    Entries are therefore stored as ``<owner>__<repo>/knowledge_base.json``
-    (no ``project_kb/`` prefix) so extraction restores the exact
-    ``project_kb/<owner>__<repo>/knowledge_base.json`` layout that
-    ``verify_dataset.py`` expects.
-    """
-    kb_dir = data_dir / "project_kb"
-    if not kb_dir.is_dir():
-        raise ValueError(f"No project KB directory in {data_dir}")
-    kb_files = sorted(kb_dir.rglob("knowledge_base.json"))
-    if not kb_files:
-        raise ValueError(f"No project knowledge bases found in {kb_dir}")
-    archive = data_dir / "project_kb.zip"
-    with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
-        for path in kb_files:
-            bundle.write(path, path.relative_to(kb_dir).as_posix())
-            path.unlink()
-    shutil.rmtree(kb_dir, ignore_errors=True)
-    return archive
-
-
 def main() -> None:
     args = parse_args()
     data_dir = Path(args.data_dir).resolve()
@@ -50,7 +23,6 @@ def main() -> None:
     missing = [str(path) for path in required if not path.exists()]
     if missing:
         raise FileNotFoundError(f"Missing processed dataset files: {missing}")
-    archive_project_kb(data_dir)
     publish_dataset(
         data_dir,
         args.dataset_id,

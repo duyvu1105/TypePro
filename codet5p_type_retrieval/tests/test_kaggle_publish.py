@@ -12,7 +12,6 @@ sys.path.insert(0, str(PIPELINE_DIR))
 
 import kaggle_dataset_utils
 from kaggle_dataset_utils import publish_dataset, validate_dataset_id, write_metadata
-from publish_kaggle import archive_project_kb
 from publish_shard import package_shard
 
 
@@ -61,22 +60,6 @@ def test_dataset_id_uses_authenticated_owner(tmp_path, monkeypatch):
     assert json.loads(path.read_text(encoding="utf-8"))["id"] == (
         "another-account/typepro-build-shard-00"
     )
-
-
-def test_publish_kaggle_archives_project_kb(tmp_path):
-    data = tmp_path / "final"
-    kb = data / "project_kb" / "owner__repo"
-    kb.mkdir(parents=True)
-    (kb / "knowledge_base.json").write_text('{"records": []}', encoding="utf-8")
-    (data / "train.jsonl").write_text("{}\n", encoding="utf-8")
-
-    archive = archive_project_kb(data)
-
-    assert archive.name == "project_kb.zip"
-    assert not (data / "project_kb").exists()
-    with zipfile.ZipFile(archive) as bundle:
-        assert bundle.namelist() == ["owner__repo/knowledge_base.json"]
-    assert (data / "train.jsonl").exists()
 
 
 def test_dataset_id_accepts_kaggle_notebook_host_auth(monkeypatch):
