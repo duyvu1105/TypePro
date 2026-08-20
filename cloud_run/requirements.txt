@@ -1,4 +1,0 @@
-google-cloud-storage>=2.18,<4
-loguru>=0.7
-tqdm>=4.66
-typeshed-client>=2.8

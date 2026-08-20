@@ -436,6 +436,8 @@ def shard_notebook(
         PACKAGE_DOWNLOAD_TIMEOUT_SECONDS = 30
         KB_PHASE_TIMEOUT_SECONDS = 300
         PROJECT_ANALYSIS_TIMEOUT_SECONDS = 300
+        # Kill an exporter stuck building a project index after 30 minutes.
+        SLICE_INDEX_TIMEOUT_SECONDS = 1800
         RETRIEVAL_SCHEMA_VERSION = "typepro-project-kb-top10-generative-v1"
 
         from pathlib import Path
@@ -689,6 +691,7 @@ def shard_notebook(
             "--package-download-timeout-seconds", PACKAGE_DOWNLOAD_TIMEOUT_SECONDS,
             "--kb-phase-timeout-seconds", KB_PHASE_TIMEOUT_SECONDS,
             "--project-analysis-timeout-seconds", PROJECT_ANALYSIS_TIMEOUT_SECONDS,
+            "--slice-index-timeout-seconds", SLICE_INDEX_TIMEOUT_SECONDS,
             "--retrieval-schema-version", RETRIEVAL_SCHEMA_VERSION,
             "--build-import-kb",
             "--download-missing-imports",
@@ -1327,6 +1330,9 @@ def merge_notebook(
             "--log-every", 10000,
         ])
         run([sys.executable, PIPELINE_DIR / "verify_dataset.py", "--data-dir", FINAL_DIR])
+        # Finalize has consumed the merged raw slices and KBs; drop the
+        # transient build so publishing has room on the Kaggle working disk.
+        shutil.rmtree(MERGED_BUILD, ignore_errors=True)
         """),
         markdown("## Display exact counts and examples"),
         code("""
@@ -1389,6 +1395,7 @@ def train_notebook(repository: str, branch: str) -> dict:
         import json
         import subprocess
         import sys
+        import zipfile
         from pathlib import Path
 
         REPO_DIR = Path("/kaggle/working/TypePro")
@@ -1417,7 +1424,120 @@ def train_notebook(repository: str, branch: str) -> dict:
             raise RuntimeError(f"Expected exactly one TypePro processed dataset, found {candidates}")
         DATA_DIR = candidates[0]
         print("Using dataset:", DATA_DIR)
+        kb_archive = DATA_DIR / "project_kb.zip"
+        if kb_archive.exists():
+            with zipfile.ZipFile(kb_archive) as bundle:
+                bundle.extractall(DATA_DIR)
+            kb_archive.unlink()
+            print("Restored project KBs from project_kb.zip:", DATA_DIR / "project_kb")
         run([sys.executable, PIPELINE_DIR / "verify_dataset.py", "--data-dir", DATA_DIR])
+        """),
+        markdown("## Measure token lengths before training"),
+        code("""
+        from transformers import AutoTokenizer
+
+        tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+
+        def empty_token_stats(limit):
+            return {
+                "samples": 0,
+                "total_tokens": 0,
+                "min_tokens": None,
+                "max_tokens": 0,
+                "over_limit": 0,
+                "configured_limit": limit,
+            }
+
+        def update_token_stats(stats, lengths):
+            for length in lengths:
+                stats["samples"] += 1
+                stats["total_tokens"] += length
+                stats["min_tokens"] = (
+                    length if stats["min_tokens"] is None
+                    else min(stats["min_tokens"], length)
+                )
+                stats["max_tokens"] = max(stats["max_tokens"], length)
+                stats["over_limit"] += int(length > stats["configured_limit"])
+
+        def finalized_token_stats(stats):
+            count = stats["samples"]
+            return {
+                "samples": count,
+                "average_tokens": round(stats["total_tokens"] / count, 2) if count else 0.0,
+                "min_tokens": stats["min_tokens"] or 0,
+                "max_tokens": stats["max_tokens"],
+                "configured_limit": stats["configured_limit"],
+                "over_limit": stats["over_limit"],
+                "over_limit_percentage": (
+                    round(100.0 * stats["over_limit"] / count, 2) if count else 0.0
+                ),
+            }
+
+        def measure_split(path, batch_size=256):
+            input_stats = empty_token_stats(INPUT_LENGTH)
+            label_stats = empty_token_stats(LABEL_LENGTH)
+            batch = []
+
+            def measure_batch(rows):
+                if not rows:
+                    return
+                input_ids = tokenizer(
+                    [row["input"] for row in rows],
+                    add_special_tokens=True,
+                    truncation=False,
+                )["input_ids"]
+                label_ids = tokenizer(
+                    text_target=[row["label"] for row in rows],
+                    add_special_tokens=True,
+                    truncation=False,
+                )["input_ids"]
+                update_token_stats(input_stats, [len(ids) for ids in input_ids])
+                update_token_stats(label_stats, [len(ids) for ids in label_ids])
+
+            with path.open(encoding="utf-8") as handle:
+                for line in handle:
+                    if not line.strip():
+                        continue
+                    batch.append(json.loads(line))
+                    if len(batch) >= batch_size:
+                        measure_batch(batch)
+                        batch.clear()
+                measure_batch(batch)
+            return {"input": input_stats, "label": label_stats}
+
+        raw_token_stats = {}
+        overall = {
+            "input": empty_token_stats(INPUT_LENGTH),
+            "label": empty_token_stats(LABEL_LENGTH),
+        }
+        for split in ("train", "validation", "test"):
+            raw_token_stats[split] = measure_split(DATA_DIR / f"{split}.jsonl")
+            for field in ("input", "label"):
+                current = raw_token_stats[split][field]
+                combined = overall[field]
+                combined["samples"] += current["samples"]
+                combined["total_tokens"] += current["total_tokens"]
+                combined["max_tokens"] = max(combined["max_tokens"], current["max_tokens"])
+                if current["min_tokens"] is not None:
+                    combined["min_tokens"] = (
+                        current["min_tokens"] if combined["min_tokens"] is None
+                        else min(combined["min_tokens"], current["min_tokens"])
+                    )
+                combined["over_limit"] += current["over_limit"]
+
+        token_stats = {
+            split: {
+                field: finalized_token_stats(values)
+                for field, values in split_values.items()
+            }
+            for split, split_values in raw_token_stats.items()
+        }
+        token_stats["overall"] = {
+            field: finalized_token_stats(values)
+            for field, values in overall.items()
+        }
+        print("===== TOKEN LENGTH STATISTICS (NO TRUNCATION) =====")
+        print(json.dumps(token_stats, indent=2, ensure_ascii=False))
         """),
         markdown("## Generative sequence-to-sequence fine-tuning"),
         code("""
