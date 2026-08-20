@@ -185,6 +185,8 @@ def test_finalize_dataset_prunes_consumed_sources(tmp_path):
     (raw / "owner__repo.jsonl").write_text("{}\n", encoding="utf-8")
     kb.mkdir(parents=True)
     (kb / "knowledge_base.json").write_text('{"x": 1}', encoding="utf-8")
+    (kb / "imports").mkdir()
+    (kb / "imports" / "third_party.json").write_text("{}", encoding="utf-8")
     (work / "project_status").mkdir()
     (work / "project_status" / "owner__repo.json").write_text(
         '{"project": "owner/repo"}', encoding="utf-8"
@@ -215,6 +217,7 @@ def test_finalize_dataset_prunes_consumed_sources(tmp_path):
     assert (
         output / "project_kb" / "owner__repo" / "knowledge_base.json"
     ).exists()
+    assert not (output / "project_kb" / "owner__repo" / "imports").exists()
     assert (output / "manifest.json").exists()
 
 

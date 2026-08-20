@@ -914,12 +914,19 @@ def finalize_dataset(args: argparse.Namespace, work_dir: Path, output_dir: Path,
         raise ValueError(f"No project knowledge bases found in {source_kb}")
     if destination_kb.exists():
         shutil.rmtree(destination_kb)
-    shutil.copytree(
-        source_kb, destination_kb,
-        ignore=shutil.ignore_patterns("imports", "*.log"),
-    )
-    # The final Dataset now holds the immutable KB copy; free the merged
-    # build's source so publishing has headroom on the same disk.
+    # Stream the KBs project-by-project and free each source immediately so
+    # the working disk never holds the whole KB tree twice at once.
+    for project_kb_dir in sorted(source_kb.iterdir()):
+        if not project_kb_dir.is_dir():
+            continue
+        if not (project_kb_dir / "knowledge_base.json").exists():
+            continue
+        shutil.copytree(
+            project_kb_dir, destination_kb / project_kb_dir.name,
+            ignore=shutil.ignore_patterns("imports", "*.log"),
+        )
+        shutil.rmtree(project_kb_dir, ignore_errors=True)
+    # The final Dataset now holds every immutable KB copy.
     shutil.rmtree(source_kb, ignore_errors=True)
     with (work_dir / "metadata" / "split_manifest.json").open(encoding="utf-8") as handle:
         split_manifest = json.load(handle)
