@@ -21,10 +21,12 @@ def parse_args() -> argparse.Namespace:
 def archive_project_kb(data_dir: Path) -> Path:
     """Zip the project KBs into ``project_kb.zip`` and free the source tree.
 
-    The Kaggle CLI's default ``--dir-mode skip`` drops directories, so the
-    final Dataset keeps ``project_kb/<owner>__<repo>/knowledge_base.json``
-    inside ``project_kb.zip``; the training notebook restores them before
-    verification.
+    The Kaggle CLI's default ``--dir-mode skip`` drops directories and Kaggle
+    auto-extracts uploaded archives into a folder named after the archive.
+    Entries are therefore stored as ``<owner>__<repo>/knowledge_base.json``
+    (no ``project_kb/`` prefix) so extraction restores the exact
+    ``project_kb/<owner>__<repo>/knowledge_base.json`` layout that
+    ``verify_dataset.py`` expects.
     """
     kb_dir = data_dir / "project_kb"
     if not kb_dir.is_dir():
@@ -35,7 +37,7 @@ def archive_project_kb(data_dir: Path) -> Path:
     archive = data_dir / "project_kb.zip"
     with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
         for path in kb_files:
-            bundle.write(path, path.relative_to(data_dir).as_posix())
+            bundle.write(path, path.relative_to(kb_dir).as_posix())
             path.unlink()
     shutil.rmtree(kb_dir, ignore_errors=True)
     return archive

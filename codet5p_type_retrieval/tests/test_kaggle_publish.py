@@ -75,7 +75,7 @@ def test_publish_kaggle_archives_project_kb(tmp_path):
     assert archive.name == "project_kb.zip"
     assert not (data / "project_kb").exists()
     with zipfile.ZipFile(archive) as bundle:
-        assert bundle.namelist() == ["project_kb/owner__repo/knowledge_base.json"]
+        assert bundle.namelist() == ["owner__repo/knowledge_base.json"]
     assert (data / "train.jsonl").exists()
 
 
