@@ -118,6 +118,12 @@ def parse_args() -> argparse.Namespace:
         help="Skip an annotation after this many seconds; 0 disables",
     )
     parser.add_argument(
+        "--slice-index-timeout-seconds",
+        type=int,
+        default=1800,
+        help="Kill an exporter stuck building the project index after this many seconds; 0 disables",
+    )
+    parser.add_argument(
         "--slice-timeout-project",
         action="append",
         default=[],
@@ -132,6 +138,7 @@ def parse_args() -> argparse.Namespace:
         "package_download_timeout_seconds",
         "kb_phase_timeout_seconds",
         "project_analysis_timeout_seconds",
+        "slice_index_timeout_seconds",
     ):
         if getattr(args, name) < 0:
             parser.error(f"--{name.replace('_', '-')} must be >= 0")
@@ -393,6 +400,7 @@ def run_logged(
     log_path: Path,
     timeout_seconds: float = 0,
     annotation_stall_timeout_seconds: float = 0,
+    index_stall_timeout_seconds: float = 0,
 ) -> str:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     tail = ""
@@ -405,14 +413,21 @@ def run_logged(
             stderr=subprocess.STDOUT,
             bufsize=1,
             start_new_session=bool(
-                (timeout_seconds or annotation_stall_timeout_seconds)
+                (
+                    timeout_seconds
+                    or annotation_stall_timeout_seconds
+                    or index_stall_timeout_seconds
+                )
                 and os.name != "nt"
             ),
         )
         timed_out = threading.Event()
         annotation_timed_out = threading.Event()
+        index_timed_out = threading.Event()
         annotation_timer: threading.Timer | None = None
         annotation_timer_lock = threading.Lock()
+        index_timer: threading.Timer | None = None
+        index_timer_lock = threading.Lock()
 
         def kill_process(timeout_event: threading.Event) -> None:
             if process.poll() is not None:
@@ -429,12 +444,22 @@ def run_logged(
         def terminate_stalled_annotation() -> None:
             kill_process(annotation_timed_out)
 
+        def terminate_stalled_index() -> None:
+            kill_process(index_timed_out)
+
         def cancel_annotation_timer() -> None:
             nonlocal annotation_timer
             with annotation_timer_lock:
                 if annotation_timer is not None:
                     annotation_timer.cancel()
                     annotation_timer = None
+
+        def cancel_index_timer() -> None:
+            nonlocal index_timer
+            with index_timer_lock:
+                if index_timer is not None:
+                    index_timer.cancel()
+                    index_timer = None
 
         def arm_annotation_timer() -> None:
             nonlocal annotation_timer
@@ -450,6 +475,20 @@ def run_logged(
                 annotation_timer.daemon = True
                 annotation_timer.start()
 
+        def arm_index_timer() -> None:
+            nonlocal index_timer
+            if not index_stall_timeout_seconds:
+                return
+            with index_timer_lock:
+                if index_timer is not None:
+                    index_timer.cancel()
+                index_timer = threading.Timer(
+                    index_stall_timeout_seconds,
+                    terminate_stalled_index,
+                )
+                index_timer.daemon = True
+                index_timer.start()
+
         timer = (
             threading.Timer(timeout_seconds, terminate_process)
             if timeout_seconds else None
@@ -464,7 +503,15 @@ def run_logged(
                 tail = (tail + line)[-4000:]
                 if line.startswith(("[export:", "[annotation:", "[kb:")):
                     tqdm.write(line.rstrip())
+                if line.startswith("[export:index:start]"):
+                    arm_index_timer()
+                elif line.startswith((
+                    "[export:project-analysis:done]",
+                    "[export:project-analysis:timeout]",
+                )):
+                    cancel_index_timer()
                 if line.startswith("[export:annotation:start]"):
+                    cancel_index_timer()
                     arm_annotation_timer()
                 elif line.startswith((
                     "[export:annotation:done]",
@@ -475,11 +522,16 @@ def run_logged(
             return_code = process.wait()
         finally:
             cancel_annotation_timer()
+            cancel_index_timer()
             if timer is not None:
                 timer.cancel()
         if annotation_timed_out.is_set():
             raise subprocess.TimeoutExpired(
                 command, annotation_stall_timeout_seconds, output=tail
+            )
+        if index_timed_out.is_set():
+            raise subprocess.TimeoutExpired(
+                command, index_stall_timeout_seconds, output=tail
             )
         if timed_out.is_set():
             raise subprocess.TimeoutExpired(
@@ -594,6 +646,7 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
         "project_analysis_timeout_seconds": args.project_analysis_timeout_seconds,
         "repos_root_provided": bool(args.repos_root),
         "slice_annotation_timeout_seconds": args.slice_annotation_timeout_seconds,
+        "slice_index_timeout_seconds": args.slice_index_timeout_seconds,
         "slice_timeout_projects": sorted(timeout_projects),
         "slice_trace_every": args.slice_trace_every,
         "skip_project_patterns": skip_project_patterns,
@@ -759,6 +812,7 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
                 annotation_stall_timeout_seconds=(
                     annotation_timeout + 30 if annotation_timeout else 0
                 ),
+                index_stall_timeout_seconds=args.slice_index_timeout_seconds,
             )
             tqdm.write(
                 f"[project:export:done] {project} seconds={time.monotonic() - phase_started:.1f}"

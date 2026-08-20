@@ -89,6 +89,7 @@ def test_slice_trace_defaults_to_every_annotation():
     assert args.package_download_timeout_seconds == 60
     assert args.kb_phase_timeout_seconds == 0
     assert args.project_analysis_timeout_seconds == 0
+    assert args.slice_index_timeout_seconds == 1800
 
 
 def test_run_logged_terminates_a_timed_out_phase(tmp_path):
@@ -123,6 +124,54 @@ def test_run_logged_hard_kills_annotation_when_soft_timeout_stalls(tmp_path):
 
     assert error.value.timeout == 0.1
     assert "[export:annotation:start]" in (error.value.output or "")
+
+
+def test_run_logged_hard_kills_index_phase_when_analysis_stalls(tmp_path):
+    command = [
+        sys.executable,
+        "-u",
+        "-c",
+        (
+            "import time; "
+            "print('[export:index:start] project=owner/repo', flush=True); "
+            "time.sleep(10)"
+        ),
+    ]
+
+    with pytest.raises(subprocess.TimeoutExpired) as error:
+        run_logged(
+            command,
+            tmp_path,
+            tmp_path / "index.log",
+            index_stall_timeout_seconds=0.1,
+        )
+
+    assert error.value.timeout == 0.1
+    assert "[export:index:start]" in (error.value.output or "")
+
+
+def test_run_logged_cancels_index_timer_when_analysis_finishes(tmp_path):
+    command = [
+        sys.executable,
+        "-u",
+        "-c",
+        (
+            "import time; "
+            "print('[export:index:start] project=owner/repo', flush=True); "
+            "print('[export:project-analysis:done] project=owner/repo functions=1 seconds=0.0', "
+            "flush=True); "
+            "time.sleep(0.2)"
+        ),
+    ]
+
+    tail = run_logged(
+        command,
+        tmp_path,
+        tmp_path / "index-ok.log",
+        index_stall_timeout_seconds=0.1,
+    )
+
+    assert "[export:project-analysis:done]" in tail
 
 
 def test_skip_project_patterns_match_case_insensitive_owner_or_repository():
