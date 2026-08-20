@@ -229,8 +229,6 @@ def kernel_metadata(
     shard_index = plan.assigned_shards[0]
     kernel_slug = partition_kernel_slug(plan, part_index)
     title = f"TypePro Python Shard {shard_index:02d}"
-    if plan.part_count > 1:
-        title += f" Part {part_index + 1} of {plan.part_count}"
     return {
         "id": f"{plan.runner_account}/{kernel_slug}",
         # Kaggle derives the effective slug from title even when `id` is set.
@@ -255,9 +253,9 @@ def partition_kernel_slug(plan: AccountPlan, part_index: int) -> str:
             f"Part {part_index + 1} is outside shard {plan.assigned_shards[0]:02d} "
             f"with {plan.part_count} part(s)"
         )
-    if plan.part_count == 1:
-        return plan.kernel_slug
-    return f"{plan.kernel_slug}-part-{part_index + 1}-of-{plan.part_count}"
+    # Every part is a new version of the pre-existing logical-shard notebook.
+    # Keep both the id and title stable so Kaggle cannot derive a new slug.
+    return plan.kernel_slug
 
 
 def write_version(

@@ -14,9 +14,10 @@ from textwrap import dedent
 
 
 OWNER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{1,49}$")
-# The production contract is one notebook and one Dataset for each logical
-# shard. Keep this mapping empty so every shard uses its native index/10.
-SHARD_PART_COUNTS = {}
+# Logical shards that exceeded Kaggle's runtime limit are committed as several
+# versions of the same existing kernel. Each version owns one disjoint physical
+# modulo partition, while unsplit shards retain their native index/10 coordinate.
+SHARD_PART_COUNTS = {2: 2, 3: 3, 7: 2, 9: 3}
 
 
 if "__file__" in globals():

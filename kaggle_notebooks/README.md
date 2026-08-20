@@ -1,21 +1,23 @@
 # TypePro Kaggle notebooks
 
-This directory contains the two-account, ten-shard workflow for the Python
-parameter-only dataset. Every shard has exactly one notebook, one Kaggle kernel,
-and one Dataset using its native `index/10` coordinate.
+This directory contains the two-account, ten-logical-shard workflow for the
+Python parameter-only dataset. Every shard has exactly one notebook and one
+Kaggle kernel. Shards `02` and `07` run as two versions of their existing
+kernel; shards `03` and `09` run as three versions. Each version publishes a
+disjoint physical Dataset partition.
 
 ## Current artifacts
 
 - `00_test_dataset_owner.ipynb`: optional credential/owner smoke test.
 - `01_typepro_shard_00.ipynb` through `10_typepro_shard_09.ipynb`: ten
   standalone CPU shard notebooks.
-- `11_merge_finalize.ipynb`: validate and merge exactly 10 attached Datasets,
+- `11_merge_finalize.ipynb`: validate and merge exactly 16 attached Datasets,
   preprocess the splits, verify them, and publish the final private Dataset.
 - `12_train_and_infer.ipynb`: fine-tune and evaluate after attaching the final
   Dataset.
 - `shard_account_plan.json`: notebook, kernel, owner, visibility and shard
   mapping.
-- `shard_merge_plan.json`: the exact 10 Dataset inputs accepted by merge.
+- `shard_merge_plan.json`: the exact 16 Dataset inputs accepted by merge.
 - `commit_shard_versions.py`: dry-run or push selected/all shard notebooks.
 - `commit_merge_finalize.py`: dry-run, push, or check the merge kernel.
 - `generate_notebooks.py`: the only source for generated notebook changes.
@@ -34,9 +36,11 @@ The merge runs under `duyvu1105` and publishes the private Dataset
 `duyvu1105/typepro-python-generative`. The second account's shards must remain
 public so the final owner can attach them.
 
-Every manifest uses physical coordinate `index/10`, reports no missing
-projects, and shows every selected project was attempted. The merge rejects
-duplicate coordinates, gaps, and overlaps.
+Unsplit manifests use physical coordinate `index/10`. Split shard versions use
+`index + 10 * part_index` over `10 * part_count`, giving `02` and `07`
+coordinates over `/20`, and `03` and `09` coordinates over `/30`. Every part
+reports no missing projects and shows every selected project was attempted.
+The merge rejects duplicate coordinates, gaps, and overlaps.
 
 ## Candidate retrieval
 
@@ -108,8 +112,9 @@ Dry-run all ten standalone kernels without contacting Kaggle:
 python kaggle_notebooks/commit_shard_versions.py
 ```
 
-The summary must contain ten distinct notebook paths, kernel IDs, Dataset IDs,
-and coordinates `0/10` through `9/10` exactly once.
+The summary must contain ten distinct notebook paths and kernel IDs, plus 16
+distinct Dataset IDs. Split parts repeat their logical shard's kernel ID because
+they are pushed as successive versions of the existing notebook.
 
 Run the repository tests after generator/publisher changes:
 
@@ -131,14 +136,16 @@ Use explicit credential paths when needed:
 uv run --with kaggle==1.7.4.2 python kaggle_notebooks/commit_shard_versions.py --credential "duyvu1105=D:\secure\duyvu.json" --credential "duymign=D:\secure\duymign.json" --push
 ```
 
-Retry only selected logical shard kernels (all configured parts of each):
+Retry selected logical shard kernels (all configured parts of each):
 
 ```bash
 uv run --with kaggle==1.7.4.2 python kaggle_notebooks/commit_shard_versions.py --shard 2 --shard 8 --push
 ```
 
-Each kernel slug is shard-specific, so a retry creates a new version only for
-that shard and cannot overwrite another shard's notebook config.
+Each kernel slug is shard-specific. Every configured part creates a successive
+version of that same existing kernel and cannot overwrite another shard's
+notebook config. Use `--part N` with one `--shard` to retry only one 1-based
+part.
 
 ## Merge and publish
 
@@ -155,11 +162,10 @@ uv run --with kaggle==1.7.4.2 python kaggle_notebooks/commit_merge_finalize.py -
 uv run --with kaggle==1.7.4.2 python kaggle_notebooks/commit_merge_finalize.py --check-status
 ```
 
-The merge kernel `duyvu1105/merge-dataset` receives exactly these
-attached inputs:
+The merge kernel `duyvu1105/merge-dataset` receives exactly 16 attached inputs:
 
-- private `duyvu1105/typepro-build-shard-{00,01,02,03,04}`;
-- public `duymign/typepro-build-shard-{05,06,07,08,09}`.
+- private `duyvu1105/typepro-build-shard-{00,01,02,03,04,12,13,23}`;
+- public `duymign/typepro-build-shard-{05,06,07,08,09,17,19,29}`.
 
 It reads attached `/kaggle/input` data and never downloads shard payloads at
 runtime. It validates manifests before running `merge_shards.py`, finalization,
