@@ -53,7 +53,9 @@ def test_standalone_notebook_locks_publish_owner_and_single_shard():
     assert "PROJECT_ANALYSIS_TIMEOUT_SECONDS = 300" in config
     assert "SLICE_INDEX_TIMEOUT_SECONDS = 1800" in config
     assert "SLICE_TRACE_EVERY = 10" in config
-    assert 'RETRIEVAL_SCHEMA_VERSION = "typepro-project-kb-top10-generative-v1"' in config
+    assert 'RETRIEVAL_SCHEMA_VERSION = "typepro-project-kb-top10-generative-v2"' in config
+    assert "INCLUDE_BUILTINS = True" in config
+    assert "INCLUDE_RETURNS = True" in config
     assert "--slice-annotation-timeout-seconds" in serialized
     assert "--package-download-timeout-seconds" in serialized
     assert "--kb-phase-timeout-seconds" in serialized
@@ -336,7 +338,7 @@ def test_train_notebook_uses_generative_model_not_contrastive_retrieval():
 
     assert "train_generative.py" in serialized
     assert "infer_generative.py" in serialized
-    assert "typepro-codet5p-generative-project-kb-v1" in serialized
+    assert "typepro-codet5p-generative-project-kb-v2" in serialized
     assert "projection-dim" not in serialized
     assert 'PIPELINE_DIR / \\"train.py\\"' not in serialized
     assert "TOKEN LENGTH STATISTICS (NO TRUNCATION)" in serialized

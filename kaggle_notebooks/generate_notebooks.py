@@ -438,7 +438,10 @@ def shard_notebook(
         PROJECT_ANALYSIS_TIMEOUT_SECONDS = 300
         # Kill an exporter stuck building a project index after 30 minutes.
         SLICE_INDEX_TIMEOUT_SECONDS = 1800
-        RETRIEVAL_SCHEMA_VERSION = "typepro-project-kb-top10-generative-v1"
+        # This rerun keeps built-in annotations and adds function returns.
+        INCLUDE_BUILTINS = True
+        INCLUDE_RETURNS = True
+        RETRIEVAL_SCHEMA_VERSION = "typepro-project-kb-top10-generative-v2"
 
         from pathlib import Path
 
@@ -675,6 +678,10 @@ def shard_notebook(
             "--preview-samples", 1,
             "--preview-max-chars", 1200,
         ]
+        if INCLUDE_BUILTINS:
+            common.append("--include-builtins")
+        if INCLUDE_RETURNS:
+            common.append("--include-returns")
         run([sys.executable, "-u", prepare, "--stage", "metadata", *common])
         """),
         markdown("## Clone repositories and build interprocedural slices"),
@@ -1102,6 +1109,9 @@ def merge_notebook(
         MERGE_DATASETS = {merge_datasets!r}
         FINAL_DATASET_SLUG = "typepro-python-generative"
         SEED = 13
+        # Must match the shard rerun: built-ins kept and returns included.
+        INCLUDE_BUILTINS = True
+        INCLUDE_RETURNS = True
 
         import json
         import os
@@ -1315,6 +1325,11 @@ def merge_notebook(
         markdown("## Finalize generative train/validation/test and retain project KBs"),
         code("""
         prepare = PIPELINE_DIR / "prepare_dataset.py"
+        finalize_flags = []
+        if INCLUDE_BUILTINS:
+            finalize_flags.append("--include-builtins")
+        if INCLUDE_RETURNS:
+            finalize_flags.append("--include-returns")
         run([
             sys.executable, "-u", prepare,
             "--stage", "finalize",
@@ -1328,6 +1343,7 @@ def merge_notebook(
             "--preview-samples", 2,
             "--preview-max-chars", 1600,
             "--log-every", 10000,
+            *finalize_flags,
         ])
         run([sys.executable, PIPELINE_DIR / "verify_dataset.py", "--data-dir", FINAL_DIR])
         # Finalize has consumed the merged raw slices and KBs; drop the
@@ -1417,7 +1433,7 @@ def train_notebook(repository: str, branch: str) -> dict:
                 value = json.loads(path.read_text(encoding="utf-8"))
             except Exception:
                 continue
-            if value.get("schema_version") == "typepro-codet5p-generative-project-kb-v1":
+            if value.get("schema_version") == "typepro-codet5p-generative-project-kb-v2":
                 candidates.append(path.parent)
         if len(candidates) != 1:
             raise RuntimeError(f"Expected exactly one TypePro processed dataset, found {candidates}")

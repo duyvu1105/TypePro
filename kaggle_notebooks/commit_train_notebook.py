@@ -45,7 +45,7 @@ def write_payload(destination: Path) -> None:
     if not notebook.get("metadata", {}).get("kaggle", {}).get("isGpuEnabled"):
         raise RuntimeError("Training notebook must enable the GPU accelerator")
     serialized = json.dumps(notebook)
-    if "typepro-codet5p-generative-project-kb-v1" not in serialized:
+    if "typepro-codet5p-generative-project-kb-v2" not in serialized:
         raise RuntimeError("Training notebook is missing the generative Dataset schema marker")
     code_path = destination / "typepro_train_and_infer.ipynb"
     metadata_path = destination / "kernel-metadata.json"

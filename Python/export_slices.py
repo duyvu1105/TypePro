@@ -81,6 +81,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--rebuild-index", action="store_true", help="Run run_read_data.py once per project")
     parser.add_argument("--limit", type=int, default=0)
     parser.add_argument("--parameters-only", action="store_true")
+    parser.add_argument(
+        "--scopes",
+        action="append",
+        choices=("arg", "return", "var"),
+        default=None,
+        help="Export only these annotation scopes; repeatable; default all",
+    )
     parser.add_argument("--exclude-builtins", action="store_true")
     parser.add_argument("--log-every", type=int, default=100, help="Print progress every N annotations; 0 disables")
     parser.add_argument(
@@ -358,6 +365,12 @@ def main() -> None:
     original_count = len(rows)
     if args.parameters_only:
         rows = [row for row in rows if str(row.get("scope") or "").casefold() == "arg"]
+    if args.scopes:
+        allowed = {str(value).casefold() for value in args.scopes}
+        rows = [
+            row for row in rows
+            if str(row.get("scope") or "").strip().casefold() in allowed
+        ]
     if args.exclude_builtins:
         rows = [row for row in rows if not is_builtin_row(row)]
     if args.limit:

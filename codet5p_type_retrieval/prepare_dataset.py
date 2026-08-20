@@ -39,7 +39,7 @@ TYPEGEN_FILES = (
     "data/testset_randomsampled.json",
 )
 PROJECT_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
-SCHEMA_VERSION = "typepro-codet5p-generative-project-kb-v1"
+SCHEMA_VERSION = "typepro-codet5p-generative-project-kb-v2"
 
 
 def parse_args() -> argparse.Namespace:
@@ -95,6 +95,14 @@ def parse_args() -> argparse.Namespace:
         "--retrieval-schema-version",
         default="typepro-legacy-retrieval",
         help="Invalidates restored raw slices when recommendation logic changes",
+    )
+    parser.add_argument(
+        "--include-builtins", action="store_true",
+        help="Keep built-in annotations (str/int/...) in addition to complex types",
+    )
+    parser.add_argument(
+        "--include-returns", action="store_true",
+        help="Include function return annotations in addition to parameters",
     )
     parser.add_argument("--max-negatives", type=int, default=7)
     parser.add_argument("--missing-positive", choices=("drop", "append"), default="drop")
@@ -232,15 +240,18 @@ def deduplicate(rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
     return list(result.values())
 
 
-def eligible_parameter_rows(rows: Iterable[dict[str, Any]]) -> tuple[list[dict[str, Any]], Counter]:
+def eligible_parameter_rows(
+    rows: Iterable[dict[str, Any]], args: argparse.Namespace
+) -> tuple[list[dict[str, Any]], Counter]:
     result = []
     stats = Counter()
+    allowed_scopes = {"arg", "return"} if args.include_returns else {"arg"}
     for row in rows:
         stats["input"] += 1
-        if str(row.get("scope") or "").strip().casefold() != "arg":
+        if str(row.get("scope") or "").strip().casefold() not in allowed_scopes:
             stats["non_parameter"] += 1
             continue
-        if is_builtin_annotation(row):
+        if not args.include_builtins and is_builtin_annotation(row):
             stats["builtin"] += 1
             continue
         if not str(row.get("gttype") or "").strip():
@@ -255,9 +266,10 @@ def build_splits(args: argparse.Namespace, data_dir: Path) -> tuple[dict[str, li
     train_raw = read_json(data_dir / "trainset.json")
     test_raw = read_json(data_dir / "testset.json")
     sampled_raw = read_json(data_dir / "testset_randomsampled.json")
-    train_source, train_filter = eligible_parameter_rows(train_raw)
-    test_source, test_filter = eligible_parameter_rows(test_raw)
-    sampled_source, sampled_filter = eligible_parameter_rows(sampled_raw)
+    allowed_scopes = sorted({"arg", "return"} if args.include_returns else {"arg"})
+    train_source, train_filter = eligible_parameter_rows(train_raw, args)
+    test_source, test_filter = eligible_parameter_rows(test_raw, args)
+    sampled_source, sampled_filter = eligible_parameter_rows(sampled_raw, args)
     warnings: list[str] = []
 
     if args.split_profile == "paper_project":
@@ -313,14 +325,16 @@ def build_splits(args: argparse.Namespace, data_dir: Path) -> tuple[dict[str, li
         "seed": args.seed,
         "validation_project_ratio": args.validation_project_ratio,
         "requested_test_projects": args.test_projects,
+        "include_builtins": bool(args.include_builtins),
+        "include_returns": bool(args.include_returns),
         "source_counts": {
             "trainset.json": len(train_raw),
             "testset.json": len(test_raw),
             "testset_randomsampled.json": len(sampled_raw),
         },
         "eligibility": {
-            "scope": "arg",
-            "exclude_builtins": True,
+            "scope": allowed_scopes,
+            "exclude_builtins": not args.include_builtins,
             "positive": "gttype",
             "files": {
                 "trainset.json": dict(train_filter),
@@ -344,10 +358,19 @@ def prepare_metadata(args: argparse.Namespace, work_dir: Path) -> dict[str, Any]
     if not args.force_metadata and manifest_path.exists() and all(path.exists() for path in split_paths.values()):
         with manifest_path.open(encoding="utf-8") as handle:
             existing = json.load(handle)
-        requested = (SCHEMA_VERSION, args.split_profile, args.seed, args.validation_project_ratio, args.test_projects)
+        requested = (
+            SCHEMA_VERSION,
+            args.split_profile,
+            args.seed,
+            args.validation_project_ratio,
+            args.test_projects,
+            bool(args.include_builtins),
+            bool(args.include_returns),
+        )
         cached = (
             existing.get("schema_version"), existing.get("split_profile"), existing.get("seed"),
             existing.get("validation_project_ratio"), existing.get("requested_test_projects"),
+            existing.get("include_builtins", False), existing.get("include_returns", False),
         )
         if requested != cached:
             raise ValueError(f"Cached split config {cached} != requested {requested}; pass --force-metadata")
@@ -649,6 +672,8 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
         "slice_index_timeout_seconds": args.slice_index_timeout_seconds,
         "slice_timeout_projects": sorted(timeout_projects),
         "slice_trace_every": args.slice_trace_every,
+        "include_builtins": bool(args.include_builtins),
+        "include_returns": bool(args.include_returns),
         "skip_project_patterns": skip_project_patterns,
         "retrieval_schema_version": args.retrieval_schema_version,
     })
@@ -785,7 +810,11 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
             command = [
                 sys.executable, str(exporter), "--dataset", str(task_path),
                 "--repos-root", str(clone_root), "--output", str(temporary_output), "--rebuild-index",
-                "--parameters-only", "--exclude-builtins",
+                *(
+                    ["--scopes", "arg", "--scopes", "return"]
+                    if args.include_returns else ["--parameters-only"]
+                ),
+                *([] if args.include_builtins else ["--exclude-builtins"]),
                 "--log-every", str(1 if detailed_export_logging else args.slice_log_every),
                 "--trace-every", str(args.slice_trace_every),
                 "--project-analysis-timeout-seconds",
@@ -967,8 +996,8 @@ def finalize_dataset(args: argparse.Namespace, work_dir: Path, output_dir: Path,
             "label_field": "gttype",
             "recommendation_limit": 10,
             "recommendation_source": "isolated_project_kb",
-            "scope": "arg",
-            "exclude_builtins": True,
+            "scope": sorted({"arg", "return"} if args.include_returns else {"arg"}),
+            "exclude_builtins": not args.include_builtins,
             "stats": preprocess_stats,
             "third_party_knowledge_base_provided": bool(runtime_manifest.get("third_party_knowledge_base_provided")),
             "import_knowledge_base_built": bool(runtime_manifest.get("import_knowledge_base_built")),
@@ -993,15 +1022,23 @@ def finalize_dataset(args: argparse.Namespace, work_dir: Path, output_dir: Path,
         },
     }
     write_json(output_dir / "manifest.json", manifest)
+    scope_label = (
+        "function parameters and returns"
+        if args.include_returns else "function parameters"
+    )
+    builtin_label = (
+        "built-in annotations kept"
+        if args.include_builtins else "built-in annotations excluded"
+    )
     card = f"""# TypePro CodeT5+ generative dataset
 
 Generated once by `prepare_dataset.py`; fine-tuning must consume these immutable files directly.
 
 - schema: `{SCHEMA_VERSION}`
 - language: Python
-- target scope: function parameters only
+- target scope: {scope_label}
 - task: generate the exact `gttype` label from the tagged input
-- built-in annotations: excluded
+- built-in annotations: {builtin_label}
 - recommendations: top 10 from the isolated KB stored for that project
 - project KBs: stored under `project_kb/<owner>__<repo>/knowledge_base.json`
 - split profile: `{split_manifest['split_profile']}`

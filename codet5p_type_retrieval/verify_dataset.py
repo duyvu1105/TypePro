@@ -27,7 +27,7 @@ def main() -> None:
     kb_available = kb_root.is_dir()
     if not kb_available:
         print("project_kb is absent; skipping project KB cross-checks", flush=True)
-    if manifest.get("schema_version") != "typepro-codet5p-generative-project-kb-v1":
+    if manifest.get("schema_version") != "typepro-codet5p-generative-project-kb-v2":
         errors.append(f"unexpected schema: {manifest.get('schema_version')!r}")
     for split, expected in manifest["output"].items():
         path = root / expected["file"]

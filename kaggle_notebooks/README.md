@@ -1,7 +1,8 @@
 # TypePro Kaggle notebooks
 
 This directory contains the two-account, ten-logical-shard workflow for the
-Python parameter-only dataset. Every shard has exactly one notebook and one
+Python generative dataset (function parameters and returns; built-in
+annotations kept in the current rerun). Every shard has exactly one notebook and one
 Kaggle kernel. Shards `02` and `07` run as two versions of their existing
 kernel; shards `03` and `09` run as three versions. Each version publishes a
 disjoint physical Dataset partition.
@@ -44,7 +45,8 @@ The merge rejects duplicate coordinates, gaps, and overlaps.
 
 ## Candidate retrieval
 
-Each shard keeps non-built-in function parameters and builds an isolated KB
+Each shard slices function parameters (and returns in the current rerun),
+keeps built-in annotations, and builds an isolated KB
 for every project. Candidate retrieval unions exact imports, declarations
 visible in the masked slice, project classes and aliases, lexical/structural
 retrieval, `.pyi`/Typeshed symbols, project call/data flow, fixtures and common

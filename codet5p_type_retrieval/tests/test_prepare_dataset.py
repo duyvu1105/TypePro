@@ -24,6 +24,8 @@ class Args:
     seed = 13
     validation_project_ratio = 0.20
     test_projects = 2
+    include_builtins = False
+    include_returns = False
 
 
 def row(project: str, number: int):
@@ -61,10 +63,28 @@ def test_only_non_builtin_parameters_are_eligible():
         {**row("owner/repository", 2), "scope": "return"},
         {**row("owner/repository", 3), "cat": "builtins", "gttype": "int"},
     ]
-    eligible, stats = eligible_parameter_rows(rows)
+    eligible, stats = eligible_parameter_rows(rows, Args())
     assert [item["name"] for item in eligible] == ["value_1"]
     assert stats["non_parameter"] == 1
     assert stats["builtin"] == 1
+
+
+def test_include_builtins_and_returns_expands_eligibility():
+    rows = [
+        row("owner/repository", 1),
+        {**row("owner/repository", 2), "scope": "return"},
+        {**row("owner/repository", 3), "cat": "builtins", "gttype": "int"},
+        {**row("owner/repository", 4), "scope": "var"},
+    ]
+    args = Args()
+    args.include_builtins = True
+    args.include_returns = True
+    eligible, stats = eligible_parameter_rows(rows, args)
+    assert [item["name"] for item in eligible] == [
+        "value_1", "value_2", "value_3"
+    ]
+    assert stats["non_parameter"] == 1
+    assert stats["builtin"] == 0
 
 
 def test_annotation_timeout_is_limited_to_configured_slow_projects():
