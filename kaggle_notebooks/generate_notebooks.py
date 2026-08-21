@@ -429,7 +429,9 @@ def shard_notebook(
         TEST_PROJECTS = 100
         VALIDATION_PROJECT_RATIO = 0.10
         SLICE_LOG_EVERY = 50
-        SLICE_TRACE_EVERY = 10
+        # Trace every annotation so the parent hard-kill timer is armed for
+        # each one; a pathological slice in native code cannot stall a shard.
+        SLICE_TRACE_EVERY = 1
         # Bound every annotation so one pathological slice cannot stall a shard.
         SLICE_ANNOTATION_TIMEOUT_SECONDS = 120
         # Bound work that happens before annotation export as well.
@@ -438,6 +440,8 @@ def shard_notebook(
         PROJECT_ANALYSIS_TIMEOUT_SECONDS = 300
         # Kill an exporter stuck building a project index after 30 minutes.
         SLICE_INDEX_TIMEOUT_SECONDS = 1800
+        # Kill a stuck git clone after 15 minutes.
+        CLONE_TIMEOUT_SECONDS = 900
         # This rerun keeps built-in annotations and adds function returns.
         INCLUDE_BUILTINS = True
         INCLUDE_RETURNS = True
@@ -699,6 +703,7 @@ def shard_notebook(
             "--kb-phase-timeout-seconds", KB_PHASE_TIMEOUT_SECONDS,
             "--project-analysis-timeout-seconds", PROJECT_ANALYSIS_TIMEOUT_SECONDS,
             "--slice-index-timeout-seconds", SLICE_INDEX_TIMEOUT_SECONDS,
+            "--clone-timeout-seconds", CLONE_TIMEOUT_SECONDS,
             "--retrieval-schema-version", RETRIEVAL_SCHEMA_VERSION,
             "--build-import-kb",
             "--download-missing-imports",

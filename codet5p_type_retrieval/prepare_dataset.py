@@ -13,6 +13,7 @@ import json
 import os
 import random
 import re
+import select
 import signal
 import stat
 import shutil
@@ -40,6 +41,7 @@ TYPEGEN_FILES = (
 )
 PROJECT_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 SCHEMA_VERSION = "typepro-codet5p-generative-project-kb-v2"
+PIPE_CLOSE_GRACE_SECONDS = 30
 
 
 def parse_args() -> argparse.Namespace:
@@ -137,6 +139,12 @@ def parse_args() -> argparse.Namespace:
         default=[],
         help="Apply the annotation timeout only to this owner/repository; repeatable",
     )
+    parser.add_argument(
+        "--clone-timeout-seconds",
+        type=int,
+        default=900,
+        help="Kill a stuck git clone after this many seconds; 0 disables",
+    )
     args = parser.parse_args()
     if args.slice_annotation_timeout_seconds < 0:
         parser.error("--slice-annotation-timeout-seconds must be >= 0")
@@ -147,6 +155,7 @@ def parse_args() -> argparse.Namespace:
         "kb_phase_timeout_seconds",
         "project_analysis_timeout_seconds",
         "slice_index_timeout_seconds",
+        "clone_timeout_seconds",
     ):
         if getattr(args, name) < 0:
             parser.error(f"--{name.replace('_', '-')} must be >= 0")
@@ -409,11 +418,17 @@ def print_metadata_summary(
             )
 
 
-def run(command: list[str], cwd: Path | None = None, capture: bool = False) -> subprocess.CompletedProcess[str]:
+def run(
+    command: list[str],
+    cwd: Path | None = None,
+    capture: bool = False,
+    timeout: float = 0,
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         command, cwd=cwd, check=True, text=True,
         stdout=subprocess.PIPE if capture else None,
         stderr=subprocess.STDOUT if capture else None,
+        timeout=timeout or None,
     )
 
 
@@ -519,8 +534,48 @@ def run_logged(
         if timer is not None:
             timer.start()
         assert process.stdout is not None
+
+        def stream_ready(timeout: float) -> bool:
+            # Windows cannot select() on pipes; fall back to a blocking read
+            # where the killed process normally closes the pipe immediately.
+            if os.name == "nt":
+                return True
+            try:
+                readable, _, _ = select.select([process.stdout], [], [], timeout)
+            except (OSError, ValueError):
+                return True
+            return bool(readable)
+
         try:
-            for line in process.stdout:
+            pipe_deadline: float | None = None
+            while True:
+                if not stream_ready(1.0):
+                    if (
+                        timed_out.is_set()
+                        or annotation_timed_out.is_set()
+                        or index_timed_out.is_set()
+                    ):
+                        if pipe_deadline is None:
+                            pipe_deadline = (
+                                time.monotonic() + PIPE_CLOSE_GRACE_SECONDS
+                            )
+                        elif time.monotonic() >= pipe_deadline:
+                            # A killed process can leave a descendant holding
+                            # the stdout pipe open, so EOF never arrives.
+                            raise subprocess.TimeoutExpired(
+                                command,
+                                (
+                                    timeout_seconds
+                                    or annotation_stall_timeout_seconds
+                                    or index_stall_timeout_seconds
+                                ),
+                                output=tail,
+                            )
+                    continue
+                line = process.stdout.readline()
+                if line == "":
+                    break
+                pipe_deadline = None
                 log_handle.write(line)
                 log_handle.flush()
                 tail = (tail + line)[-4000:]
@@ -565,14 +620,21 @@ def run_logged(
     return tail
 
 
-def clone_project(project: str, destination: Path) -> str:
+def clone_project(
+    project: str, destination: Path, timeout_seconds: int = 0
+) -> str:
     if destination.exists() and (destination / ".git").exists():
         return run(["git", "-C", str(destination), "rev-parse", "HEAD"], capture=True).stdout.strip()
     destination.parent.mkdir(parents=True, exist_ok=True)
-    run([
-        "git", "clone", "--quiet", "--depth", "1", "--no-tags", "--single-branch",
-        f"https://github.com/{project}.git", str(destination),
-    ], capture=True)
+    try:
+        run([
+            "git", "clone", "--quiet", "--depth", "1", "--no-tags", "--single-branch",
+            f"https://github.com/{project}.git", str(destination),
+        ], capture=True, timeout=timeout_seconds)
+    except subprocess.TimeoutExpired as error:
+        raise RuntimeError(
+            f"git clone timed out after {timeout_seconds}s for {project}"
+        ) from error
     return run(["git", "-C", str(destination), "rev-parse", "HEAD"], capture=True).stdout.strip()
 
 
@@ -733,7 +795,11 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
         try:
             phase_started = time.monotonic()
             tqdm.write(f"[project:clone:start] {project}")
-            commit = clone_project(project, repository_path)
+            commit = clone_project(
+                project,
+                repository_path,
+                timeout_seconds=args.clone_timeout_seconds,
+            )
             tqdm.write(
                 f"[project:clone:done] {project} seconds={time.monotonic() - phase_started:.1f}"
             )

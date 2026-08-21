@@ -52,7 +52,8 @@ def test_standalone_notebook_locks_publish_owner_and_single_shard():
     assert "KB_PHASE_TIMEOUT_SECONDS = 300" in config
     assert "PROJECT_ANALYSIS_TIMEOUT_SECONDS = 300" in config
     assert "SLICE_INDEX_TIMEOUT_SECONDS = 1800" in config
-    assert "SLICE_TRACE_EVERY = 10" in config
+    assert "SLICE_TRACE_EVERY = 1" in config
+    assert "CLONE_TIMEOUT_SECONDS = 900" in config
     assert 'RETRIEVAL_SCHEMA_VERSION = "typepro-project-kb-top10-generative-v2"' in config
     assert "INCLUDE_BUILTINS = True" in config
     assert "INCLUDE_RETURNS = True" in config

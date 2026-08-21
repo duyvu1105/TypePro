@@ -1,3 +1,4 @@
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -7,6 +8,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import prepare_dataset as prepare_dataset_module
 from prepare_dataset import (
     annotation_timeout_for_project,
     build_splits,
@@ -193,6 +195,29 @@ def test_run_logged_cancels_index_timer_when_analysis_finishes(tmp_path):
     )
 
     assert "[export:project-analysis:done]" in tail
+
+
+@pytest.mark.skipif(os.name == "nt", reason="requires POSIX process groups")
+def test_run_logged_raises_when_killed_process_leaves_pipe_open(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        prepare_dataset_module, "PIPE_CLOSE_GRACE_SECONDS", 2
+    )
+    script = (
+        "import subprocess, sys, time; "
+        "child = subprocess.Popen("
+        "[sys.executable, '-c', 'import time; time.sleep(15)'], "
+        "stdout=sys.stdout, start_new_session=True); "
+        "print(child.pid, flush=True); time.sleep(60)"
+    )
+    with pytest.raises(subprocess.TimeoutExpired):
+        run_logged(
+            [sys.executable, "-u", "-c", script],
+            tmp_path,
+            tmp_path / "stuck.log",
+            timeout_seconds=0.3,
+        )
 
 
 def test_finalize_dataset_prunes_consumed_sources(tmp_path):

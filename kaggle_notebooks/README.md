@@ -84,8 +84,8 @@ Project indexing parses every source file once and emits function, class and
 call-site indexes from the shared ASTs. Function uses carry module/class-qualified
 names to keep common methods such as `__init__` and `update` separate. Stdlib KB
 generation uses Typeshed directly when a matching stub exists instead of also
-scanning the runtime implementation. Detailed annotation traces are sampled
-every 10 records while normal progress remains every 50 records.
+scanning the runtime implementation. Every annotation is traced so the parent
+hard-kill timer stays armed; normal progress prints every 50 records.
 
 ## Credentials
 
