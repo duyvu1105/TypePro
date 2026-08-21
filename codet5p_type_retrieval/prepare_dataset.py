@@ -579,7 +579,10 @@ def run_logged(
                 log_handle.write(line)
                 log_handle.flush()
                 tail = (tail + line)[-4000:]
-                if line.startswith(("[export:", "[annotation:", "[kb:")):
+                if line.startswith(("[export:", "[annotation:", "[kb:")) and not (
+                    line.startswith("[export:annotation:start]")
+                    or line.startswith("[export:annotation:done]")
+                ):
                     tqdm.write(line.rstrip())
                 if line.startswith("[export:index:start]"):
                     arm_index_timer()
@@ -588,15 +591,18 @@ def run_logged(
                     "[export:project-analysis:timeout]",
                 )):
                     cancel_index_timer()
+                if index_timer is not None:
+                    # The index phase is governed by its own 30-minute stall
+                    # timer; the annotation watchdog must not fire during it.
+                    continue
                 if line.startswith("[export:annotation:start]"):
                     cancel_index_timer()
                     arm_annotation_timer()
-                elif line.startswith((
-                    "[export:annotation:done]",
-                    "[export:annotation:error]",
-                    "[annotation:timeout]",
-                )):
-                    cancel_annotation_timer()
+                else:
+                    # Any other line resets the annotation stall watchdog, so
+                    # a completely silent exporter can never wedge the shard
+                    # even when an annotation start line was not observed.
+                    arm_annotation_timer()
             return_code = process.wait()
         finally:
             cancel_annotation_timer()
