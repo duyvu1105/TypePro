@@ -74,7 +74,7 @@ deadline globally prevents a previously unknown pathological slice from
 stalling an entire shard indefinitely.
 
 Work before annotation export is bounded too: each missing-package download is
-limited to 30 seconds, the complete per-project KB phase to 300 seconds, and
+limited to 900 seconds, the complete per-project KB phase to 1800 seconds, and
 the shared project scan/index/semantic analysis to 300 seconds. A KB deadline
 keeps the files already generated and continues with that partial KB. An
 analysis deadline switches the project to file-local slicing, so either slow

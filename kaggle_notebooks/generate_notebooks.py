@@ -435,8 +435,8 @@ def shard_notebook(
         # Bound every annotation so one pathological slice cannot stall a shard.
         SLICE_ANNOTATION_TIMEOUT_SECONDS = 120
         # Bound work that happens before annotation export as well.
-        PACKAGE_DOWNLOAD_TIMEOUT_SECONDS = 30
-        KB_PHASE_TIMEOUT_SECONDS = 300
+        PACKAGE_DOWNLOAD_TIMEOUT_SECONDS = 900
+        KB_PHASE_TIMEOUT_SECONDS = 1800
         PROJECT_ANALYSIS_TIMEOUT_SECONDS = 300
         # Kill an exporter stuck building a project index after 30 minutes.
         SLICE_INDEX_TIMEOUT_SECONDS = 1800
