@@ -1410,7 +1410,7 @@ def merge_notebook(
 def train_notebook(repository: str, branch: str) -> dict:
     return notebook([
         markdown("""
-        # Fine-tune CodeT5+ and infer on the TypePro test split
+        # Fine-tune Qwen2.5-Coder and infer on the TypePro test split
 
         Settings: **Internet ON**, accelerator **GPU**. Attach the final private
         dataset `typepro-python-generative` using **Add Input**.
@@ -1418,9 +1418,9 @@ def train_notebook(repository: str, branch: str) -> dict:
         code(f"""
         REPOSITORY = {repository!r}
         BRANCH = {branch!r}
-        MODEL_NAME = "Salesforce/codet5p-220m-py"
-        INPUT_LENGTH = 768
-        LABEL_LENGTH = 64
+        MODEL_NAME = "Qwen/Qwen2.5-Coder-1.5B-Instruct"
+        INPUT_LENGTH = 32768
+        LABEL_LENGTH = 128
         EPOCHS = 3
 
         import json
@@ -1579,8 +1579,8 @@ def train_notebook(repository: str, branch: str) -> dict:
             "--model-name", MODEL_NAME,
             "--input-length", INPUT_LENGTH,
             "--label-length", LABEL_LENGTH,
-            "--batch-size", 2,
-            "--gradient-accumulation-steps", 8,
+            "--batch-size", 1,
+            "--gradient-accumulation-steps", 16,
             "--epochs", EPOCHS,
             "--learning-rate", "2e-5",
             "--mixed-precision", "fp16",

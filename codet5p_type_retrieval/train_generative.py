@@ -1,4 +1,4 @@
-"""Fine-tune CodeT5 to generate the annotation label directly."""
+"""Fine-tune a causal code language model to generate the annotation label."""
 from __future__ import annotations
 
 import argparse
@@ -9,7 +9,7 @@ from pathlib import Path
 import torch
 from accelerate import Accelerator
 from torch.utils.data import DataLoader, Dataset
-from transformers import AutoModelForSeq2SeqLM, AutoTokenizer, get_linear_schedule_with_warmup
+from transformers import AutoModelForCausalLM, AutoTokenizer, get_linear_schedule_with_warmup
 
 
 class JsonlDataset(Dataset):
@@ -28,9 +28,9 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-dir", required=True)
     parser.add_argument("--output-dir", required=True)
-    parser.add_argument("--model-name", default="Salesforce/codet5p-220m-py")
-    parser.add_argument("--input-length", type=int, default=768)
-    parser.add_argument("--label-length", type=int, default=64)
+    parser.add_argument("--model-name", default="Qwen/Qwen2.5-Coder-1.5B-Instruct")
+    parser.add_argument("--input-length", type=int, default=32768)
+    parser.add_argument("--label-length", type=int, default=128)
     parser.add_argument("--batch-size", type=int, default=2)
     parser.add_argument("--gradient-accumulation-steps", type=int, default=8)
     parser.add_argument("--epochs", type=int, default=3)
@@ -47,23 +47,39 @@ def main() -> None:
         gradient_accumulation_steps=args.gradient_accumulation_steps,
     )
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
-    model = AutoModelForSeq2SeqLM.from_pretrained(args.model_name)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    model = AutoModelForCausalLM.from_pretrained(args.model_name)
+    model.config.pad_token_id = tokenizer.pad_token_id
     if args.gradient_checkpointing:
         model.gradient_checkpointing_enable()
         model.config.use_cache = False
 
     def collate(rows):
-        inputs = tokenizer(
-            [row["input"] for row in rows], padding=True, truncation=True,
-            max_length=args.input_length, return_tensors="pt",
-        )
-        labels = tokenizer(
-            text_target=[row["label"] for row in rows], padding=True,
-            truncation=True, max_length=args.label_length, return_tensors="pt",
+        prompt_limit = max(1, args.input_length - args.label_length)
+        prompt_ids = tokenizer(
+            [row["input"] for row in rows], padding=False, truncation=True,
+            max_length=prompt_limit, add_special_tokens=True,
         )["input_ids"]
-        labels[labels == tokenizer.pad_token_id] = -100
-        inputs["labels"] = labels
-        return inputs
+        label_ids = tokenizer(
+            [row["label"] for row in rows], padding=False, truncation=True,
+            max_length=args.label_length, add_special_tokens=True,
+        )["input_ids"]
+        sequences = [prompt + label for prompt, label in zip(prompt_ids, label_ids)]
+        max_length = max(len(sequence) for sequence in sequences)
+        input_ids = []
+        attention_mask = []
+        labels = []
+        for prompt, sequence in zip(prompt_ids, sequences):
+            padding = max_length - len(sequence)
+            input_ids.append(sequence + [tokenizer.pad_token_id] * padding)
+            attention_mask.append([1] * len(sequence) + [0] * padding)
+            labels.append([-100] * len(prompt) + sequence[len(prompt):] + [-100] * padding)
+        return {
+            "input_ids": torch.tensor(input_ids, dtype=torch.long),
+            "attention_mask": torch.tensor(attention_mask, dtype=torch.long),
+            "labels": torch.tensor(labels, dtype=torch.long),
+        }
 
     data_dir = Path(args.data_dir)
     train_loader = DataLoader(

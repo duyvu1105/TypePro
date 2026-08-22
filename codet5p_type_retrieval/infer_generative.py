@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 import torch
-from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
 def main() -> None:
@@ -14,26 +14,36 @@ def main() -> None:
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--input", required=True)
     parser.add_argument("--output", required=True)
-    parser.add_argument("--input-length", type=int, default=768)
-    parser.add_argument("--label-length", type=int, default=64)
+    parser.add_argument("--input-length", type=int, default=32768)
+    parser.add_argument("--label-length", type=int, default=128)
     parser.add_argument("--batch-size", type=int, default=4)
     args = parser.parse_args()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     tokenizer = AutoTokenizer.from_pretrained(args.checkpoint)
-    model = AutoModelForSeq2SeqLM.from_pretrained(args.checkpoint).to(device).eval()
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    model = AutoModelForCausalLM.from_pretrained(args.checkpoint).to(device).eval()
+    model.config.pad_token_id = tokenizer.pad_token_id
     with Path(args.input).open(encoding="utf-8") as handle:
         rows = [json.loads(line) for line in handle if line.strip()]
     predictions = []
     correct = 0
     for start in range(0, len(rows), args.batch_size):
         batch = rows[start:start + args.batch_size]
+        prompt_limit = max(1, args.input_length - args.label_length)
         encoded = tokenizer(
             [row["input"] for row in batch], padding=True, truncation=True,
-            max_length=args.input_length, return_tensors="pt",
+            max_length=prompt_limit, return_tensors="pt",
         ).to(device)
         with torch.inference_mode():
-            generated = model.generate(**encoded, max_new_tokens=args.label_length)
-        values = tokenizer.batch_decode(generated, skip_special_tokens=True)
+            generated = model.generate(
+                **encoded, max_new_tokens=args.label_length,
+                pad_token_id=tokenizer.pad_token_id,
+            )
+        prompt_length = encoded["input_ids"].shape[1]
+        values = tokenizer.batch_decode(
+            generated[:, prompt_length:], skip_special_tokens=True
+        )
         for row, prediction in zip(batch, values):
             prediction = prediction.strip()
             correct += prediction == row["label"]
