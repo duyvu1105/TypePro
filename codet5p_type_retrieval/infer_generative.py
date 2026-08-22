@@ -9,6 +9,8 @@ import torch
 from peft import PeftModel
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
+from generative_chat import chat_token_ids
+
 
 def main() -> None:
     parser = argparse.ArgumentParser()
@@ -24,6 +26,8 @@ def main() -> None:
     tokenizer = AutoTokenizer.from_pretrained(args.checkpoint)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
+    # Causal-LM generation from a padded batch must use the final non-pad token.
+    tokenizer.padding_side = "left"
     quantization_config = BitsAndBytesConfig(
         load_in_4bit=True,
         bnb_4bit_quant_type="nf4",
@@ -45,10 +49,11 @@ def main() -> None:
     for start in range(0, len(rows), args.batch_size):
         batch = rows[start:start + args.batch_size]
         prompt_limit = max(1, args.input_length - args.label_length)
-        encoded = tokenizer(
-            [row["input"] for row in batch], padding=True, truncation=True,
-            max_length=prompt_limit, return_tensors="pt",
-        ).to(device)
+        prompt_ids = [
+            chat_token_ids(tokenizer, row["input"])[-prompt_limit:]
+            for row in batch
+        ]
+        encoded = tokenizer.pad({"input_ids": prompt_ids}, padding=True, return_tensors="pt").to(device)
         with torch.inference_mode():
             generated = model.generate(
                 **encoded, max_new_tokens=args.label_length,

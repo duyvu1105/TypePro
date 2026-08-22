@@ -17,6 +17,8 @@ from transformers import (
     get_linear_schedule_with_warmup,
 )
 
+from generative_chat import chat_token_ids
+
 
 class JsonlDataset(Dataset):
     def __init__(self, path: Path):
@@ -84,15 +86,16 @@ def main() -> None:
 
     def collate(rows):
         prompt_limit = max(1, args.input_length - args.label_length)
-        prompt_ids = tokenizer(
-            [row["input"] for row in rows], padding=False, truncation=True,
-            max_length=prompt_limit, add_special_tokens=True,
-        )["input_ids"]
-        label_ids = tokenizer(
-            [row["label"] for row in rows], padding=False, truncation=True,
-            max_length=args.label_length, add_special_tokens=True,
-        )["input_ids"]
-        sequences = [prompt + label for prompt, label in zip(prompt_ids, label_ids)]
+        prompt_ids = []
+        completion_ids = []
+        for row in rows:
+            full_prompt = chat_token_ids(tokenizer, row["input"])
+            full_sequence = chat_token_ids(tokenizer, row["input"], row["label"])
+            if full_sequence[:len(full_prompt)] != full_prompt:
+                raise ValueError("Chat template did not preserve the prompt as a sequence prefix")
+            prompt_ids.append(full_prompt[-prompt_limit:])
+            completion_ids.append(full_sequence[len(full_prompt):len(full_prompt) + args.label_length])
+        sequences = [prompt + completion for prompt, completion in zip(prompt_ids, completion_ids)]
         max_length = max(len(sequence) for sequence in sequences)
         input_ids = []
         attention_mask = []

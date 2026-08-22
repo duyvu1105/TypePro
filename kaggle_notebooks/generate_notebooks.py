@@ -1459,6 +1459,8 @@ def train_notebook(repository: str, branch: str) -> dict:
         markdown("## Measure token lengths before training"),
         code("""
         from transformers import AutoTokenizer
+        sys.path.insert(0, str(PIPELINE_DIR))
+        from generative_chat import chat_token_ids
 
         tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
         # Measurement intentionally keeps long sequences untruncated.
@@ -1507,16 +1509,13 @@ def train_notebook(repository: str, branch: str) -> dict:
             def measure_batch(rows):
                 if not rows:
                     return
-                input_ids = tokenizer(
-                    [row["input"] for row in rows],
-                    add_special_tokens=True,
-                    truncation=False,
-                )["input_ids"]
-                label_ids = tokenizer(
-                    text_target=[row["label"] for row in rows],
-                    add_special_tokens=True,
-                    truncation=False,
-                )["input_ids"]
+                input_ids = [chat_token_ids(tokenizer, row["input"]) for row in rows]
+                label_ids = []
+                for row, prompt_ids in zip(rows, input_ids):
+                    full_ids = chat_token_ids(tokenizer, row["input"], row["label"])
+                    if full_ids[:len(prompt_ids)] != prompt_ids:
+                        raise ValueError("Chat template did not preserve the prompt as a sequence prefix")
+                    label_ids.append(full_ids[len(prompt_ids):])
                 update_token_stats(input_stats, [len(ids) for ids in input_ids])
                 update_token_stats(label_stats, [len(ids) for ids in label_ids])
 
