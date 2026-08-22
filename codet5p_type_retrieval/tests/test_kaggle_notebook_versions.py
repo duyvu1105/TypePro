@@ -355,7 +355,7 @@ def test_train_kernel_metadata_attaches_final_dataset(tmp_path):
     import commit_train_notebook
 
     metadata = commit_train_notebook.kernel_metadata("typepro_train_and_infer.ipynb")
-    assert metadata["id"] == "duyvu1105/typepro-python-train-and-infer"
+    assert metadata["id"] == "duyvu1105/typepro-python-train-infer"
     assert metadata["enable_gpu"] is True
     assert metadata["enable_internet"] is True
     assert metadata["dataset_sources"] == ["duyvu1105/typepro-python-generative"]

@@ -80,17 +80,31 @@ def main() -> None:
     model, optimizer, train_loader, valid_loader, scheduler = accelerator.prepare(
         model, optimizer, train_loader, valid_loader, scheduler
     )
+    accelerator.print(json.dumps({
+        "status": "training_started",
+        "train_samples": len(train_loader.dataset),
+        "validation_samples": len(valid_loader.dataset),
+        "train_batches_per_epoch": len(train_loader),
+        "epochs": args.epochs,
+    }))
     output = Path(args.output_dir)
     best_loss = float("inf")
     for epoch in range(args.epochs):
         model.train()
-        for batch in train_loader:
+        accelerator.print(f"epoch {epoch + 1}/{args.epochs} started", flush=True)
+        for batch_index, batch in enumerate(train_loader, start=1):
             with accelerator.accumulate(model):
                 loss = model(**batch).loss
                 accelerator.backward(loss)
                 optimizer.step()
                 scheduler.step()
                 optimizer.zero_grad()
+            if batch_index == 1 or batch_index % 10 == 0:
+                accelerator.print(
+                    f"epoch {epoch + 1}/{args.epochs} batch "
+                    f"{batch_index}/{len(train_loader)} loss={loss.item():.4f}",
+                    flush=True,
+                )
         model.eval()
         losses = []
         with torch.no_grad():

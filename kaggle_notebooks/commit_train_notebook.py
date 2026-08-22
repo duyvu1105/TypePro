@@ -15,7 +15,7 @@ from commit_shard_versions import load_credential, run_push
 ROOT = Path(__file__).resolve().parent
 REPO_ROOT = ROOT.parent
 OWNER = "duyvu1105"
-KERNEL_SLUG = "typepro-python-train-and-infer"
+KERNEL_SLUG = "typepro-python-train-infer"
 NOTEBOOK_PATH = ROOT / "12_train_and_infer.ipynb"
 DATASET_SOURCES = ["duyvu1105/typepro-python-generative"]
 CREDENTIAL_PATH = REPO_ROOT / "kaggle.json"
