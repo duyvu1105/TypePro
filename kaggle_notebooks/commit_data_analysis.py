@@ -15,7 +15,7 @@ from commit_shard_versions import load_credential, run_push
 ROOT = Path(__file__).resolve().parent
 REPO_ROOT = ROOT.parent
 OWNER = "duyvu1105"
-KERNEL_SLUG = "typepro-python-data-analysis"
+KERNEL_SLUG = "typepro-python-data-token-analysis"
 NOTEBOOK_PATH = ROOT / "13_data_analysis.ipynb"
 DATASET_SOURCES = ["duyvu1105/typepro-python-generative"]
 CREDENTIAL_PATH = REPO_ROOT / "kaggle.json"
@@ -31,7 +31,7 @@ def kernel_metadata(code_file: str) -> dict:
         "is_private": True,
         "enable_gpu": False,
         "enable_internet": True,
-        "keywords": ["typepro", "token-analysis"],
+        "keywords": [],
         "dataset_sources": DATASET_SOURCES,
         "kernel_sources": [],
         "competition_sources": [],
