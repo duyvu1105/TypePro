@@ -18,6 +18,18 @@ OWNER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{1,49}$")
 # versions of the same existing kernel. Each version owns one disjoint physical
 # modulo partition, while unsplit shards retain their native index/10 coordinate.
 SHARD_PART_COUNTS = {2: 2, 3: 3, 7: 2, 9: 3}
+SHARD_PARTITIONS = {
+    9: [(9, 30), (19, 30), (29, 90), (59, 90), (89, 90)],
+}
+
+
+def physical_partitions(shard_index: int) -> list[tuple[int, int]]:
+    configured = SHARD_PARTITIONS.get(shard_index)
+    if configured is not None:
+        return list(configured)
+    part_count = SHARD_PART_COUNTS.get(shard_index, 1)
+    return [(shard_index + 10 * part_index, 10 * part_count)
+            for part_index in range(part_count)]
 
 
 if "__file__" in globals():
@@ -781,10 +793,8 @@ def canonical_merge_datasets(shard_accounts: list[dict]) -> list[dict]:
     datasets = []
     for account in shard_accounts:
         for index in account["assigned_shards"]:
-            part_count = SHARD_PART_COUNTS.get(index, 1)
-            physical_count = 10 * part_count
-            for part_index in range(part_count):
-                physical_index = index + 10 * part_index
+            partitions = physical_partitions(index)
+            for part_index, (physical_index, physical_count) in enumerate(partitions):
                 datasets.append({
                     "dataset_id": (
                         f"{account['dataset_owner']}/"
@@ -792,7 +802,7 @@ def canonical_merge_datasets(shard_accounts: list[dict]) -> list[dict]:
                     ),
                     "logical_shard_index": index,
                     "part_index": part_index,
-                    "part_count": part_count,
+                    "part_count": len(partitions),
                     "shard_index": physical_index,
                     "shard_count": physical_count,
                     "public_dataset": bool(account["public_dataset"]),
@@ -1676,7 +1686,7 @@ def main(argv: list[str] | None = None) -> None:
             generated.append(path.name)
             shard_notebooks.append({
                 "shard_index": shard_index,
-                "part_count": SHARD_PART_COUNTS.get(shard_index, 1),
+                "part_count": len(physical_partitions(shard_index)),
                 "runner_account": account,
                 "dataset_owner": account,
                 "public_dataset": public_dataset,

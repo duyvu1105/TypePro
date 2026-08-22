@@ -11,7 +11,7 @@ import tempfile
 from pathlib import Path
 
 from commit_shard_versions import load_credential, run_push
-from generate_notebooks import SHARD_PART_COUNTS, validate_merge_datasets
+from generate_notebooks import physical_partitions, validate_merge_datasets
 
 
 ROOT = Path(__file__).resolve().parent
@@ -30,9 +30,7 @@ def merge_dataset_ids() -> list[str]:
     if plan.get("final_dataset_owner") != OWNER:
         raise RuntimeError("Merge plan final owner does not match merge kernel owner")
     datasets = plan.get("datasets")
-    expected_dataset_count = sum(
-        SHARD_PART_COUNTS.get(index, 1) for index in range(10)
-    )
+    expected_dataset_count = sum(len(physical_partitions(index)) for index in range(10))
     if not isinstance(datasets, list) or len(datasets) != expected_dataset_count:
         raise RuntimeError(
             f"Merge plan must contain exactly {expected_dataset_count} physical "
@@ -40,10 +38,9 @@ def merge_dataset_ids() -> list[str]:
         )
     validated = validate_merge_datasets(datasets, 10, OWNER)
     expected_coordinates = {
-        (index + 10 * part_index, 10 * part_count)
+        coordinate
         for index in range(10)
-        for part_count in [SHARD_PART_COUNTS.get(index, 1)]
-        for part_index in range(part_count)
+        for coordinate in physical_partitions(index)
     }
     actual_coordinates = {
         (item["shard_index"], item["shard_count"]) for item in validated

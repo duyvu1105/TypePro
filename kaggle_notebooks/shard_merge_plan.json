@@ -124,7 +124,7 @@
       "dataset_id": "duymign/typepro-build-shard-09",
       "logical_shard_index": 9,
       "part_index": 0,
-      "part_count": 3,
+      "part_count": 5,
       "shard_index": 9,
       "shard_count": 30,
       "public_dataset": true
@@ -133,7 +133,7 @@
       "dataset_id": "duymign/typepro-build-shard-19",
       "logical_shard_index": 9,
       "part_index": 1,
-      "part_count": 3,
+      "part_count": 5,
       "shard_index": 19,
       "shard_count": 30,
       "public_dataset": true
@@ -142,9 +142,27 @@
       "dataset_id": "duymign/typepro-build-shard-29",
       "logical_shard_index": 9,
       "part_index": 2,
-      "part_count": 3,
+      "part_count": 5,
       "shard_index": 29,
-      "shard_count": 30,
+      "shard_count": 90,
+      "public_dataset": true
+    },
+    {
+      "dataset_id": "duymign/typepro-build-shard-59",
+      "logical_shard_index": 9,
+      "part_index": 3,
+      "part_count": 5,
+      "shard_index": 59,
+      "shard_count": 90,
+      "public_dataset": true
+    },
+    {
+      "dataset_id": "duymign/typepro-build-shard-89",
+      "logical_shard_index": 9,
+      "part_index": 4,
+      "part_count": 5,
+      "shard_index": 89,
+      "shard_count": 90,
       "public_dataset": true
     }
   ]

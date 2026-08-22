@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from generate_notebooks import SHARD_PART_COUNTS
+from generate_notebooks import SHARD_PART_COUNTS, physical_partitions
 
 
 ROOT = Path(__file__).resolve().parent
@@ -85,7 +85,7 @@ def load_plan(path: Path) -> tuple[str, int, list[AccountPlan]]:
             raise RuntimeError(f"Invalid kernel slug: {kernel_slug!r}")
         if not isinstance(shard_index, int) or shard_index not in range(shard_count):
             raise RuntimeError(f"Invalid shard index: {shard_index!r}")
-        expected_parts = SHARD_PART_COUNTS.get(shard_index, 1)
+        expected_parts = len(physical_partitions(shard_index))
         if part_count != expected_parts:
             raise RuntimeError(
                 f"Shard {shard_index:02d} must have {expected_parts} part(s), "
@@ -412,11 +412,10 @@ def main(argv: list[str] | None = None) -> None:
         shard_index = plan.assigned_shards[0]
         if shard_index not in requested_shards:
             continue
-        for part_index in range(plan.part_count):
+        partitions = physical_partitions(shard_index)
+        for part_index, (physical_shard_index, physical_shard_count) in enumerate(partitions):
             if args.part is not None and part_index != args.part - 1:
                 continue
-            physical_shard_count = 10 * plan.part_count
-            physical_shard_index = shard_index + 10 * part_index
             rendered = render_shard_version(
                 template,
                 shard_index,

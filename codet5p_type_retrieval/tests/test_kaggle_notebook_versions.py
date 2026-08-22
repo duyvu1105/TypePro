@@ -153,7 +153,7 @@ def test_plan_requires_ten_notebooks_and_five_shards_per_account(tmp_path):
             (tmp_path / notebook_name).write_text("{}", encoding="utf-8")
             shards_plan.append({
                 "shard_index": shard_index,
-                "part_count": generate_notebooks.SHARD_PART_COUNTS.get(shard_index, 1),
+                "part_count": len(generate_notebooks.physical_partitions(shard_index)),
                 "runner_account": account,
                 "dataset_owner": account,
                 "public_dataset": account == "duymign",
@@ -192,7 +192,7 @@ def test_generated_artifacts_are_ten_standalone_notebooks_and_partitioned_merge(
         for index in range(10)
     ]
     assert len({plan.kernel_slug for plan in plans}) == 10
-    assert [plan.part_count for plan in plans] == [1, 1, 2, 3, 1, 1, 1, 2, 1, 3]
+    assert [plan.part_count for plan in plans] == [1, 1, 2, 3, 1, 1, 1, 2, 1, 5]
     for index, plan in enumerate(plans):
         notebook = json.loads(plan.notebook_path.read_text(encoding="utf-8"))
         config = source_with_tag(notebook, "typepro-shard-config")
@@ -214,7 +214,7 @@ def test_plan_rejects_private_non_final_account(tmp_path):
             (tmp_path / notebook_name).write_text("{}", encoding="utf-8")
             shards_plan.append({
                 "shard_index": shard_index,
-                "part_count": generate_notebooks.SHARD_PART_COUNTS.get(shard_index, 1),
+                "part_count": len(generate_notebooks.physical_partitions(shard_index)),
                 "runner_account": account,
                 "dataset_owner": account,
                 "public_dataset": False,
@@ -326,8 +326,8 @@ def test_merge_kernel_metadata_attaches_exact_merge_plan_inputs():
     dataset_ids = commit_merge_finalize.merge_dataset_ids()
     metadata = commit_merge_finalize.kernel_metadata("typepro_merge_finalize.ipynb")
 
-    assert len(dataset_ids) == 16
-    assert len(set(dataset_ids)) == 16
+    assert len(dataset_ids) == 18
+    assert len(set(dataset_ids)) == 18
     assert metadata["id"] == "duyvu1105/merge-dataset"
     assert metadata["dataset_sources"] == dataset_ids
 
@@ -389,12 +389,12 @@ def test_merge_plan_covers_all_logical_shards_without_overlap():
         plan["datasets"], 10, "duyvu1105"
     )
 
-    assert len(datasets) == 16
+    assert len(datasets) == 18
     assert {(item["shard_index"], item["shard_count"]) for item in datasets} == {
         (0, 10), (1, 10), (2, 20), (12, 20),
         (3, 30), (13, 30), (23, 30), (4, 10),
         (5, 10), (6, 10), (7, 20), (17, 20), (8, 10),
-        (9, 30), (19, 30), (29, 30),
+        (9, 30), (19, 30), (29, 90), (59, 90), (89, 90),
     }
 
 
