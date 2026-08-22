@@ -1419,7 +1419,7 @@ def train_notebook(repository: str, branch: str) -> dict:
         REPOSITORY = {repository!r}
         BRANCH = {branch!r}
         MODEL_NAME = "Qwen/Qwen2.5-Coder-1.5B-Instruct"
-        INPUT_LENGTH = 32768
+        INPUT_LENGTH = 8192
         LABEL_LENGTH = 128
         EPOCHS = 3
 

@@ -29,10 +29,10 @@ def main() -> None:
     parser.add_argument("--data-dir", required=True)
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--model-name", default="Qwen/Qwen2.5-Coder-1.5B-Instruct")
-    parser.add_argument("--input-length", type=int, default=32768)
+    parser.add_argument("--input-length", type=int, default=8192)
     parser.add_argument("--label-length", type=int, default=128)
-    parser.add_argument("--batch-size", type=int, default=2)
-    parser.add_argument("--gradient-accumulation-steps", type=int, default=8)
+    parser.add_argument("--batch-size", type=int, default=1)
+    parser.add_argument("--gradient-accumulation-steps", type=int, default=16)
     parser.add_argument("--epochs", type=int, default=3)
     parser.add_argument("--learning-rate", type=float, default=2e-5)
     parser.add_argument("--mixed-precision", default="fp16")
@@ -110,7 +110,13 @@ def main() -> None:
         accelerator.print(f"epoch {epoch + 1}/{args.epochs} started", flush=True)
         for batch_index, batch in enumerate(train_loader, start=1):
             with accelerator.accumulate(model):
-                loss = model(**batch).loss
+                logits_to_keep = min(args.label_length + 1, batch["input_ids"].shape[1])
+                model_batch = dict(batch)
+                model_batch["labels"] = batch["labels"][:, -logits_to_keep:]
+                loss = model(
+                    **model_batch,
+                    logits_to_keep=logits_to_keep,
+                ).loss
                 accelerator.backward(loss)
                 optimizer.step()
                 scheduler.step()
@@ -125,7 +131,13 @@ def main() -> None:
         losses = []
         with torch.no_grad():
             for batch in valid_loader:
-                loss = model(**batch).loss
+                logits_to_keep = min(args.label_length + 1, batch["input_ids"].shape[1])
+                model_batch = dict(batch)
+                model_batch["labels"] = batch["labels"][:, -logits_to_keep:]
+                loss = model(
+                    **model_batch,
+                    logits_to_keep=logits_to_keep,
+                ).loss
                 losses.append(accelerator.gather(loss.detach().repeat(batch["labels"].shape[0])))
         validation_loss = torch.cat(losses).mean().item() if losses else 0.0
         accelerator.print(json.dumps({"epoch": epoch + 1, "validation_loss": validation_loss}))

@@ -14,7 +14,7 @@ def main() -> None:
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--input", required=True)
     parser.add_argument("--output", required=True)
-    parser.add_argument("--input-length", type=int, default=32768)
+    parser.add_argument("--input-length", type=int, default=8192)
     parser.add_argument("--label-length", type=int, default=128)
     parser.add_argument("--batch-size", type=int, default=4)
     args = parser.parse_args()
