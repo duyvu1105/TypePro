@@ -1461,6 +1461,8 @@ def train_notebook(repository: str, branch: str) -> dict:
         from transformers import AutoTokenizer
 
         tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+        # Measurement intentionally keeps long sequences untruncated.
+        tokenizer.model_max_length = 10**9
 
         def empty_token_stats(limit):
             return {
@@ -1536,6 +1538,11 @@ def train_notebook(repository: str, branch: str) -> dict:
         }
         for split in ("train", "validation", "test"):
             raw_token_stats[split] = measure_split(DATA_DIR / f"{split}.jsonl")
+            print(json.dumps({
+                "split": split,
+                "input": finalized_token_stats(raw_token_stats[split]["input"]),
+                "label": finalized_token_stats(raw_token_stats[split]["label"]),
+            }, indent=2, ensure_ascii=False), flush=True)
             for field in ("input", "label"):
                 current = raw_token_stats[split][field]
                 combined = overall[field]
