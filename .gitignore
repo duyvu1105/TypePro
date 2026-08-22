@@ -14,3 +14,8 @@ typepro_kernel_versions/
 
 # Cloud Run dataset downloads
 typepro_cloudrun_downloads/
+/.agents
+/.claude
+/.codex
+/.cursor
+.orchestra-skills.json

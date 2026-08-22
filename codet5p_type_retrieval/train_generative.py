@@ -3,11 +3,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import random
 from pathlib import Path
 
 import torch
 from accelerate import Accelerator
+from accelerate.utils import set_seed
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 from torch.utils.data import DataLoader, Dataset
 from transformers import (
@@ -47,8 +49,8 @@ def main() -> None:
     parser.add_argument("--gradient-checkpointing", action="store_true")
     parser.add_argument("--seed", type=int, default=13)
     args = parser.parse_args()
+    set_seed(args.seed, device_specific=True)
     random.seed(args.seed)
-    torch.manual_seed(args.seed)
 
     accelerator = Accelerator(
         mixed_precision=args.mixed_precision,
@@ -93,7 +95,9 @@ def main() -> None:
             full_sequence = chat_token_ids(tokenizer, row["input"], row["label"])
             if full_sequence[:len(full_prompt)] != full_prompt:
                 raise ValueError("Chat template did not preserve the prompt as a sequence prefix")
-            prompt_ids.append(full_prompt[-prompt_limit:])
+            # Preserve the structured header at the beginning of the prompt.
+            # Inference uses the same policy so train/eval see identical inputs.
+            prompt_ids.append(full_prompt[:prompt_limit])
             completion_ids.append(full_sequence[len(full_prompt):len(full_prompt) + args.label_length])
         sequences = [prompt + completion for prompt, completion in zip(prompt_ids, completion_ids)]
         return left_pad_causal_batch(prompt_ids, sequences, tokenizer.pad_token_id)
@@ -107,17 +111,30 @@ def main() -> None:
         JsonlDataset(data_dir / "validation.jsonl"), batch_size=args.batch_size,
         collate_fn=collate,
     )
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate)
-    steps = max(1, len(train_loader) * args.epochs // args.gradient_accumulation_steps)
-    scheduler = get_linear_schedule_with_warmup(optimizer, max(1, steps // 20), steps)
-    model, optimizer, train_loader, valid_loader, scheduler = accelerator.prepare(
-        model, optimizer, train_loader, valid_loader, scheduler
+    trainable_parameters = [
+        parameter for parameter in model.parameters() if parameter.requires_grad
+    ]
+    optimizer = torch.optim.AdamW(trainable_parameters, lr=args.learning_rate)
+    # Prepare the dataloader first: in multi-GPU mode Accelerate shards it,
+    # so len(train_loader) now reflects the number of local micro-batches.
+    model, optimizer, train_loader, valid_loader = accelerator.prepare(
+        model, optimizer, train_loader, valid_loader
     )
+    updates_per_epoch = max(
+        1, math.ceil(len(train_loader) / args.gradient_accumulation_steps)
+    )
+    total_updates = updates_per_epoch * args.epochs
+    scheduler = get_linear_schedule_with_warmup(
+        optimizer, max(1, total_updates // 20), total_updates
+    )
+    scheduler = accelerator.prepare(scheduler)
     accelerator.print(json.dumps({
         "status": "training_started",
         "train_samples": len(train_loader.dataset),
         "validation_samples": len(valid_loader.dataset),
         "train_batches_per_epoch": len(train_loader),
+        "updates_per_epoch": updates_per_epoch,
+        "total_updates": total_updates,
         "epochs": args.epochs,
     }))
     output = Path(args.output_dir)
@@ -125,6 +142,8 @@ def main() -> None:
     for epoch in range(args.epochs):
         model.train()
         accelerator.print(f"epoch {epoch + 1}/{args.epochs} started", flush=True)
+        loss_window = []
+        last_grad_norm = None
         for batch_index, batch in enumerate(train_loader, start=1):
             with accelerator.accumulate(model):
                 logits_to_keep = min(args.label_length + 1, batch["input_ids"].shape[1])
@@ -135,15 +154,27 @@ def main() -> None:
                     logits_to_keep=logits_to_keep,
                 ).loss
                 accelerator.backward(loss)
+                if accelerator.sync_gradients:
+                    grad_norm = accelerator.clip_grad_norm_(model.parameters(), 1.0)
+                    last_grad_norm = float(grad_norm.detach().float().item())
                 optimizer.step()
                 scheduler.step()
                 optimizer.zero_grad()
+            loss_window.append(float(loss.detach().float().item()))
             if batch_index == 1 or batch_index % 10 == 0:
+                average_loss = sum(loss_window) / len(loss_window)
+                grad_norm_text = (
+                    f"{last_grad_norm:.4f}" if last_grad_norm is not None else "n/a"
+                )
                 accelerator.print(
                     f"epoch {epoch + 1}/{args.epochs} batch "
-                    f"{batch_index}/{len(train_loader)} loss={loss.item():.4f}",
+                    f"{batch_index}/{len(train_loader)} "
+                    f"loss_avg={average_loss:.4f} "
+                    f"lr={optimizer.param_groups[0]['lr']:.3e} "
+                    f"grad_norm={grad_norm_text}",
                     flush=True,
                 )
+                loss_window.clear()
         model.eval()
         losses = []
         with torch.no_grad():

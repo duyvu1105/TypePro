@@ -50,7 +50,7 @@ def main() -> None:
         batch = rows[start:start + args.batch_size]
         prompt_limit = max(1, args.input_length - args.label_length)
         prompt_ids = [
-            chat_token_ids(tokenizer, row["input"])[-prompt_limit:]
+            chat_token_ids(tokenizer, row["input"])[:prompt_limit]
             for row in batch
         ]
         encoded = tokenizer.pad({"input_ids": prompt_ids}, padding=True, return_tensors="pt").to(device)
