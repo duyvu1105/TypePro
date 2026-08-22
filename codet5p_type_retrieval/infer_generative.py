@@ -6,15 +6,17 @@ import json
 from pathlib import Path
 
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from peft import PeftModel
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint", required=True)
+    parser.add_argument("--model-name", default="Qwen/Qwen2.5-Coder-1.5B-Instruct")
     parser.add_argument("--input", required=True)
     parser.add_argument("--output", required=True)
-    parser.add_argument("--input-length", type=int, default=8192)
+    parser.add_argument("--input-length", type=int, default=16384)
     parser.add_argument("--label-length", type=int, default=128)
     parser.add_argument("--batch-size", type=int, default=4)
     args = parser.parse_args()
@@ -22,7 +24,19 @@ def main() -> None:
     tokenizer = AutoTokenizer.from_pretrained(args.checkpoint)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
-    model = AutoModelForCausalLM.from_pretrained(args.checkpoint).to(device).eval()
+    quantization_config = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_quant_type="nf4",
+        bnb_4bit_compute_dtype=torch.float16,
+        bnb_4bit_use_double_quant=True,
+    )
+    base_model = AutoModelForCausalLM.from_pretrained(
+        args.model_name,
+        quantization_config=quantization_config,
+        device_map={"": device},
+        torch_dtype=torch.float16,
+    )
+    model = PeftModel.from_pretrained(base_model, args.checkpoint).to(device).eval()
     model.config.pad_token_id = tokenizer.pad_token_id
     with Path(args.input).open(encoding="utf-8") as handle:
         rows = [json.loads(line) for line in handle if line.strip()]

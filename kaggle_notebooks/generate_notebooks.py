@@ -1594,6 +1594,7 @@ def train_notebook(repository: str, branch: str) -> dict:
         run([
             sys.executable, "-u", PIPELINE_DIR / "infer_generative.py",
             "--checkpoint", OUTPUT_DIR / "best",
+            "--model-name", MODEL_NAME,
             "--input", DATA_DIR / "test.jsonl",
             "--output", predictions,
             "--input-length", INPUT_LENGTH,
