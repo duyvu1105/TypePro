@@ -35,7 +35,7 @@ def main() -> None:
     parser.add_argument("--data-dir", required=True)
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--model-name", default="Qwen/Qwen2.5-Coder-1.5B-Instruct")
-    parser.add_argument("--input-length", type=int, default=16384)
+    parser.add_argument("--input-length", type=int, default=8192)
     parser.add_argument("--label-length", type=int, default=128)
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--gradient-accumulation-steps", type=int, default=16)
@@ -64,7 +64,7 @@ def main() -> None:
     model = AutoModelForCausalLM.from_pretrained(
         args.model_name,
         quantization_config=quantization_config,
-        device_map={"": accelerator.device},
+        device_map={"": accelerator.local_process_index},
         torch_dtype=torch.float16,
     )
     model.config.pad_token_id = tokenizer.pad_token_id

@@ -1573,7 +1573,8 @@ def train_notebook(repository: str, branch: str) -> dict:
         markdown("## Generative sequence-to-sequence fine-tuning"),
         code("""
         run([
-            sys.executable, "-u", PIPELINE_DIR / "train_generative.py",
+            "accelerate", "launch", "--multi_gpu",
+            PIPELINE_DIR / "train_generative.py",
             "--data-dir", DATA_DIR,
             "--output-dir", OUTPUT_DIR,
             "--model-name", MODEL_NAME,
