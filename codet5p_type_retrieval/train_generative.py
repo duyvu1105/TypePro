@@ -17,7 +17,7 @@ from transformers import (
     get_linear_schedule_with_warmup,
 )
 
-from generative_chat import chat_token_ids
+from generative_chat import chat_token_ids, left_pad_causal_batch
 
 
 class JsonlDataset(Dataset):
@@ -96,20 +96,7 @@ def main() -> None:
             prompt_ids.append(full_prompt[-prompt_limit:])
             completion_ids.append(full_sequence[len(full_prompt):len(full_prompt) + args.label_length])
         sequences = [prompt + completion for prompt, completion in zip(prompt_ids, completion_ids)]
-        max_length = max(len(sequence) for sequence in sequences)
-        input_ids = []
-        attention_mask = []
-        labels = []
-        for prompt, sequence in zip(prompt_ids, sequences):
-            padding = max_length - len(sequence)
-            input_ids.append(sequence + [tokenizer.pad_token_id] * padding)
-            attention_mask.append([1] * len(sequence) + [0] * padding)
-            labels.append([-100] * len(prompt) + sequence[len(prompt):] + [-100] * padding)
-        return {
-            "input_ids": torch.tensor(input_ids, dtype=torch.long),
-            "attention_mask": torch.tensor(attention_mask, dtype=torch.long),
-            "labels": torch.tensor(labels, dtype=torch.long),
-        }
+        return left_pad_causal_batch(prompt_ids, sequences, tokenizer.pad_token_id)
 
     data_dir = Path(args.data_dir)
     train_loader = DataLoader(

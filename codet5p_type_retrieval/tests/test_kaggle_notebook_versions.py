@@ -352,6 +352,30 @@ def test_train_notebook_uses_generative_model_not_contrastive_retrieval():
     )
 
 
+def test_generative_batch_uses_left_padding_for_suffix_labels():
+    sys.path.insert(0, str(ROOT / "codet5p_type_retrieval"))
+    from generative_chat import left_pad_causal_batch
+
+    batch = left_pad_causal_batch(
+        prompt_ids=[[10, 11], [20, 21, 22, 23]],
+        sequences=[[10, 11, 30], [20, 21, 22, 23, 40, 41]],
+        pad_token_id=0,
+    )
+
+    assert batch["input_ids"].tolist() == [
+        [0, 0, 0, 10, 11, 30],
+        [20, 21, 22, 23, 40, 41],
+    ]
+    assert batch["attention_mask"].tolist() == [
+        [0, 0, 0, 1, 1, 1],
+        [1, 1, 1, 1, 1, 1],
+    ]
+    assert batch["labels"].tolist() == [
+        [-100, -100, -100, -100, -100, 30],
+        [-100, -100, -100, -100, 40, 41],
+    ]
+
+
 def test_train_kernel_metadata_attaches_final_dataset(tmp_path):
     import commit_train_notebook
 
