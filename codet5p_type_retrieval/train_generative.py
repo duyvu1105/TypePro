@@ -53,13 +53,14 @@ def main() -> None:
     parser.add_argument("--preview-max-chars", type=int, default=1200)
     parser.add_argument("--log-every", type=int, default=10)
     args = parser.parse_args()
-    set_seed(args.seed, device_specific=True)
-    random.seed(args.seed)
-
     accelerator = Accelerator(
         mixed_precision=args.mixed_precision,
         gradient_accumulation_steps=args.gradient_accumulation_steps,
     )
+    # Accelerator must be initialized before device-specific seeding because
+    # set_seed reads the distributed process index from AcceleratorState.
+    set_seed(args.seed, device_specific=True)
+    random.seed(args.seed)
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
