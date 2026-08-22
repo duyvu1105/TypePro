@@ -1418,7 +1418,7 @@ def train_notebook(repository: str, branch: str) -> dict:
         code(f"""
         REPOSITORY = {repository!r}
         BRANCH = {branch!r}
-        MODEL_NAME = "Qwen/Qwen2.5-Coder-1.5B-Instruct"
+        MODEL_NAME = "Qwen/Qwen2.5-Coder-0.5B-Instruct"
         INPUT_LENGTH = 16384
         LABEL_LENGTH = 128
         EPOCHS = 3
@@ -1437,6 +1437,10 @@ def train_notebook(repository: str, branch: str) -> dict:
 
         if not REPO_DIR.exists():
             run(["git", "clone", "--branch", BRANCH, "--single-branch", REPOSITORY, REPO_DIR])
+        else:
+            # A rerun can reuse /kaggle/working/TypePro; refresh it so helper
+            # modules such as generative_chat.py match this notebook version.
+            run(["git", "-C", REPO_DIR, "pull", "--ff-only", "origin", BRANCH])
         PIPELINE_DIR = REPO_DIR / "codet5p_type_retrieval"
         run([sys.executable, "-m", "pip", "install", "-q", "-r", PIPELINE_DIR / "requirements.txt"])
         """),
@@ -1459,7 +1463,9 @@ def train_notebook(repository: str, branch: str) -> dict:
         markdown("## Measure token lengths before training"),
         code("""
         from transformers import AutoTokenizer
-        sys.path.insert(0, str(PIPELINE_DIR))
+        pipeline_path = str(PIPELINE_DIR)
+        if pipeline_path not in sys.path:
+            sys.path.insert(0, pipeline_path)
         from generative_chat import chat_token_ids
 
         tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
