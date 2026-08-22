@@ -6,7 +6,12 @@ from typing import Any
 import torch
 
 
-SYSTEM_PROMPT = "You are a helpful coding assistant."
+SYSTEM_PROMPT = (
+    "You are a Python type inference assistant. "
+    "Infer the exact type annotation for the target using the code context "
+    "and candidate type definitions. Output only the type annotation, "
+    "with no explanation or Markdown."
+)
 
 
 def messages(instruction: str, response: str | None = None) -> list[dict[str, str]]:

@@ -63,7 +63,7 @@ def test_generative_preprocess_writes_tagged_input_and_exact_label(tmp_path):
     raw.mkdir()
     (raw / "owner__repo.jsonl").write_text(json.dumps({
         "id": "one", "url": "https://github.com/owner/repo",
-        "split": "train", "name": "value", "loc": "predict@12",
+        "split": "train", "scope": "arg", "name": "value", "loc": "predict@12",
         "gttype": "torch.Tensor",
         "interprocedural_slice": "def predict(value: <mask>): return value",
         "recommendation_types": [{
@@ -81,9 +81,11 @@ def test_generative_preprocess_writes_tagged_input_and_exact_label(tmp_path):
 
     assert row["label"] == "torch.Tensor"
     assert row["target_function"] == "predict"
+    assert row["target_scope"] == "arg"
     assert len(row["recommendation_types"]) == 10
     for tag in (
-        "[TARGET_NAME]", "[TARGET_FUNCTION]", "[INTERPROCEDURAL_SLICE]",
+        "[TARGET_NAME]", "[TARGET_FUNCTION]", "[TARGET_SCOPE]",
+        "[INTERPROCEDURAL_SLICE]",
         "[RECOMMENDATION_TYPES]", "[TYPE]", "[DEFINITION]",
     ):
         assert tag in row["input"]

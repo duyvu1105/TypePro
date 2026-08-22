@@ -72,13 +72,21 @@ def target_function(row: dict[str, Any]) -> str:
     return value.split("@", 1)[0]
 
 
+def target_scope(row: dict[str, Any]) -> str:
+    """Normalize the target kind exposed to the language model."""
+    value = str(row.get("scope") or row.get("target_scope") or "unknown").strip().casefold()
+    aliases = {"parameter": "arg", "param": "arg", "argument": "arg"}
+    return aliases.get(value, value or "unknown")
+
+
 def format_input(
-    name: str, function: str, code_slice: str,
+    name: str, function: str, scope: str, code_slice: str,
     recommendations: list[dict[str, str]],
 ) -> str:
     sections = [
         f"[TARGET_NAME] {name}",
         f"[TARGET_FUNCTION] {function}",
+        f"[TARGET_SCOPE] {scope}",
         f"[INTERPROCEDURAL_SLICE]\n{code_slice}",
         "[RECOMMENDATION_TYPES]",
     ]
@@ -121,15 +129,17 @@ def main() -> None:
             if split not in SPLITS:
                 split = stable_split(project, args.train_ratio, args.validation_ratio)
             function = target_function(row)
+            scope = target_scope(row)
             item = {
                 "id": str(row.get("id") or f"{project}:{row.get('file', '')}:{index}:{name}"),
                 "project": project,
                 "split": split,
                 "target_name": name,
                 "target_function": function,
+                "target_scope": scope,
                 "interprocedural_slice": code_slice,
                 "recommendation_types": recommendations,
-                "input": format_input(name, function, code_slice, recommendations),
+                "input": format_input(name, function, scope, code_slice, recommendations),
                 "label": label,
                 "source_commit": row.get("source_commit"),
             }

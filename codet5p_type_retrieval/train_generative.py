@@ -18,6 +18,7 @@ from transformers import (
     BitsAndBytesConfig,
     get_linear_schedule_with_warmup,
 )
+from tqdm.auto import tqdm
 
 from generative_chat import chat_token_ids, left_pad_causal_batch
 
@@ -48,6 +49,9 @@ def main() -> None:
     parser.add_argument("--mixed-precision", default="fp16")
     parser.add_argument("--gradient-checkpointing", action="store_true")
     parser.add_argument("--seed", type=int, default=13)
+    parser.add_argument("--preview-samples", type=int, default=2)
+    parser.add_argument("--preview-max-chars", type=int, default=1200)
+    parser.add_argument("--log-every", type=int, default=10)
     args = parser.parse_args()
     set_seed(args.seed, device_specific=True)
     random.seed(args.seed)
@@ -137,11 +141,48 @@ def main() -> None:
         "total_updates": total_updates,
         "epochs": args.epochs,
     }))
+
+    if args.preview_samples > 0:
+        preview_batch = next(iter(train_loader))
+        accelerator.print("===== TRAINING INPUT PREVIEW =====", flush=True)
+        preview_count = min(args.preview_samples, preview_batch["input_ids"].shape[0])
+        for sample_index in range(preview_count):
+            input_ids = preview_batch["input_ids"][sample_index]
+            attention_mask = preview_batch["attention_mask"][sample_index].bool()
+            labels = preview_batch["labels"][sample_index]
+            active_input_ids = input_ids[attention_mask].detach().cpu()
+            active_labels = labels[labels != -100].detach().cpu()
+            prompt_token_count = active_input_ids.numel() - active_labels.numel()
+            prompt_ids = active_input_ids[:prompt_token_count]
+            preview = {
+                "sample": sample_index,
+                "prompt_tokens": int(prompt_ids.numel()),
+                "label_tokens": int(active_labels.numel()),
+                "prompt": tokenizer.decode(
+                    prompt_ids.tolist(), skip_special_tokens=False
+                )[:args.preview_max_chars],
+                "target": tokenizer.decode(
+                    active_labels.tolist(), skip_special_tokens=False
+                )[:args.preview_max_chars],
+                "teacher_forcing_input": tokenizer.decode(
+                    active_input_ids.tolist(), skip_special_tokens=False
+                )[:args.preview_max_chars],
+            }
+            accelerator.print(json.dumps(preview, ensure_ascii=False), flush=True)
+        accelerator.print("===== END TRAINING INPUT PREVIEW =====", flush=True)
+
     output = Path(args.output_dir)
     best_loss = float("inf")
+    progress = tqdm(
+        total=total_updates,
+        desc="training",
+        unit="update",
+        disable=not accelerator.is_local_main_process,
+    )
     for epoch in range(args.epochs):
         model.train()
         accelerator.print(f"epoch {epoch + 1}/{args.epochs} started", flush=True)
+        progress.set_description(f"epoch {epoch + 1}/{args.epochs}")
         loss_window = []
         last_grad_norm = None
         for batch_index, batch in enumerate(train_loader, start=1):
@@ -160,8 +201,17 @@ def main() -> None:
                 optimizer.step()
                 scheduler.step()
                 optimizer.zero_grad()
+                if accelerator.sync_gradients:
+                    progress.update(1)
+                    progress.set_postfix(
+                        loss=f"{loss.detach().float().item():.4f}",
+                        lr=f"{optimizer.param_groups[0]['lr']:.2e}",
+                    )
             loss_window.append(float(loss.detach().float().item()))
-            if batch_index == 1 or batch_index % 10 == 0:
+            if (
+                batch_index == 1
+                or (args.log_every > 0 and batch_index % args.log_every == 0)
+            ):
                 average_loss = sum(loss_window) / len(loss_window)
                 grad_norm_text = (
                     f"{last_grad_norm:.4f}" if last_grad_norm is not None else "n/a"
@@ -199,6 +249,7 @@ def main() -> None:
             )
             if accelerator.is_main_process:
                 tokenizer.save_pretrained(output / "best")
+    progress.close()
 
 
 if __name__ == "__main__":

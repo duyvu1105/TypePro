@@ -46,7 +46,8 @@ def main() -> None:
                     continue
                 row = json.loads(line)
                 required = {
-                    "target_name", "target_function", "interprocedural_slice",
+                    "target_name", "target_function", "target_scope",
+                    "interprocedural_slice",
                     "recommendation_types", "input", "label", "project",
                 }
                 missing = required - row.keys()
@@ -63,7 +64,8 @@ def main() -> None:
                     errors.append(f"{split}:{line_number}: invalid recommendation entry")
                     break
                 if not all(tag in row["input"] for tag in (
-                    "[TARGET_NAME]", "[TARGET_FUNCTION]", "[INTERPROCEDURAL_SLICE]",
+                    "[TARGET_NAME]", "[TARGET_FUNCTION]", "[TARGET_SCOPE]",
+                    "[INTERPROCEDURAL_SLICE]",
                     "[RECOMMENDATION_TYPES]", "[TYPE]", "[DEFINITION]",
                 )):
                     errors.append(f"{split}:{line_number}: tagged input is incomplete")
