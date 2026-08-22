@@ -16,11 +16,14 @@ disjoint physical Dataset partition.
   preprocess the splits, verify them, and publish the final private Dataset.
 - `12_train_and_infer.ipynb`: fine-tune and evaluate after attaching the final
   Dataset.
+- `13_data_analysis.ipynb`: measure token lengths and truncation impact before
+  choosing a training context length.
 - `shard_account_plan.json`: notebook, kernel, owner, visibility and shard
   mapping.
 - `shard_merge_plan.json`: the exact 16 Dataset inputs accepted by merge.
 - `commit_shard_versions.py`: dry-run or push selected/all shard notebooks.
 - `commit_merge_finalize.py`: dry-run, push, or check the merge kernel.
+- `commit_data_analysis.py`: dry-run or push the token-analysis kernel.
 - `generate_notebooks.py`: the only source for generated notebook changes.
 
 Do not edit generated notebooks manually when the change belongs in
@@ -102,7 +105,7 @@ host authentication is the default. Optional explicit Secrets are
 
 ## Generate and test
 
-Generate all ten shard notebooks plus merge/train:
+Generate all ten shard notebooks plus merge/train/analysis:
 
 ```bash
 python kaggle_notebooks/generate_notebooks.py --shards 10 --runner-accounts duyvu1105 duymign --dataset-owner duyvu1105
@@ -122,6 +125,18 @@ Run the repository tests after generator/publisher changes:
 
 ```bash
 python -m pytest codet5p_type_retrieval/tests -q -p no:cacheprovider
+```
+
+Render the token-analysis kernel locally without contacting Kaggle:
+
+```bash
+python kaggle_notebooks/commit_data_analysis.py
+```
+
+Push it after reviewing the rendered payload:
+
+```bash
+uv run --with kaggle==1.7.4.2 python kaggle_notebooks/commit_data_analysis.py --push
 ```
 
 ## Push shards
@@ -199,4 +214,5 @@ with this ten-shard workflow.
 3. Push the ten shard kernels with the correct two credentials.
 4. Verify all 10 Dataset manifests and file listings.
 5. Push/check `11_merge_finalize.ipynb` under `duyvu1105`.
-6. Attach the final Dataset to `12_train_and_infer.ipynb` and run training.
+6. Run `13_data_analysis.ipynb` to choose and document the context length.
+7. Attach the final Dataset to `12_train_and_infer.ipynb` and run training.

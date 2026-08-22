@@ -21,6 +21,8 @@ version, manifest, or exact Dataset file listing.
 - [x] Project KBs are packaged in shards, merged, and copied into final output.
 - [x] Training/inference notebook uses seq2seq label generation, not
   contrastive retrieval.
+- [x] Token-analysis notebook measures exact template lengths and truncation
+  counts for 8k, 12k, 16k, and 32k limits.
 
 ## Local gates
 
@@ -39,5 +41,6 @@ version, manifest, or exact Dataset file listing.
 - [ ] Final Dataset `duyvu1105/typepro-python-generative` is listable.
 - [ ] Final `manifest.json` passes `verify_dataset.py`.
 - [ ] Final Dataset contains one retained KB for every completed project.
+- [ ] Token-analysis kernel completed and its summary artifacts reviewed.
 - [ ] Sampled final rows have 1..10 project-local recommendations and the exact
   ground-truth label.

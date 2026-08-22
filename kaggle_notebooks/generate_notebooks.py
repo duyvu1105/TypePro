@@ -1612,6 +1612,281 @@ def train_notebook(repository: str, branch: str) -> dict:
     ], gpu=True)
 
 
+def data_analysis_notebook(repository: str, branch: str) -> dict:
+    """Create a CPU notebook for detailed generative-token length analysis."""
+    return notebook([
+        markdown("""
+        # TypePro generative dataset: token-length analysis
+
+        This notebook attaches the final processed Dataset, applies the exact
+        Qwen chat template used by training/inference, and reports token
+        distributions for the prompt, label, and full teacher-forcing sample.
+        It also counts samples affected by the training truncation policy at
+        8k, 12k, 16k, and 32k total input-token limits and prints readable
+        examples. The notebook is CPU-only; it does not train a model.
+        """),
+        code(f"""
+        REPOSITORY = {repository!r}
+        BRANCH = {branch!r}
+        MODEL_NAME = "Qwen/Qwen2.5-Coder-0.5B-Instruct"
+        DATASET_SLUG = "duyvu1105/typepro-python-generative"
+        LABEL_LENGTH = 128
+        LIMITS = [8192, 12288, 16384, 32768]
+
+        import json
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        REPO_DIR = Path("/kaggle/working/TypePro")
+        OUTPUT_DIR = Path("/kaggle/working/typepro_token_analysis")
+
+        def run(command, cwd=None):
+            print("+", " ".join(map(str, command)), flush=True)
+            subprocess.run([str(value) for value in command], cwd=cwd, check=True)
+
+        if not REPO_DIR.exists():
+            run(["git", "clone", "--branch", BRANCH, "--single-branch", REPOSITORY, REPO_DIR])
+        else:
+            run(["git", "-C", REPO_DIR, "pull", "--ff-only", "origin", BRANCH])
+        PIPELINE_DIR = REPO_DIR / "codet5p_type_retrieval"
+        run([sys.executable, "-m", "pip", "install", "-q", "transformers>=4.44,<5", "sentencepiece"])
+        if str(PIPELINE_DIR) not in sys.path:
+            sys.path.insert(0, str(PIPELINE_DIR))
+        """),
+        markdown("## Locate the attached final Dataset"),
+        code("""
+        candidates = []
+        for path in Path("/kaggle/input").rglob("manifest.json"):
+            try:
+                value = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if value.get("schema_version") == "typepro-codet5p-generative-project-kb-v2":
+                candidates.append(path.parent)
+        if len(candidates) != 1:
+            raise RuntimeError(f"Expected exactly one final TypePro Dataset, found {candidates}")
+        DATA_DIR = candidates[0]
+        MANIFEST = json.loads((DATA_DIR / "manifest.json").read_text(encoding="utf-8"))
+        print("Using dataset:", DATA_DIR)
+        print(json.dumps({
+            "schema": MANIFEST.get("schema_version"),
+            "rows": {split: value.get("rows") for split, value in MANIFEST.get("output", {}).items()},
+            "projects": MANIFEST.get("projects"),
+            "preprocessing": MANIFEST.get("preprocessing"),
+        }, indent=2, ensure_ascii=False))
+        """),
+        markdown("## Tokenizer and exact chat-template measurement"),
+        code("""
+        import heapq
+        import math
+        from collections import defaultdict
+        from statistics import fmean
+
+        import matplotlib.pyplot as plt
+        import pandas as pd
+        from IPython.display import display
+        from tqdm.auto import tqdm
+        from transformers import AutoTokenizer
+
+        from generative_chat import chat_token_ids
+
+        tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+        # Disable implicit tokenizer truncation: this cell measures raw lengths.
+        tokenizer.model_max_length = 10**9
+
+        def percentile(values, percentage):
+            if not values:
+                return 0
+            ordered = sorted(values)
+            position = (len(ordered) - 1) * percentage / 100.0
+            lower = math.floor(position)
+            upper = math.ceil(position)
+            if lower == upper:
+                return ordered[lower]
+            fraction = position - lower
+            return ordered[lower] * (1 - fraction) + ordered[upper] * fraction
+
+        def shorten(value, limit=1200):
+            value = str(value)
+            return value if len(value) <= limit else value[:limit] + "\\n...[cut for display]..."
+
+        lengths = []
+        # Keep only a small longest-sample pool so the notebook remains memory-safe.
+        longest = []
+        pool_limit = 40
+        for split in ("train", "validation", "test"):
+            path = DATA_DIR / f"{split}.jsonl"
+            expected = MANIFEST.get("output", {}).get(split, {}).get("rows")
+            with path.open(encoding="utf-8") as handle:
+                progress = tqdm(total=expected, desc=f"Tokenizing {split}", unit="sample")
+                for line_number, line in enumerate(handle, start=1):
+                    if not line.strip():
+                        continue
+                    row = json.loads(line)
+                    prompt_ids = chat_token_ids(tokenizer, row["input"])
+                    full_ids = chat_token_ids(tokenizer, row["input"], row["label"])
+                    if full_ids[:len(prompt_ids)] != prompt_ids:
+                        raise ValueError(
+                            f"Chat template prefix mismatch in {split}:{line_number}"
+                        )
+                    record = {
+                        "split": split,
+                        "line": line_number,
+                        "id": row.get("id"),
+                        "project": row.get("project"),
+                        "target_name": row.get("target_name"),
+                        "target_function": row.get("target_function"),
+                        "target_scope": row.get("target_scope", "missing"),
+                        "prompt_tokens": len(prompt_ids),
+                        "label_tokens": len(full_ids) - len(prompt_ids),
+                        "full_tokens": len(full_ids),
+                        "input": row["input"],
+                        "label": row["label"],
+                    }
+                    lengths.append({key: value for key, value in record.items() if key not in {"input", "label"}})
+                    if len(longest) < pool_limit:
+                        longest.append(record)
+                    else:
+                        shortest = min(range(len(longest)), key=lambda index: longest[index]["full_tokens"])
+                        if record["full_tokens"] > longest[shortest]["full_tokens"]:
+                            longest[shortest] = record
+                    progress.update(1)
+                progress.close()
+
+        lengths_df = pd.DataFrame(lengths)
+        print("Measured samples:", len(lengths_df))
+        print("Missing target_scope fields:", int((lengths_df["target_scope"] == "missing").sum()))
+        """),
+        markdown("## Distribution summary"),
+        code("""
+        distribution_rows = []
+        for split, frame in list(lengths_df.groupby("split")) + [("overall", lengths_df)]:
+            for field in ("prompt_tokens", "label_tokens", "full_tokens"):
+                values = frame[field].tolist()
+                distribution_rows.append({
+                    "split": split,
+                    "field": field,
+                    "samples": len(values),
+                    "mean": round(fmean(values), 2) if values else 0.0,
+                    "p50": round(percentile(values, 50), 2),
+                    "p90": round(percentile(values, 90), 2),
+                    "p95": round(percentile(values, 95), 2),
+                    "p99": round(percentile(values, 99), 2),
+                    "max": max(values) if values else 0,
+                })
+        distribution_df = pd.DataFrame(distribution_rows)
+        display(distribution_df)
+        """),
+        markdown("## Truncation impact at 8k / 12k / 16k / 32k"),
+        code("""
+        truncation_rows = []
+        for split, frame in list(lengths_df.groupby("split")) + [("overall", lengths_df)]:
+            for limit in LIMITS:
+                prompt_budget = limit - LABEL_LENGTH
+                prompt_removed = (frame["prompt_tokens"] - prompt_budget).clip(lower=0)
+                label_removed = (frame["label_tokens"] - LABEL_LENGTH).clip(lower=0)
+                prompt_cut = frame["prompt_tokens"] > prompt_budget
+                label_cut = frame["label_tokens"] > LABEL_LENGTH
+                full_over = frame["full_tokens"] > limit
+                any_cut = prompt_cut | label_cut
+                truncation_rows.append({
+                    "split": split,
+                    "input_limit": limit,
+                    "prompt_budget": prompt_budget,
+                    "samples": len(frame),
+                    "prompt_truncated": int(prompt_cut.sum()),
+                    "prompt_truncated_pct": round(100 * prompt_cut.mean(), 2),
+                    "label_truncated": int(label_cut.sum()),
+                    "label_truncated_pct": round(100 * label_cut.mean(), 2),
+                    "full_sequence_over_limit": int(full_over.sum()),
+                    "full_sequence_over_limit_pct": round(100 * full_over.mean(), 2),
+                    "any_training_truncation": int(any_cut.sum()),
+                    "any_training_truncation_pct": round(100 * any_cut.mean(), 2),
+                    "prompt_tokens_removed_total": int(prompt_removed.sum()),
+                    "label_tokens_removed_total": int(label_removed.sum()),
+                })
+        truncation_df = pd.DataFrame(truncation_rows)
+        display(truncation_df)
+        """),
+        markdown("## Readable long/truncated examples"),
+        code("""
+        example_frame = pd.DataFrame(longest).sort_values("full_tokens", ascending=False)
+        for limit in LIMITS:
+            prompt_budget = limit - LABEL_LENGTH
+            candidates = example_frame[
+                (example_frame["prompt_tokens"] > prompt_budget)
+                | (example_frame["label_tokens"] > LABEL_LENGTH)
+            ].head(3)
+            print(f"\\n{'=' * 24} LIMIT {limit:,} {'=' * 24}")
+            if candidates.empty:
+                print("No truncating examples in the longest-sample preview pool.")
+                continue
+            for _, item in candidates.iterrows():
+                print(json.dumps({
+                    "id": item["id"],
+                    "project": item["project"],
+                    "target_name": item["target_name"],
+                    "target_function": item["target_function"],
+                    "target_scope": item["target_scope"],
+                    "prompt_tokens": int(item["prompt_tokens"]),
+                    "label_tokens": int(item["label_tokens"]),
+                    "prompt_budget": prompt_budget,
+                    "prompt_tokens_removed": max(int(item["prompt_tokens"]) - prompt_budget, 0),
+                    "label_tokens_removed": max(int(item["label_tokens"]) - LABEL_LENGTH, 0),
+                }, ensure_ascii=False, indent=2))
+                print("--- input preview ---")
+                print(shorten(item["input"]))
+                print("--- gold label ---")
+                print(item["label"])
+        """),
+        markdown("## Plots"),
+        code("""
+        fig, axes = plt.subplots(1, 2, figsize=(16, 5))
+        axes[0].hist(lengths_df["prompt_tokens"], bins=60, alpha=0.75, label="prompt")
+        axes[0].hist(lengths_df["full_tokens"], bins=60, alpha=0.45, label="full teacher-forcing")
+        for limit in LIMITS:
+            axes[0].axvline(limit, linestyle="--", linewidth=1, label=f"{limit:,}")
+        axes[0].set_title("Token-length distribution")
+        axes[0].set_xlabel("tokens")
+        axes[0].set_ylabel("samples")
+        axes[0].legend()
+
+        overall_trunc = truncation_df[truncation_df["split"] == "overall"]
+        axes[1].bar(
+            [f"{limit // 1024}k" for limit in LIMITS],
+            overall_trunc["any_training_truncation_pct"],
+        )
+        axes[1].set_title("Samples affected by training truncation")
+        axes[1].set_xlabel("configured input length")
+        axes[1].set_ylabel("percentage of samples")
+        axes[1].set_ylim(bottom=0)
+        for index, value in enumerate(overall_trunc["any_training_truncation_pct"]):
+            axes[1].text(index, value, f"{value:.2f}%", ha="center", va="bottom")
+        plt.tight_layout()
+        display(fig)
+        """),
+        markdown("## Save analysis artifacts"),
+        code("""
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        distribution_df.to_csv(OUTPUT_DIR / "token_distribution_summary.csv", index=False)
+        truncation_df.to_csv(OUTPUT_DIR / "truncation_summary.csv", index=False)
+        lengths_df.to_csv(OUTPUT_DIR / "token_lengths.csv", index=False)
+        (OUTPUT_DIR / "analysis_config.json").write_text(
+            json.dumps({
+                "model_name": MODEL_NAME,
+                "label_length": LABEL_LENGTH,
+                "input_limits": LIMITS,
+                "template": "generative_chat.chat_token_ids",
+                "dataset": str(DATA_DIR),
+            }, indent=2),
+            encoding="utf-8",
+        )
+        print("Saved analysis artifacts to", OUTPUT_DIR)
+        """),
+    ], gpu=False)
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--shards", type=int, default=10)
@@ -1742,6 +2017,16 @@ def main(argv: list[str] | None = None) -> None:
         encoding="utf-8",
     )
     generated.append(train_path.name)
+    analysis_path = ROOT / "13_data_analysis.ipynb"
+    analysis_path.write_text(
+        json.dumps(
+            data_analysis_notebook(args.repository, args.branch),
+            ensure_ascii=False,
+            indent=1,
+        ),
+        encoding="utf-8",
+    )
+    generated.append(analysis_path.name)
     plan_path = ROOT / "shard_account_plan.json"
     plan_path.write_text(
         json.dumps(

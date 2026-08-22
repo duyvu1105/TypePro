@@ -202,6 +202,7 @@ def test_generated_artifacts_are_ten_standalone_notebooks_and_partitioned_merge(
 
     assert (NOTEBOOK_DIR / "11_merge_finalize.ipynb").exists()
     assert (NOTEBOOK_DIR / "12_train_and_infer.ipynb").exists()
+    assert (NOTEBOOK_DIR / "13_data_analysis.ipynb").exists()
     assert not (NOTEBOOK_DIR / "03_merge_finalize.ipynb").exists()
     assert not (NOTEBOOK_DIR / "04_train_and_infer.ipynb").exists()
 
@@ -350,6 +351,19 @@ def test_train_notebook_uses_generative_model_not_contrastive_retrieval():
     assert serialized.index("TOKEN LENGTH STATISTICS") < serialized.index(
         "train_generative.py"
     )
+
+
+def test_data_analysis_notebook_reports_all_context_limits():
+    serialized = json.dumps(generate_notebooks.data_analysis_notebook(
+        "https://github.com/duyvu1105/TypePro.git", "main"
+    ))
+
+    assert "typepro-python-generative" in serialized
+    assert "Qwen/Qwen2.5-Coder-0.5B-Instruct" in serialized
+    for limit in (8192, 12288, 16384, 32768):
+        assert str(limit) in serialized
+    assert "prompt_truncated_pct" in serialized
+    assert "Tokenizing {split}" in serialized
 
 
 def test_generative_batch_uses_left_padding_for_suffix_labels():
