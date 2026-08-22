@@ -95,7 +95,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--retrieval-schema-version",
-        default="typepro-legacy-retrieval",
+        default="typepro-class-qualified-retrieval-v1",
         help="Invalidates restored raw slices when recommendation logic changes",
     )
     parser.add_argument(

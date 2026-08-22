@@ -222,6 +222,57 @@ def enclosing_function_name(node: ast.AST) -> str:
     return "global"
 
 
+def enclosing_function_node(node: ast.AST) -> ast.AST | None:
+    current = getattr(node, "parent", None)
+    while current is not None:
+        if isinstance(current, FUNCTION_NODES):
+            return current
+        current = getattr(current, "parent", None)
+    return None
+
+
+def enclosing_class_path(node: ast.AST) -> str:
+    classes = []
+    current = getattr(node, "parent", None)
+    while current is not None:
+        if isinstance(current, ast.ClassDef):
+            classes.append(current.name)
+        current = getattr(current, "parent", None)
+    return ".".join(reversed(classes))
+
+
+def location_function(row: dict[str, Any]) -> tuple[str, int | None]:
+    value = str(row.get("loc") or "global")
+    name, separator, line = value.partition("@")
+    try:
+        lineno = int(line) if separator and line.isdigit() else None
+    except ValueError:
+        lineno = None
+    return name or "global", lineno
+
+
+def find_target_function(root: ast.AST, row: dict[str, Any]) -> ast.AST | None:
+    """Find the function containing the annotation, never by name alone."""
+    local_function, target_lineno = location_function(row)
+    if local_function == "global":
+        return None
+    candidates = [
+        node for node in ast.walk(root)
+        if isinstance(node, FUNCTION_NODES) and node.name == local_function
+    ]
+    if target_lineno is not None:
+        containing = [
+            node for node in candidates
+            if getattr(node, "lineno", 0) <= target_lineno <= getattr(node, "end_lineno", node.lineno)
+        ]
+        if containing:
+            return min(
+                containing,
+                key=lambda node: (node.end_lineno - node.lineno, node.lineno),
+            )
+    return candidates[0] if len(candidates) == 1 else None
+
+
 def assignment_names(node: ast.AST) -> list[str]:
     def target_names(target: ast.AST) -> Iterable[str]:
         if isinstance(target, ast.Name):
@@ -275,7 +326,21 @@ def export_one(
     parse_seconds = time.monotonic() - parse_started
     target_name = str(row.get("name") or "")
     scope = str(row.get("scope") or "")
-    local_function = str(row.get("loc") or "global").split("@")[0]
+    local_function, _ = location_function(row)
+    target_node = find_target_function(root, row)
+    target_class = enclosing_class_path(target_node) if target_node is not None else ""
+    target_function_label = (
+        f"{target_class}.{target_node.name}" if target_node is not None and target_class
+        else target_node.name if target_node is not None
+        else local_function
+    )
+    qualified_target = None
+    if target_node is not None and function_methods is not None:
+        qualified_target = function_methods.resolve_function_qualified_name(
+            str(file_path), target_node.name, target_class
+        )
+        if qualified_target == target_node.name and target_class:
+            qualified_target = target_function_label
     slicer = Slicer(
         str(file_path),
         function_methods=function_methods,
@@ -286,9 +351,7 @@ def export_one(
     slicing_started = time.monotonic()
 
     if scope == "arg":
-        for node in ast.walk(root):
-            if not isinstance(node, FUNCTION_NODES) or node.name != local_function:
-                continue
+        for node in ([target_node] if target_node is not None else []):
             parameters = list(getattr(node.args, "posonlyargs", [])) + list(node.args.args) + list(node.args.kwonlyargs)
             if node.args.vararg:
                 parameters.append(node.args.vararg)
@@ -297,19 +360,24 @@ def export_one(
             parameter = next((item for item in parameters if item.arg == target_name), None)
             if parameter is not None:
                 parameter.annotation = ast.Name(id="mask", ctx=ast.Load())
-                code_slice = slicer.slicing_params(node, root, target_name, str(file_path)).replace("mask", "<mask>")
+                code_slice = slicer.slicing_params(
+                    node, root, target_name, str(file_path),
+                    qualified_function_name=qualified_target,
+                ).replace("mask", "<mask>")
                 break
     elif scope == "return":
-        for node in ast.walk(root):
-            if isinstance(node, FUNCTION_NODES) and node.name == target_name:
-                node.returns = ast.Name(id="mask", ctx=ast.Load())
-                code_slice = slicer.slicing_func(node, root, str(file_path)).replace("mask", "<mask>")
-                break
+        node = target_node
+        if node is not None and (target_name == node.name or target_name == local_function):
+            node.returns = ast.Name(id="mask", ctx=ast.Load())
+            code_slice = slicer.slicing_func(
+                node, root, str(file_path),
+                qualified_function_name=qualified_target,
+            ).replace("mask", "<mask>")
     else:
         for node in ast.walk(root):
             if not isinstance(node, ASSIGNMENT_NODES) or target_name not in assignment_names(node):
                 continue
-            if local_function != "global" and enclosing_function_name(node) != local_function:
+            if local_function != "global" and enclosing_function_node(node) is not target_node:
                 continue
             original = ast.unparse(node)
             sliced = slicer.slicing_var(node, root, str(file_path))
@@ -322,6 +390,12 @@ def export_one(
     result = dict(row)
     result["file"] = str(row.get("file") or row.get("path") or file_path)
     result["language"] = "python"
+    if target_node is not None:
+        result["target_method"] = target_node.name
+        result["target_class"] = target_class or None
+        result["target_function"] = target_function_label
+        if qualified_target and qualified_target != target_node.name:
+            result["qualified_target_function"] = qualified_target
     result["interprocedural_slice"] = code_slice
     seed_recommendations = recommendation_objects(slicer.get_type_recommend())
     recommendations = (

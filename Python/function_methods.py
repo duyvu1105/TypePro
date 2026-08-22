@@ -142,10 +142,35 @@ class Function_methods:
 
         return res
 
-    def resolve_function_qualified_name(self, file_path: str, func_name: str) -> str:
+    def resolve_function_qualified_name(
+        self, file_path: str, func_name: str, class_name: str = ""
+    ) -> str:
+        """Resolve a function using its file and optional enclosing class.
+
+        ``func_name`` alone is ambiguous for methods such as ``__init__``.  A
+        class path (``Outer.Inner``) narrows the candidates to the exact
+        qualified definition.  A dotted input is treated as an already
+        qualified class/method name and is only accepted when it exists in the
+        file index; otherwise we return it as a conservative fallback.
+        """
+        if "." in func_name and not class_name:
+            candidates = [
+                item.qualified_name
+                for item in self.total_function_data
+                if item.file_name
+                and self._normalized_path(item.file_name) == self._normalized_path(file_path)
+                and item.qualified_name.endswith(f".{func_name}")
+            ]
+            return candidates[0] if len(candidates) == 1 else func_name
         candidates = self._function_definitions_by_file_and_name.get(
             (self._normalized_path(file_path), func_name), ()
         )
+        if class_name:
+            suffix = f".{class_name}.{func_name}"
+            candidates = tuple(
+                item for item in candidates
+                if item.qualified_name.endswith(suffix)
+            )
         qualified_names = [item.qualified_name for item in candidates if item.qualified_name]
         return qualified_names[0] if len(qualified_names) == 1 else func_name
 

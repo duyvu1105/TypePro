@@ -189,6 +189,57 @@ def test_shared_project_index_produces_identical_export_record(tmp_path, monkeyp
     assert without_runtime_timings(shared) == without_runtime_timings(uncached)
 
 
+def test_export_selects_class_method_by_location_and_filters_same_named_method(
+    tmp_path, monkeypatch
+):
+    project = tmp_path / "owner" / "project"
+    project.mkdir(parents=True)
+    source = project / "models.py"
+    source.write_text(
+        "class Left:\n"
+        "    def __init__(self, value: LeftType):\n"
+        "        self.value = value\n"
+        "\n"
+        "class Right:\n"
+        "    def __init__(self, value: RightType):\n"
+        "        self.value = value\n"
+        "\n"
+        "left = Left(1)\n"
+        "right = Right(2)\n",
+        encoding="utf-8",
+    )
+    index_dir = tmp_path / "index"
+    build_project_index(project, index_dir)
+    monkeypatch.setattr(
+        Function_methods, "project_data_path",
+        str(index_dir / "project_function_defined.json"),
+    )
+    monkeypatch.setattr(
+        Function_methods, "project_use_path",
+        str(index_dir / "project_function_use.json"),
+    )
+    monkeypatch.setattr(
+        Function_methods, "project_class_path",
+        str(index_dir / "project_class_defined.json"),
+    )
+    row = {
+        "file": str(source),
+        "url": "https://github.com/owner/project",
+        "name": "value",
+        "loc": "__init__@2",
+        "scope": "arg",
+        "gttype": "LeftType",
+    }
+
+    result = export_one(row, source, function_methods=Function_methods(str(project)))
+
+    assert result["target_function"] == "Left.__init__"
+    assert result["qualified_target_function"] == "models.Left.__init__"
+    assert "def __init__(self, value: <mask>)" in result["interprocedural_slice"]
+    assert "RightType" not in result["interprocedural_slice"]
+    assert "def __init__(self, value: RightType)" not in result["interprocedural_slice"]
+
+
 def test_exporter_adds_exact_import_symbol_without_ground_truth_lookup(
     tmp_path, monkeypatch
 ):

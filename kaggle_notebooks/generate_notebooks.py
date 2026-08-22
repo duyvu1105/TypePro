@@ -457,7 +457,7 @@ def shard_notebook(
         # This rerun keeps built-in annotations and adds function returns.
         INCLUDE_BUILTINS = True
         INCLUDE_RETURNS = True
-        RETRIEVAL_SCHEMA_VERSION = "typepro-project-kb-top10-generative-v2"
+        RETRIEVAL_SCHEMA_VERSION = "typepro-project-kb-top10-generative-v3-class-qualified"
 
         from pathlib import Path
 
@@ -717,6 +717,9 @@ def shard_notebook(
             "--slice-index-timeout-seconds", SLICE_INDEX_TIMEOUT_SECONDS,
             "--clone-timeout-seconds", CLONE_TIMEOUT_SECONDS,
             "--retrieval-schema-version", RETRIEVAL_SCHEMA_VERSION,
+            # The class-qualified slice implementation invalidates every
+            # existing raw_slices file, even when metadata/KBs can be reused.
+            "--force-projects",
             "--build-import-kb",
             "--download-missing-imports",
             "--kb-max-files-per-package", 3000,

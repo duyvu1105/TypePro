@@ -815,7 +815,12 @@ class Slicer:
                 matches.append(node)
         return matches
 
-    def collect_func_slicing(self,node: Union[ast.FunctionDef, ast.AsyncFunctionDef], file_path: str):
+    def collect_func_slicing(
+        self,
+        node: Union[ast.FunctionDef, ast.AsyncFunctionDef],
+        file_path: str,
+        qualified_function_name: str | None = None,
+    ):
 
         with open(file_path, 'r', encoding='utf-8') as f:
             source = f.read()
@@ -851,7 +856,7 @@ class Slicer:
                                 if node2.id in lhs:
                                     func_return_data.append(ast.get_source_segment(source, d))
 
-        qualified_function_name = self.Funcion_methods.resolve_function_qualified_name(
+        qualified_function_name = qualified_function_name or self.Funcion_methods.resolve_function_qualified_name(
             file_path, function_name
         )
         total_use_data = self.function_use_data(
@@ -1004,7 +1009,10 @@ class Slicer:
         self.add_high_recall_recommendations(target_var_name, total_code, file_path)
         return total_code
 
-    def slicing_func(self,func_node: ast.AST, root: str, file_path: str):
+    def slicing_func(
+        self, func_node: ast.AST, root: str, file_path: str,
+        qualified_function_name: str | None = None,
+    ):
         with open(file_path, 'r', encoding='utf-8') as f:
             source = f.read()
         if func_node:
@@ -1013,7 +1021,10 @@ class Slicer:
             for i_f in import_infos:
                 total_code = total_code + ast.get_source_segment(source, i_f) + "\n"
 
-            func_slicing = self.collect_func_slicing(func_node, file_path)
+            func_slicing = self.collect_func_slicing(
+                func_node, file_path,
+                qualified_function_name=qualified_function_name,
+            )
             total_code = total_code + func_slicing
 
             func_sig_list.clear()
@@ -1021,7 +1032,10 @@ class Slicer:
 
         return ""
 
-    def slicing_params(self,func_node: ast.AST, root: ast.AST, param_name: str, file_path: str):
+    def slicing_params(
+        self, func_node: ast.AST, root: ast.AST, param_name: str, file_path: str,
+        qualified_function_name: str | None = None,
+    ):
         total_code_list = []
         total_code_seen = set()
 
@@ -1051,10 +1065,10 @@ class Slicer:
             total_code_list.append(function_code)
             total_code_seen.add(function_code)
 
-            qualified_function_name = self.Funcion_methods.resolve_function_qualified_name(
+            resolved_name = qualified_function_name or self.Funcion_methods.resolve_function_qualified_name(
                 file_path, func_name
             )
-            total_use_data = self.function_use_data(qualified_function_name, sigs)
+            total_use_data = self.function_use_data(resolved_name, sigs)
             for fu in total_use_data:
                 _append_unique(total_code_list, total_code_seen, fu)
 
