@@ -1425,6 +1425,8 @@ def train_notebook(repository: str, branch: str) -> dict:
         INPUT_LENGTH = 16384
         LABEL_LENGTH = 128
         EPOCHS = 3
+        TRAIN_BATCH_SIZE = 2
+        GRADIENT_ACCUMULATION_STEPS = 8
 
         import json
         import subprocess
@@ -1588,12 +1590,13 @@ def train_notebook(repository: str, branch: str) -> dict:
             "--model-name", MODEL_NAME,
             "--input-length", INPUT_LENGTH,
             "--label-length", LABEL_LENGTH,
-            "--batch-size", 1,
-            "--gradient-accumulation-steps", 16,
+            "--batch-size", TRAIN_BATCH_SIZE,
+            "--gradient-accumulation-steps", GRADIENT_ACCUMULATION_STEPS,
             "--epochs", EPOCHS,
             "--learning-rate", "2e-5",
             "--mixed-precision", "fp16",
             "--gradient-checkpointing",
+            "--group-by-length",
             "--seed", 13,
         ])
         """),

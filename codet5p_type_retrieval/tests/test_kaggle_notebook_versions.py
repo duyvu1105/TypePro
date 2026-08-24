@@ -349,6 +349,9 @@ def test_train_notebook_uses_generative_model_not_contrastive_retrieval():
     assert "min_tokens" in serialized
     assert "max_tokens" in serialized
     assert "chat_token_ids" in serialized
+    assert "TRAIN_BATCH_SIZE = 2" in serialized
+    assert "GRADIENT_ACCUMULATION_STEPS = 8" in serialized
+    assert "--group-by-length" in serialized
     assert serialized.index("TOKEN LENGTH STATISTICS") < serialized.index(
         "train_generative.py"
     )

@@ -21,6 +21,7 @@ from transformers import (
 from tqdm.auto import tqdm
 
 from generative_chat import chat_token_ids, left_pad_causal_batch
+from length_grouping import LengthGroupedSampler
 
 
 class JsonlDataset(Dataset):
@@ -33,6 +34,17 @@ class JsonlDataset(Dataset):
 
     def __getitem__(self, index):
         return self.rows[index]
+
+
+def training_sequence_length(row, tokenizer, input_length: int, label_length: int) -> int:
+    """Return the post-truncation sequence length used by ``collate``."""
+    prompt_ids = chat_token_ids(tokenizer, row["input"])
+    full_ids = chat_token_ids(tokenizer, row["input"], row["label"])
+    if full_ids[:len(prompt_ids)] != prompt_ids:
+        raise ValueError("Chat template did not preserve the prompt as a sequence prefix")
+    prompt_limit = max(1, input_length - label_length)
+    completion_length = min(max(0, len(full_ids) - len(prompt_ids)), label_length)
+    return min(len(prompt_ids), prompt_limit) + completion_length
 
 
 def main() -> None:
@@ -52,6 +64,13 @@ def main() -> None:
     parser.add_argument("--preview-samples", type=int, default=2)
     parser.add_argument("--preview-max-chars", type=int, default=1200)
     parser.add_argument("--log-every", type=int, default=10)
+    parser.add_argument(
+        "--group-by-length",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Group similarly sized samples within shuffled windows to reduce padding",
+    )
+    parser.add_argument("--length-grouping-window", type=int, default=50)
     args = parser.parse_args()
     accelerator = Accelerator(
         mixed_precision=args.mixed_precision,
@@ -108,9 +127,28 @@ def main() -> None:
         return left_pad_causal_batch(prompt_ids, sequences, tokenizer.pad_token_id)
 
     data_dir = Path(args.data_dir)
+    train_dataset = JsonlDataset(data_dir / "train.jsonl")
+    train_sampler = None
+    if args.group_by_length:
+        accelerator.print("Measuring train sequence lengths for bucketing...", flush=True)
+        train_lengths = [
+            training_sequence_length(
+                row, tokenizer, args.input_length, args.label_length
+            )
+            for row in train_dataset.rows
+        ]
+        train_sampler = LengthGroupedSampler(
+            train_lengths,
+            batch_size=args.batch_size,
+            seed=args.seed,
+            window_batches=args.length_grouping_window,
+        )
     train_loader = DataLoader(
-        JsonlDataset(data_dir / "train.jsonl"), batch_size=args.batch_size,
-        shuffle=True, collate_fn=collate,
+        train_dataset,
+        batch_size=args.batch_size,
+        sampler=train_sampler,
+        shuffle=train_sampler is None,
+        collate_fn=collate,
     )
     valid_loader = DataLoader(
         JsonlDataset(data_dir / "validation.jsonl"), batch_size=args.batch_size,
@@ -141,6 +179,10 @@ def main() -> None:
         "updates_per_epoch": updates_per_epoch,
         "total_updates": total_updates,
         "epochs": args.epochs,
+        "group_by_length": args.group_by_length,
+        "length_grouping_window_batches": (
+            args.length_grouping_window if args.group_by_length else None
+        ),
     }))
 
     if args.preview_samples > 0:
