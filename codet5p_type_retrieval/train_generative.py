@@ -59,7 +59,18 @@ def main() -> None:
     parser.add_argument("--epochs", type=int, default=3)
     parser.add_argument("--learning-rate", type=float, default=2e-5)
     parser.add_argument("--mixed-precision", default="fp16")
-    parser.add_argument("--gradient-checkpointing", action="store_true")
+    parser.add_argument(
+        "--attn-implementation",
+        choices=("sdpa", "flash_attention_2", "eager"),
+        default="sdpa",
+        help="Attention backend; SDPA is memory-efficient and needs no extra package",
+    )
+    parser.add_argument(
+        "--gradient-checkpointing",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Trade additional compute for lower activation memory (enabled by default)",
+    )
     parser.add_argument("--seed", type=int, default=13)
     parser.add_argument("--preview-samples", type=int, default=2)
     parser.add_argument("--preview-max-chars", type=int, default=1200)
@@ -94,9 +105,14 @@ def main() -> None:
         quantization_config=quantization_config,
         device_map={"": accelerator.local_process_index},
         torch_dtype=torch.float16,
+        attn_implementation=args.attn_implementation,
     )
     model.config.pad_token_id = tokenizer.pad_token_id
-    model = prepare_model_for_kbit_training(model)
+    model = prepare_model_for_kbit_training(
+        model,
+        use_gradient_checkpointing=args.gradient_checkpointing,
+        gradient_checkpointing_kwargs={"use_reentrant": False},
+    )
     model = get_peft_model(model, LoraConfig(
         r=16,
         lora_alpha=32,
@@ -107,7 +123,6 @@ def main() -> None:
     ))
     model.print_trainable_parameters()
     if args.gradient_checkpointing:
-        model.gradient_checkpointing_enable()
         model.config.use_cache = False
 
     def collate(rows):
