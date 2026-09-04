@@ -1427,6 +1427,9 @@ def train_notebook(repository: str, branch: str) -> dict:
         EPOCHS = 3
         TRAIN_BATCH_SIZE = 2
         GRADIENT_ACCUMULATION_STEPS = 8
+        # Set an integer (for example 10000) to train on a deterministic subset.
+        # Leave as None to use the entire train split.
+        TRAIN_SAMPLES = None
 
         import json
         import subprocess
@@ -1582,7 +1585,7 @@ def train_notebook(repository: str, branch: str) -> dict:
         """),
         markdown("## Generative sequence-to-sequence fine-tuning"),
         code("""
-        run([
+        train_command = [
             "accelerate", "launch", "--multi_gpu",
             PIPELINE_DIR / "train_generative.py",
             "--data-dir", DATA_DIR,
@@ -1598,7 +1601,10 @@ def train_notebook(repository: str, branch: str) -> dict:
             "--gradient-checkpointing",
             "--group-by-length",
             "--seed", 13,
-        ])
+        ]
+        if TRAIN_SAMPLES is not None:
+            train_command.extend(["--train-samples", TRAIN_SAMPLES])
+        run(train_command)
         """),
         markdown("## Batched inference and test metrics"),
         code("""

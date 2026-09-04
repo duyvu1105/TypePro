@@ -216,3 +216,21 @@ with this ten-shard workflow.
 5. Push/check `11_merge_finalize.ipynb` under `duyvu1105`.
 6. Run `13_data_analysis.ipynb` to choose and document the context length.
 7. Attach the final Dataset to `12_train_and_infer.ipynb` and run training.
+
+## Limit training samples
+
+`train_generative.py` uses the entire train split when `--train-samples` is
+omitted. To train on a deterministic random subset while keeping the complete
+validation split, run for example:
+
+```bash
+accelerate launch --multi_gpu codet5p_type_retrieval/train_generative.py \
+  --data-dir /kaggle/input/typepro-python-generative \
+  --output-dir /kaggle/working/codet5p-typepro-python \
+  --train-samples 10000
+```
+
+In `12_train_and_infer.ipynb`, set `TRAIN_SAMPLES = 10000`. Leave it as `None`
+to train on every training sample. The selected subset is reproducible for the
+same `--seed`; requesting zero, a negative value, or more rows than available
+is rejected.

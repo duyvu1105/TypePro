@@ -12,7 +12,13 @@ from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 from transformers import get_cosine_schedule_with_warmup, set_seed
 
-from data_utils import ContrastiveCollator, JsonlDataset, canonical_type_name, print_jsonl_samples
+from data_utils import (
+    ContrastiveCollator,
+    JsonlDataset,
+    canonical_type_name,
+    print_jsonl_samples,
+    select_training_samples,
+)
 from model import CodeT5pBiEncoder
 
 
@@ -35,6 +41,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gradient-checkpointing", action="store_true")
     parser.add_argument("--num-workers", type=int, default=2)
     parser.add_argument("--seed", type=int, default=13)
+    parser.add_argument(
+        "--train-samples",
+        type=int,
+        default=None,
+        help="Number of deterministic random training samples; omitted uses the full train split",
+    )
     parser.add_argument("--preview-samples", type=int, default=2, help="Samples printed per split before training; 0 disables")
     parser.add_argument("--preview-max-chars", type=int, default=1600, help="Maximum characters per sample; 0 prints all")
     return parser.parse_args()
@@ -77,7 +89,9 @@ def main() -> None:
     if missing_files:
         raise FileNotFoundError(f"Missing dataset split files: {missing_files}")
     datasets = {split: JsonlDataset(path) for split, path in split_paths.items()}
-    train_data = datasets["train"]
+    train_data = select_training_samples(
+        datasets["train"], args.train_samples, args.seed
+    )
     validation_data = datasets["validation"]
     if not train_data or not validation_data:
         raise ValueError("train.jsonl and validation.jsonl must both contain examples")

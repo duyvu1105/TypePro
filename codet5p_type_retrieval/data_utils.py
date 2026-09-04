@@ -302,6 +302,35 @@ class JsonlDataset:
         return json.loads(self._handle.readline())
 
 
+class DatasetSubset:
+    """Index-based dataset view used for deterministic training subsampling."""
+
+    def __init__(self, dataset: Any, indices: list[int]):
+        self.dataset = dataset
+        self.indices = indices
+
+    def __len__(self) -> int:
+        return len(self.indices)
+
+    def __getitem__(self, index: int) -> Any:
+        return self.dataset[self.indices[index]]
+
+
+def select_training_samples(dataset: Any, sample_count: int | None, seed: int) -> Any:
+    """Select exactly ``sample_count`` deterministic random rows, or all rows."""
+    if sample_count is None:
+        return dataset
+    if sample_count <= 0:
+        raise ValueError("--train-samples must be greater than 0")
+    if sample_count > len(dataset):
+        raise ValueError(
+            f"--train-samples={sample_count} exceeds the {len(dataset)} available "
+            "training samples"
+        )
+    indices = sorted(random.Random(seed).sample(range(len(dataset)), sample_count))
+    return DatasetSubset(dataset, indices)
+
+
 class ContrastiveCollator:
     def __init__(self, tokenizer: Any, query_length: int, candidate_length: int, training: bool):
         self.tokenizer = tokenizer

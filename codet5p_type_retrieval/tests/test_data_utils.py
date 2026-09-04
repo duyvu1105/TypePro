@@ -12,6 +12,7 @@ from data_utils import (
     normalize_recommendations,
     print_jsonl_samples,
     recommendations_from_prompt,
+    select_training_samples,
 )
 
 
@@ -68,6 +69,28 @@ def test_jsonl_dataset_indexes_without_loading_all_rows():
     assert len(dataset) == 2
     assert dataset[1]["id"] == 2
     assert dataset[0]["id"] == 1
+
+
+def test_training_sample_selection_is_deterministic_and_optional():
+    rows = list(range(20))
+
+    first = select_training_samples(rows, sample_count=5, seed=13)
+    second = select_training_samples(rows, sample_count=5, seed=13)
+
+    assert select_training_samples(rows, sample_count=None, seed=13) is rows
+    assert [first[index] for index in range(len(first))] == [
+        second[index] for index in range(len(second))
+    ]
+    assert len(first) == 5
+
+
+def test_training_sample_selection_rejects_invalid_counts():
+    import pytest
+
+    with pytest.raises(ValueError, match="greater than 0"):
+        select_training_samples([1, 2], sample_count=0, seed=13)
+    with pytest.raises(ValueError, match="exceeds"):
+        select_training_samples([1, 2], sample_count=3, seed=13)
 
 
 def test_notebook_previews_are_bounded_and_stream_jsonl(capsys):

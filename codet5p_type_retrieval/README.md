@@ -179,6 +179,7 @@ python train.py \
   --learning-rate 2e-5 \
   --mixed-precision fp16 \
   --gradient-checkpointing \
+  --train-samples 10000 \
   --preview-samples 2 \
   --preview-max-chars 1600
 ```
@@ -283,9 +284,14 @@ python train.py \
   --learning-rate 2e-5 \
   --mixed-precision fp16 \
   --gradient-checkpointing \
+  --train-samples 10000 \
   --preview-samples 2 \
   --preview-max-chars 1600
 ```
+
+`--train-samples 10000` chọn ngẫu nhiên có tính tái lập đúng 10.000 mẫu từ tập
+train (theo `--seed`). Bỏ hẳn tham số `--train-samples` để dùng toàn bộ tập
+train; validation vẫn luôn dùng toàn bộ.
 
 Nếu T4 bị OOM, giảm `--batch-size 2` hoặc `--query-length 384`. Checkpoint tốt nhất nằm trong `codet5p-typepro/best`.
 

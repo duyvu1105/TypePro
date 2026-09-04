@@ -20,6 +20,7 @@ from transformers import (
 )
 from tqdm.auto import tqdm
 
+from data_utils import select_training_samples
 from generative_chat import chat_token_ids, left_pad_causal_batch
 from length_grouping import LengthGroupedSampler
 
@@ -72,6 +73,12 @@ def main() -> None:
         help="Trade additional compute for lower activation memory (enabled by default)",
     )
     parser.add_argument("--seed", type=int, default=13)
+    parser.add_argument(
+        "--train-samples",
+        type=int,
+        default=None,
+        help="Number of deterministic random training samples; omitted uses the full train split",
+    )
     parser.add_argument("--preview-samples", type=int, default=2)
     parser.add_argument("--preview-max-chars", type=int, default=1200)
     parser.add_argument("--log-every", type=int, default=10)
@@ -142,7 +149,10 @@ def main() -> None:
         return left_pad_causal_batch(prompt_ids, sequences, tokenizer.pad_token_id)
 
     data_dir = Path(args.data_dir)
-    train_dataset = JsonlDataset(data_dir / "train.jsonl")
+    full_train_dataset = JsonlDataset(data_dir / "train.jsonl")
+    train_dataset = select_training_samples(
+        full_train_dataset, args.train_samples, args.seed
+    )
     train_sampler = None
     if args.group_by_length:
         accelerator.print("Measuring train sequence lengths for bucketing...", flush=True)
@@ -150,7 +160,7 @@ def main() -> None:
             training_sequence_length(
                 row, tokenizer, args.input_length, args.label_length
             )
-            for row in train_dataset.rows
+            for row in train_dataset
         ]
         train_sampler = LengthGroupedSampler(
             train_lengths,
@@ -189,6 +199,7 @@ def main() -> None:
     accelerator.print(json.dumps({
         "status": "training_started",
         "train_samples": len(train_loader.dataset),
+        "full_train_samples": len(full_train_dataset),
         "validation_samples": len(valid_loader.dataset),
         "train_batches_per_epoch": len(train_loader),
         "updates_per_epoch": updates_per_epoch,
