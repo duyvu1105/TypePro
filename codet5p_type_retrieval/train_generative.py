@@ -195,7 +195,9 @@ def main() -> None:
     scheduler = get_linear_schedule_with_warmup(
         optimizer, max(1, total_updates // 20), total_updates
     )
-    scheduler = accelerator.prepare(scheduler)
+    # total_updates already uses the sharded loader's optimizer-update count.
+    # Keep this scheduler unwrapped: AcceleratedScheduler can step once per
+    # process, which would exhaust this schedule early on multiple GPUs.
     accelerator.print(json.dumps({
         "status": "training_started",
         "train_samples": len(train_loader.dataset),
@@ -253,6 +255,8 @@ def main() -> None:
         accelerator.print(f"epoch {epoch + 1}/{args.epochs} started", flush=True)
         progress.set_description(f"epoch {epoch + 1}/{args.epochs}")
         loss_window = []
+        # [summed token loss, supervised token count] across all training batches.
+        epoch_loss_totals = torch.zeros(2, dtype=torch.float64, device=accelerator.device)
         last_grad_norm = None
         for batch_index, batch in enumerate(train_loader, start=1):
             with accelerator.accumulate(model):
@@ -268,7 +272,8 @@ def main() -> None:
                     grad_norm = accelerator.clip_grad_norm_(model.parameters(), 1.0)
                     last_grad_norm = float(grad_norm.detach().float().item())
                 optimizer.step()
-                scheduler.step()
+                if accelerator.sync_gradients and not accelerator.optimizer_step_was_skipped:
+                    scheduler.step()
                 optimizer.zero_grad()
                 if accelerator.sync_gradients:
                     progress.update(1)
@@ -277,6 +282,11 @@ def main() -> None:
                         lr=f"{optimizer.param_groups[0]['lr']:.2e}",
                     )
             loss_window.append(float(loss.detach().float().item()))
+            # Causal-LM loss shifts labels by one; the first label in the
+            # retained suffix has no corresponding prediction in that suffix.
+            label_tokens = (model_batch["labels"][:, 1:] != -100).sum()
+            epoch_loss_totals[0] += loss.detach().double() * label_tokens
+            epoch_loss_totals[1] += label_tokens
             if (
                 batch_index == 1
                 or (args.log_every > 0 and batch_index % args.log_every == 0)
@@ -294,6 +304,15 @@ def main() -> None:
                     flush=True,
                 )
                 loss_window.clear()
+        epoch_loss_totals = accelerator.reduce(epoch_loss_totals, reduction="sum")
+        train_loss_epoch = (
+            epoch_loss_totals[0] / epoch_loss_totals[1].clamp_min(1)
+        ).item()
+        accelerator.print(json.dumps({
+            "epoch": epoch + 1,
+            "train_loss_epoch": train_loss_epoch,
+            "train_label_tokens": int(epoch_loss_totals[1].item()),
+        }), flush=True)
         model.eval()
         losses = []
         with torch.no_grad():
@@ -307,7 +326,11 @@ def main() -> None:
                 ).loss
                 losses.append(accelerator.gather(loss.detach().repeat(batch["labels"].shape[0])))
         validation_loss = torch.cat(losses).mean().item() if losses else 0.0
-        accelerator.print(json.dumps({"epoch": epoch + 1, "validation_loss": validation_loss}))
+        accelerator.print(json.dumps({
+            "epoch": epoch + 1,
+            "train_loss_epoch": train_loss_epoch,
+            "validation_loss": validation_loss,
+        }))
         if validation_loss < best_loss:
             best_loss = validation_loss
             accelerator.wait_for_everyone()
