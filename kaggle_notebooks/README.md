@@ -166,6 +166,24 @@ part.
 
 ## Merge and publish
 
+The finalizer now selects exactly **100 projects with usable preprocessed
+samples** for test. It prioritizes the 103 repository identifiers extracted from
+the published Python baseline artifacts in
+`reports/typepro_test_audit/projects.txt`. Unavailable projects (including those
+with no parameter/return samples) are replaced by other successfully processed
+projects, ranked deterministically with seed 13. Selection happens after sample
+filtering, so failed or empty projects do not count toward 100. Every sample in
+a selected project goes to test; all other projects are partitioned into train
+and validation, with no project overlap.
+
+`test_projects.txt` in the final Dataset is the actual selected list.
+`test_split_audit.json` and the manifest record retained artifact projects,
+supplements, unavailable preferred projects, and counts. This is an adjusted
+benchmark, not a reconstruction of the paper's original 11,029 annotations.
+The merge uses the existing 18 physical inputs in `shard_merge_plan.json`
+(including the three subdivisions of partition 29), as explicitly authorized
+for this rerun; it does not repush shard notebooks.
+
 After all 10 Dataset shards are listable, dry-run the merge payload:
 
 ```bash

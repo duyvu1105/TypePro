@@ -22,6 +22,7 @@ def main() -> None:
     with (root / "manifest.json").open(encoding="utf-8") as handle:
         manifest = json.load(handle)
     errors = []
+    split_projects = {split: set() for split in ("train", "validation", "test")}
     kb_key_cache: dict[Path, set[str]] = {}
     kb_root = root / "project_kb"
     kb_available = kb_root.is_dir()
@@ -45,6 +46,10 @@ def main() -> None:
                 if not line.strip():
                     continue
                 row = json.loads(line)
+                if row.get("project"):
+                    split_projects[split].add(row["project"].casefold())
+                if row.get("split") != split:
+                    errors.append(f"{split}:{line_number}: row split disagrees with file")
                 required = {
                     "target_name", "target_function", "target_scope",
                     "interprocedural_slice",
@@ -97,6 +102,26 @@ def main() -> None:
                             f"{split}:{line_number}: recommendations outside project KB {outside}"
                         )
                         break
+    if manifest.get("split", {}).get("split_profile") == "typepro_artifact_projects":
+        split_manifest = manifest["split"]
+        reserved = {p.casefold() for p in split_manifest["test_projects"]}
+        if (split_projects["train"] | split_projects["validation"]) & reserved:
+            errors.append("Reserved test project leaked into train/validation")
+        if split_projects["test"] - reserved:
+            errors.append("Test contains project outside the fixed holdout")
+        if split_projects["train"] & split_projects["validation"]:
+            errors.append("Train and validation share projects")
+        missing = sorted(reserved - split_projects["test"])
+        if missing != split_manifest.get("missing_output_projects"):
+            errors.append("Test coverage disagrees with manifest")
+        if missing:
+            errors.append("Test project coverage is incomplete")
+        if len(reserved) != split_manifest.get("requested_test_projects"):
+            errors.append("Test project count does not match requested count")
+        if {split: len(projects) for split, projects in split_projects.items()} != split_manifest.get("written_projects"):
+            errors.append("Written project counts disagree with manifest")
+        if any(not projects for projects in split_projects.values()):
+            errors.append("A fixed-holdout split is empty")
     if kb_available:
         kb_files = list(kb_root.glob("*/knowledge_base.json"))
         expected_kbs = manifest.get("projects", {}).get("knowledge_bases")

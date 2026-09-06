@@ -54,6 +54,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--split-profile", choices=("paper_project", "typegen_release"), default="paper_project")
     parser.add_argument("--validation-project-ratio", type=float, default=0.10)
     parser.add_argument("--test-projects", type=int, default=100)
+    parser.add_argument("--test-project-list", type=Path, help="Finalize only: prefer these projects, filling up to --test-projects from usable projects")
     parser.add_argument("--seed", type=int, default=13)
     parser.add_argument("--shard-index", type=int, default=0)
     parser.add_argument("--shard-count", type=int, default=1)
@@ -1004,7 +1005,15 @@ def finalize_dataset(args: argparse.Namespace, work_dir: Path, output_dir: Path,
         "--output-dir", str(output_dir), "--label-field", "gttype",
         "--recommendation-limit", "10",
     ]
+    fixed_split = getattr(args, "test_project_list", None)
     run(command, cwd=preprocess_script.parent)
+    fixed_split_manifest = None
+    if fixed_split:
+        from fixed_test_split import resplit_completed_dataset
+        fixed_split_manifest = resplit_completed_dataset(
+            work_dir, output_dir, Path(fixed_split), args.test_projects,
+            args.seed, args.validation_project_ratio, project_from_row,
+        )
     # Raw slices are consumed entirely by preprocessing. Drop them before
     # duplicating the project KBs so the merged finalize fits on constrained
     # Kaggle working disks.
@@ -1031,6 +1040,8 @@ def finalize_dataset(args: argparse.Namespace, work_dir: Path, output_dir: Path,
     shutil.rmtree(source_kb, ignore_errors=True)
     with (work_dir / "metadata" / "split_manifest.json").open(encoding="utf-8") as handle:
         split_manifest = json.load(handle)
+    if fixed_split_manifest is not None:
+        split_manifest = fixed_split_manifest
     with (output_dir / "preprocess_stats.json").open(encoding="utf-8") as handle:
         preprocess_stats = json.load(handle)
     runtime_manifest_path = work_dir / "runtime_manifest.json"
@@ -1114,6 +1125,7 @@ Generated once by `prepare_dataset.py`; fine-tuning must consume these immutable
 - recommendations: top 10 from the isolated KB stored for that project
 - project KBs: stored under `project_kb/<owner>__<repo>/knowledge_base.json`
 - split profile: `{split_manifest['split_profile']}`
+- requested test project coverage: see `manifest.json` split section (missing projects are explicitly reported)
 - train rows: {manifest['output']['train']['rows']}
 - validation rows: {manifest['output']['validation']['rows']}
 - test rows: {manifest['output']['test']['rows']}

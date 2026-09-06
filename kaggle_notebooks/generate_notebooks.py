@@ -1355,6 +1355,7 @@ def merge_notebook(
             "--work-dir", MERGED_BUILD,
             "--output-dir", FINAL_DIR,
             "--split-profile", "paper_project",
+            "--test-project-list", REPO_DIR / "reports" / "typepro_test_audit" / "projects.txt",
             "--test-projects", 100,
             "--validation-project-ratio", 0.10,
             "--seed", SEED,
@@ -1376,6 +1377,13 @@ def merge_notebook(
             "output": manifest["output"],
             "prepared_counts": manifest["split"]["prepared_counts"],
             "prepared_projects": manifest["split"]["prepared_projects"],
+            "test_project_coverage": {
+                key: manifest["split"].get(key) for key in (
+                    "requested_test_projects", "written_projects",
+                    "retained_preferred_projects", "supplemented_projects",
+                    "unavailable_preferred_projects", "missing_output_projects",
+                )
+            },
             "preprocess_stats": stats,
             "project_knowledge_bases": manifest["projects"]["knowledge_bases"],
         }, indent=2, ensure_ascii=False))
@@ -1394,7 +1402,7 @@ def merge_notebook(
             "--data-dir", FINAL_DIR,
             "--dataset-id", final_id,
             "--title", "TypePro Python Generative Project-KB Data",
-            "--message", f"Merge {len(MERGE_DATASETS)} verified partitions covering {SHARD_COUNT} shards",
+            "--message", f"Merge {len(MERGE_DATASETS)} partitions; exactly 100 test projects prioritizing TypePro artifacts",
         ])
         completion = {
             "dataset_id": final_id,
