@@ -15,7 +15,8 @@ annotations **in these artifacts**, not necessarily in their source code.
 reconstructed metadata using seed 13, built-ins and returns included. This
 metadata audit is not proof of successful slicing on Kaggle.
 
-The merge treats this as a preferred list. After preprocessing, it retains
-available projects and fills to exactly 100 using other processed projects in
+The merge treats this as a preferred list. A streaming preflight applies the
+preprocessor's sample filter, retains available projects and fills to exactly
+100 using other eligible projects in
 deterministic hash order. The authoritative selected list and replacement audit
 are published with the Dataset as `test_projects.txt` and `test_split_audit.json`.

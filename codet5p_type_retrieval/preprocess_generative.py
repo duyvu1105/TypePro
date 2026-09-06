@@ -97,6 +97,16 @@ def format_input(
     return "\n".join(sections)
 
 
+def record_fields(row: dict[str, Any], label_field: str = "gttype", limit: int = 10):
+    """Shared eligibility check for project selection and actual sample writing."""
+    return (
+        str(row.get("name") or "").strip(),
+        str(row.get(label_field) or "").strip(),
+        str(row.get("interprocedural_slice") or "").strip(),
+        normalized_recommendations(row, limit),
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Build TypePro generative CodeT5 data")
     parser.add_argument("--input", required=True)
@@ -105,11 +115,13 @@ def main() -> None:
     parser.add_argument("--recommendation-limit", type=int, default=10)
     parser.add_argument("--train-ratio", type=float, default=0.70)
     parser.add_argument("--validation-ratio", type=float, default=0.10)
+    parser.add_argument("--project-split-map", type=Path)
     args = parser.parse_args()
     if args.recommendation_limit != 10:
         parser.error("The dataset contract requires exactly a top-10 limit")
 
     output = Path(args.output_dir)
+    split_map = json.loads(args.project_split_map.read_text(encoding="utf-8")) if args.project_split_map else None
     output.mkdir(parents=True, exist_ok=True)
     temporary = {split: output / f"{split}.jsonl.tmp" for split in SPLITS}
     handles = {split: path.open("w", encoding="utf-8") for split, path in temporary.items()}
@@ -117,15 +129,16 @@ def main() -> None:
     try:
         for index, row in enumerate(iter_records(Path(args.input))):
             stats["input_records"] += 1
-            name = str(row.get("name") or "").strip()
-            label = str(row.get(args.label_field) or "").strip()
-            code_slice = str(row.get("interprocedural_slice") or "").strip()
-            recommendations = normalized_recommendations(row, args.recommendation_limit)
+            name, label, code_slice, recommendations = record_fields(row, args.label_field, args.recommendation_limit)
             if not name or not label or not code_slice or not recommendations:
                 stats["dropped_incomplete"] += 1
                 continue
             project = project_name(row)
             split = str(row.get("split") or "").casefold()
+            if split_map is not None:
+                split = split_map[project]
+                if split not in SPLITS:
+                    raise ValueError(f"Invalid split for project {project}: {split}")
             if split not in SPLITS:
                 split = stable_split(project, args.train_ratio, args.validation_ratio)
             function = target_function(row)

@@ -1,10 +1,8 @@
-﻿"""Select an exact-size test holdout from successfully preprocessed projects."""
+"""Select an exact-size test holdout from successfully preprocessed projects."""
 import hashlib
 import json
-import os
 import re
 from collections import Counter
-from contextlib import ExitStack
 from pathlib import Path
 
 SPLITS = ('train', 'validation', 'test')
@@ -57,11 +55,17 @@ def iter_output_rows(output_dir):
                     yield json.loads(line)
 
 
-def resplit_completed_dataset(work_dir, output_dir, project_list, count, seed, validation_ratio, project_from_row):
-    # Select AFTER preprocessing: failed/empty projects cannot count toward 100.
-    # Preserve every usable sample and its contents; only the split field changes.
+def prepare_project_holdout(work_dir, output_dir, project_list, count, seed, validation_ratio, project_from_row):
+    # Scan with the SAME eligibility predicate as the writer. No output copy is made.
+    from preprocess_generative import iter_records, project_name, record_fields
     preferred = load_test_projects(project_list)
-    available = {row['project'] for row in iter_output_rows(output_dir)}
+    available = set()
+    counts_by_project = Counter()
+    for row in iter_records(work_dir / 'raw_slices'):
+        if all(record_fields(row)):
+            project = project_name(row)
+            available.add(project)
+            counts_by_project[project] += 1
     selected, extras = choose_test_projects(available, preferred, count, seed)
     mapping = assign_projects(available, selected, seed, validation_ratio)
     written_projects = {split: {p.casefold() for p, target in mapping.items() if target == split} for split in SPLITS}
@@ -77,23 +81,9 @@ def resplit_completed_dataset(work_dir, output_dir, project_list, count, seed, v
             target = assign_projects([project], selected, seed, validation_ratio)[project]
             prepared_counts[target] += 1
             prepared_projects[target].add(project.casefold())
-    temporary = {split: output_dir / f'{split}.jsonl.resplit.tmp' for split in SPLITS}
-    counts = Counter()
-    with ExitStack() as stack:
-        handles = {split: stack.enter_context(path.open('w', encoding='utf-8')) for split, path in temporary.items()}
-        for row in iter_output_rows(output_dir):
-            split = mapping[row['project']]
-            row['split'] = split
-            handles[split].write(json.dumps(row, ensure_ascii=False) + '\n')
-            counts[split] += 1
-    stats_path = output_dir / 'preprocess_stats.json'
-    stats = json.loads(stats_path.read_text(encoding='utf-8'))
-    if sum(counts.values()) != stats['written']:
-        raise ValueError('Resplitting changed the number of processed samples')
-    for split, path in temporary.items():
-        os.replace(path, output_dir / f'{split}.jsonl')
-        stats[f'{split}_written'] = counts[split]
-    stats_path.write_text(json.dumps(stats, indent=2), encoding='utf-8')
+    # The preprocessor consumes this small map and writes each final sample once.
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / 'project_split_map.json').write_text(json.dumps(mapping, indent=2), encoding='utf-8')
     available_keys = {p.casefold() for p in available}
     audit = {
         'split_profile': 'typepro_artifact_projects',
@@ -106,6 +96,7 @@ def resplit_completed_dataset(work_dir, output_dir, project_list, count, seed, v
         'supplemented_projects': extras,
         'test_projects': selected,
         'missing_output_projects': [],
+        'expected_written_counts': {split: sum(n for p, n in counts_by_project.items() if mapping[p] == split) for split in SPLITS},
         'seed': seed,
         'validation_project_ratio': validation_ratio,
         'original_split': original,

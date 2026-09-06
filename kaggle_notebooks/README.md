@@ -171,8 +171,10 @@ samples** for test. It prioritizes the 103 repository identifiers extracted from
 the published Python baseline artifacts in
 `reports/typepro_test_audit/projects.txt`. Unavailable projects (including those
 with no parameter/return samples) are replaced by other successfully processed
-projects, ranked deterministically with seed 13. Selection happens after sample
-filtering, so failed or empty projects do not count toward 100. Every sample in
+projects, ranked deterministically with seed 13. A streaming preflight applies
+the exact same sample filter as preprocessing, so failed or empty projects do
+not count toward 100. The writer routes each sample directly into its final
+split, avoiding a second full JSONL copy on Kaggle's working disk. Every sample in
 a selected project goes to test; all other projects are partitioned into train
 and validation, with no project overlap.
 

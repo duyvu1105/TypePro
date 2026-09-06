@@ -1006,14 +1006,20 @@ def finalize_dataset(args: argparse.Namespace, work_dir: Path, output_dir: Path,
         "--recommendation-limit", "10",
     ]
     fixed_split = getattr(args, "test_project_list", None)
-    run(command, cwd=preprocess_script.parent)
     fixed_split_manifest = None
     if fixed_split:
-        from fixed_test_split import resplit_completed_dataset
-        fixed_split_manifest = resplit_completed_dataset(
+        from fixed_test_split import prepare_project_holdout
+        fixed_split_manifest = prepare_project_holdout(
             work_dir, output_dir, Path(fixed_split), args.test_projects,
             args.seed, args.validation_project_ratio, project_from_row,
         )
+        command.extend(["--project-split-map", str(output_dir / "project_split_map.json")])
+    run(command, cwd=preprocess_script.parent)
+    if fixed_split_manifest:
+        stats = json.loads((output_dir / "preprocess_stats.json").read_text(encoding="utf-8"))
+        for split, expected in fixed_split_manifest["expected_written_counts"].items():
+            if stats.get(f"{split}_written", 0) != expected:
+                raise ValueError(f"{split}: project selection and preprocessing counts disagree")
     # Raw slices are consumed entirely by preprocessing. Drop them before
     # duplicating the project KBs so the merged finalize fits on constrained
     # Kaggle working disks.
