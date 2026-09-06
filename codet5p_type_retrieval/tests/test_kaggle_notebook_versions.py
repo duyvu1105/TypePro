@@ -54,7 +54,7 @@ def test_standalone_notebook_locks_publish_owner_and_single_shard():
     assert "SLICE_INDEX_TIMEOUT_SECONDS = 1800" in config
     assert "SLICE_TRACE_EVERY = 1" in config
     assert "CLONE_TIMEOUT_SECONDS = 900" in config
-    assert 'RETRIEVAL_SCHEMA_VERSION = "typepro-project-kb-top10-generative-v3-class-qualified"' in config
+    assert 'RETRIEVAL_SCHEMA_VERSION = "typepro-project-kb-top10-generative-v4-target-source-view"' in config
     assert "force-projects" in serialized
     assert "INCLUDE_BUILTINS = True" in config
     assert "INCLUDE_RETURNS = True" in config
@@ -194,6 +194,19 @@ def test_generated_artifacts_are_ten_standalone_notebooks_and_partitioned_merge(
     ]
     assert len({plan.kernel_slug for plan in plans}) == 10
     assert [plan.part_count for plan in plans] == [1, 1, 2, 3, 1, 1, 1, 2, 1, 5]
+    from collections import Counter
+    physical_counts = Counter()
+    kernel_ids = set()
+    for plan in plans:
+        for part in range(plan.part_count):
+            metadata = commit_shard_versions.kernel_metadata(plan, 'notebook.ipynb', part_index=part)
+            assert metadata['id'] not in kernel_ids
+            kernel_ids.add(metadata['id'])
+            assert metadata['id'].split('/')[1] == metadata['title'].lower().replace(' ', '-')
+            physical_counts[plan.runner_account] += 1
+            assert plan.public_dataset == (plan.runner_account != owner)
+    assert sorted(physical_counts.values()) == [6, 6, 6]
+    assert len(kernel_ids) == 18
     for index, plan in enumerate(plans):
         notebook = json.loads(plan.notebook_path.read_text(encoding="utf-8"))
         config = source_with_tag(notebook, "typepro-shard-config")

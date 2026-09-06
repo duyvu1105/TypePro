@@ -1,4 +1,5 @@
 import ast
+from target_context import source_open as open
 import re
 import time
 from collections import OrderedDict, defaultdict
@@ -791,10 +792,12 @@ class Slicer:
 
         values = []
         seen = set()
-        definition_marker = "def " + function_name.rsplit(".", 1)[-1]
+        definition_marker = re.compile(
+            r'\b(?:def|function)\s+' + re.escape(function_name.rsplit('.', 1)[-1]) + r'\s*\('
+        )
         for kind, value in events:
             if kind == "signature" and (
-                value in excluded or definition_marker in value
+                value in excluded or definition_marker.search(value)
             ):
                 continue
             _append_unique(values, seen, value)

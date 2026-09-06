@@ -233,7 +233,7 @@ def scan_project(root: Path) -> tuple[list[ParsedFile], int]:
 
 def build_project_index(
     root: Path,
-    data_dir: Path,
+    data_dir: Path | None,
     *,
     parsed_files: list[ParsedFile] | None = None,
     parse_failures: int = 0,
@@ -267,6 +267,8 @@ def build_project_index(
         visitor.visit(tree)
         uses.extend(visitor.uses)
 
+    if data_dir is None:
+        return {"function_records": functions, "class_records": classes, "use_records": uses}
     write_json(data_dir / "project_function_defined.json", functions)
     write_json(data_dir / "project_class_defined.json", classes)
     write_json(data_dir / "project_function_use.json", uses)

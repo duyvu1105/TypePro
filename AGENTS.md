@@ -1,5 +1,32 @@
 # TypePro agent runbook
 
+## Current authorized workflow (2026-09-06)
+
+The user authorized replacing the historical two-account workflow below with
+18 independent physical jobs across three accounts. For current generate,
+validate and scheduling commands, read `kaggle_notebooks/README.md` and
+`kaggle_notebooks/shard_account_plan.json`.
+
+- duyvu1105 (`kaggle.json`): logical shards 0, 1, 2 (2 parts), 4, 5; private.
+- duymign (`kaggle2.json`): logical shards 3 (3 parts), 6, 7 (2 parts); public.
+- vdduy1105 (`kaggle3.json`): logical shards 8, 9 (5 parts); public.
+- Six physical jobs per account, at most five active jobs per account.
+- Split parts use distinct kernels. Preserve all 18 physical coordinates in the
+  plans, including shard 9's hierarchical /30 and /90 partitions.
+- Final merge uses the exact 18 plan inputs and publishes privately as duyvu1105.
+- Use `schedule_shards.py` for the complete rerun; dry-run before `--push`.
+- Never read/print credential contents for inspection. Programs may load keys
+  solely to authenticate and must validate the expected username.
+- Edit generated notebooks through the generator. Run the full pipeline test
+  suite before Git/Kaggle push. Do not commit datasets, credentials or temp outputs.
+- Target masking schema v4 invalidates old raw slices; merge rejects legacy rows.
+- Report actual kernel versions and statuses; submission is not dataset success.
+
+The remainder preserves the historical runbook. Its two-account, ten-input
+restrictions and commands are superseded by the current section and README;
+its credential, publisher and verification safety rules still apply.
+
+
 Các hướng dẫn này áp dụng cho toàn bộ repository. Nguồn chi tiết chính là
 `kaggle_notebooks/README.md`; đọc file đó và
 `kaggle_notebooks/shard_account_plan.json` trước khi thay đổi hoặc push workflow

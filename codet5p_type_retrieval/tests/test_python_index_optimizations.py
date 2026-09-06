@@ -423,9 +423,10 @@ def test_shared_analysis_cache_preserves_records_for_repeated_function_uses(
     assert [without_runtime_timings(item) for item in actual] == [
         without_runtime_timings(item) for item in expected
     ]
-    assert cache.hits["function"] == 1
-    assert cache.hits["function_output"] == 1
-    assert cache.hits["analyzer"] == 1
+    # Gold-derived project caches cannot be shared across masked target views.
+    assert cache.hits["function"] == 0
+    assert cache.hits["function_output"] == 0
+    assert cache.hits["analyzer"] == 0
 
 
 def test_function_use_cache_preserves_event_order_and_signature_filtering(

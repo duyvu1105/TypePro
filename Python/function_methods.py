@@ -7,6 +7,7 @@ from type_defined import ProjectDefined, ProjectUseData, ProjectClassDefine
 from loguru import logger
 from difflib import SequenceMatcher
 import ast
+from target_context import source_open as open
 from collections import defaultdict
 from type_signal_analyzer import ProjectTypeAnalyzer
 
@@ -30,11 +31,28 @@ class Function_methods:
         return instance
 
     def __init__(self, project_root: str | None = None, parsed_files=None):
+        self.project_root = project_root
+        self.parsed_files = parsed_files
         self.total_function_data = self.read_projects_from_json(self.project_data_path)
         self.total_function_use_data = self.read_projects_from_json2(self.project_use_path)
         self.total_class_data = self.read_project_class_from_json(self.project_class_path)
         self.project_type_analyzer = ProjectTypeAnalyzer(project_root, parsed_files)
         self._rebuild_indexes()
+
+    @classmethod
+    def from_parsed(cls, project_root, parsed_files):
+        from project_index import build_project_index
+        from pathlib import Path
+        records = build_project_index(Path(project_root), None, parsed_files=parsed_files)
+        instance = cls.__new__(cls)
+        instance.project_root = str(project_root)
+        instance.parsed_files = parsed_files
+        instance.total_function_data = records['function_records']
+        instance.total_function_use_data = records['use_records']
+        instance.total_class_data = records['class_records']
+        instance.project_type_analyzer = ProjectTypeAnalyzer(project_root, parsed_files)
+        instance._rebuild_indexes()
+        return instance
 
     def _rebuild_indexes(self):
         if not hasattr(self, "project_type_analyzer"):

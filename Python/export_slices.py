@@ -20,7 +20,8 @@ from typing import Any, Iterable
 from slicing_code_class import ProjectAnalysisCache, Slicer
 from function_methods import Function_methods
 from project_index import build_project_index, scan_project
-from project_kb import top_project_types
+from project_kb import top_project_types, build_project_kb
+from target_context import MASK, mask_annotation, read_source, render_masks, source_overlay
 
 
 FUNCTION_NODES = (ast.FunctionDef, ast.AsyncFunctionDef)
@@ -318,9 +319,82 @@ def export_one(
     project_kb: dict[str, Any] | None = None,
     recommendation_limit: int = 10,
 ) -> dict[str, Any] | None:
+    """Build all target-dependent analysis from a masked source view.
+
+    Shared analysis may contain the gold annotation and is deliberately not
+    passed through. Reusing source parses is safe; reusing derived caches is not.
+    """
+    source = file_path.read_text(encoding='utf-8')
+    tree = ast.parse(source)
+    add_parent_links(tree)
+    function = find_target_function(tree, row)
+    scope = str(row.get('scope') or '')
+    annotation = None
+    if scope == 'return':
+        if function is None:
+            return None
+        annotation = function.returns
+    elif scope == 'arg':
+        if function is None:
+            return None
+        parameters = function.args.posonlyargs + function.args.args + function.args.kwonlyargs
+        parameters += [p for p in (function.args.vararg, function.args.kwarg) if p]
+        parameter = next((p for p in parameters if p.arg == row.get('name')), None)
+        if parameter is None:
+            return None
+        annotation = parameter.annotation
+    else:
+        for node in ast.walk(tree):
+            if isinstance(node, ASSIGNMENT_NODES) and row.get('name') in assignment_names(node):
+                if function is not None and enclosing_function_node(node) is not function:
+                    continue
+                annotation = getattr(node, 'annotation', None)
+                break
+    masked = mask_annotation(source, annotation) if annotation is not None else source
+    project_root = Path(getattr(function_methods, 'project_root', None) or file_path.parent)
+    parsed = getattr(function_methods, 'parsed_files', None)
+    if parsed is None:
+        parsed, _ = scan_project(project_root)
+    target_path = file_path.resolve()
+    target_parsed = [
+        (path, module, masked, ast.parse(masked, filename=str(path)))
+        if Path(path).resolve() == target_path else (path, module, text, root)
+        for path, module, text, root in parsed
+    ]
+    if not any(Path(item[0]).resolve() == target_path for item in target_parsed):
+        raise ValueError('Target file is absent from the project source snapshot')
+    with source_overlay(file_path, masked):
+        methods = Function_methods.from_parsed(project_root, target_parsed)
+        kb = build_project_kb(
+            project_root, parsed_files=target_parsed,
+            external_records=[item for item in (project_kb or {}).get('records', [])
+                              if item.get('source') != 'project'],
+        ) if project_kb is not None else None
+        result = _export_masked_one(
+            row, file_path, function_methods=methods,
+            analysis_cache=ProjectAnalysisCache(), project_kb=kb,
+            recommendation_limit=recommendation_limit,
+        )
+    if result is not None:
+        result['interprocedural_slice'] = render_masks(result['interprocedural_slice'])
+        for item in result['recommendation_types']:
+            item['definition'] = render_masks(item['definition'])
+        result['other_prompt'] = [render_masks(value) for value in result['other_prompt']]
+        result['target_masking_version'] = 'typepro-target-source-view-v1'
+    return result
+
+
+def _export_masked_one(
+    row: dict[str, Any],
+    file_path: Path,
+    function_methods: Function_methods | None = None,
+    analysis_cache: ProjectAnalysisCache | None = None,
+    project_kb: dict[str, Any] | None = None,
+    recommendation_limit: int = 10,
+) -> dict[str, Any] | None:
     export_started = time.monotonic()
     parse_started = export_started
-    source = file_path.read_text(encoding="utf-8")
+    source = read_source(file_path)
     root = ast.parse(source, filename=str(file_path))
     add_parent_links(root)
     parse_seconds = time.monotonic() - parse_started
@@ -359,20 +433,20 @@ def export_one(
                 parameters.append(node.args.kwarg)
             parameter = next((item for item in parameters if item.arg == target_name), None)
             if parameter is not None:
-                parameter.annotation = ast.Name(id="mask", ctx=ast.Load())
+                parameter.annotation = ast.Name(id=MASK, ctx=ast.Load())
                 code_slice = slicer.slicing_params(
                     node, root, target_name, str(file_path),
                     qualified_function_name=qualified_target,
-                ).replace("mask", "<mask>")
+                )
                 break
     elif scope == "return":
         node = target_node
         if node is not None and (target_name == node.name or target_name == local_function):
-            node.returns = ast.Name(id="mask", ctx=ast.Load())
+            node.returns = ast.Name(id=MASK, ctx=ast.Load())
             code_slice = slicer.slicing_func(
                 node, root, str(file_path),
                 qualified_function_name=qualified_target,
-            ).replace("mask", "<mask>")
+            )
     else:
         for node in ast.walk(root):
             if not isinstance(node, ASSIGNMENT_NODES) or target_name not in assignment_names(node):

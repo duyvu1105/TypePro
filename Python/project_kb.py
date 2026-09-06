@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from project_index import module_name, python_files
+from target_context import MASK
 
 
 SCHEMA_VERSION = "typepro-project-kb-v1"
@@ -45,7 +46,7 @@ def annotation_types(node: ast.AST | None) -> list[str]:
             child.id if isinstance(child, ast.Name) else ""
         )
         leaf = value.rsplit(".", 1)[-1]
-        if value and leaf not in TYPE_WRAPPERS and leaf not in {"Any", "None"}:
+        if value and leaf not in TYPE_WRAPPERS and leaf not in {"Any", "None", MASK}:
             found.append(value)
     # Attribute walks also visit their Name prefix; retain the most specific
     # spelling and remove stable duplicates.
@@ -89,7 +90,7 @@ def imported_records(imports_dir: Path | None) -> list[dict[str, Any]]:
     return records
 
 
-def build_project_kb(project_root: Path, imports_dir: Path | None = None) -> dict[str, Any]:
+def build_project_kb(project_root: Path, imports_dir: Path | None = None, *, parsed_files=None, external_records=()) -> dict[str, Any]:
     root = project_root.resolve()
     records: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
@@ -97,15 +98,12 @@ def build_project_kb(project_root: Path, imports_dir: Path | None = None) -> dic
     parsed: list[tuple[Path, str, str, ast.Module]] = []
     inferred_returns: dict[str, set[str]] = {}
 
-    for path in python_files(root):
-        try:
-            source = path.read_text(encoding="utf-8")
-            tree = ast.parse(source, filename=str(path))
-        except (OSError, UnicodeError, SyntaxError, ValueError):
-            parse_failures += 1
-            continue
-        module = module_name(root, path)
-        parsed.append((path, module, source, tree))
+    if parsed_files is None:
+        from project_index import scan_project
+        parsed, parse_failures = scan_project(root)
+    else:
+        parsed = parsed_files
+    for path, module, source, tree in parsed:
         for node in tree.body:
             if isinstance(node, ast.ClassDef):
                 qualified = ".".join(filter(None, (module, node.name)))
@@ -156,7 +154,7 @@ def build_project_kb(project_root: Path, imports_dir: Path | None = None) -> dic
                             "definition": f"from {node.module} import {alias.name} as {local}",
                         })
 
-    for item in imported_records(imports_dir):
+    for item in [*imported_records(imports_dir), *external_records]:
         add_record(records, seen, item)
 
     # Return types are first-class KB entries even when only mentioned by a

@@ -1,4 +1,66 @@
-# TypePro Kaggle notebooks
+# TypePro Kaggle workflow: target masking rerun
+
+Current workflow (2026-09-06): **18 independent physical partitions**, generated
+from 10 logical shard templates, on three accounts. The table below supersedes
+the historical two-account workflow documented later in this file.
+
+| Runner / Dataset owner | Logical shards | Physical jobs | Visibility |
+| --- | --- | ---: | --- |
+| duyvu1105 | 00, 01, 02 (2 parts), 04, 05 | 6 | private |
+| duymign | 03 (3 parts), 06, 07 (2 parts) | 6 | public |
+| vdduy1105 | 08, 09 (5 parts) | 6 | public |
+
+Final merge remains under `duyvu1105`. The authoritative inputs are the 18
+entries in `shard_merge_plan.json`; existing physical coordinates are preserved.
+Split parts now have separate kernel IDs ending in `-part-01`, etc. Each
+account starts at most five jobs, then submits its sixth when a slot is free.
+Local credentials map to `kaggle.json`, `kaggle2.json`, `kaggle3.json` in that
+order. Never print keys or commit credentials.
+
+```powershell
+python kaggle_notebooks/generate_notebooks.py --shards 10 --runner-accounts duyvu1105 duymign vdduy1105 --dataset-owner duyvu1105
+python kaggle_notebooks/commit_shard_versions.py
+python -m pytest codet5p_type_retrieval/tests -q -p no:cacheprovider
+```
+
+For the complete rerun, use the scheduler instead of pushing all partitions
+without a slot check. Replace COMMIT_SHA with the full tested/pushed Git SHA.
+Dry-run first; it renders all payloads and does not contact Kaggle.
+
+```powershell
+python kaggle_notebooks/schedule_shards.py --revision COMMIT_SHA
+uv run --with kaggle==1.7.4.2 python kaggle_notebooks/schedule_shards.py --revision COMMIT_SHA --push --watch
+```
+
+The scheduler pins the source checkout to that commit, counts nonterminal jobs
+across each account, reserves newly submitted slots, and keeps a durable ledger
+at `typepro_kernel_versions/rerun_state.json`. Reusing the same ledger avoids
+duplicate pushes. An interrupted `submitting` entry requires inspecting the
+remote version before any retry. The watcher exits after all 18 submissions;
+submission is not proof of completed datasets. Verify manifests/file listings
+before merge. Do not publish or train the final dataset automatically.
+
+## Target annotation isolation
+
+Retrieval schema: `typepro-project-kb-top10-generative-v4-target-source-view`.
+Each sample masks its target annotation in an in-memory source overlay before
+building function/class indexes, semantic analysis, and project KB candidates.
+All source reads by slicing/import analysis use that overlay. Other annotations
+are retained. Shared source parses are reusable, but target-dependent analysis
+caches are rebuilt per sample. Original checkout files and shared KBs remain
+unchanged. Candidate definitions render the same masked target view.
+
+This adds per-sample analysis cost. Tests change only the target annotation and
+require identical slices and ordered candidates. The exporter stamps safe rows
+with `target_masking_version=typepro-target-source-view-v1`.
+
+Old restored datasets fail the retrieval-schema check. Local completed-project
+resume also requires a matching schema stamp on each status file, including
+after an interrupted rebuild. Merge requires the new runtime schema and row
+stamps, preventing mixed old/new partitions.
+
+## Historical two-account workflow (reference only)
+
 
 This directory contains the two-account, ten-logical-shard workflow for the
 Python generative dataset (function parameters and returns; built-in

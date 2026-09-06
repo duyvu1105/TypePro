@@ -11,6 +11,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Merge resumable TypePro build shards")
     parser.add_argument("--shard-build-dirs", nargs="+", required=True)
     parser.add_argument("--work-dir", required=True)
+    parser.add_argument('--expected-retrieval-schema')
     return parser.parse_args()
 
 
@@ -44,6 +45,16 @@ def main() -> None:
     args = parse_args()
     destination = Path(args.work_dir).resolve()
     builds = [locate_build_dir(Path(value).resolve()) for value in args.shard_build_dirs]
+    if args.expected_retrieval_schema:
+        for build in builds:
+            runtime = json.loads((build / 'runtime_manifest.json').read_text(encoding='utf-8'))
+            if runtime.get('retrieval_schema_version') != args.expected_retrieval_schema:
+                raise ValueError(f'Incompatible retrieval schema: {build}')
+            for raw_file in (build / 'raw_slices').glob('*.jsonl'):
+                with raw_file.open(encoding='utf-8') as handle:
+                    for line in handle:
+                        if line.strip() and json.loads(line).get('target_masking_version') != 'typepro-target-source-view-v1':
+                            raise ValueError(f'Unmasked legacy record: {raw_file}')
     reference_manifest = None
     copied = {"raw_slices": 0, "project_status": 0, "project_kb": 0}
     for build in builds:

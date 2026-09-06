@@ -41,6 +41,7 @@ class AccountPlan:
     kernel_slug: str
     assigned_shards: tuple[int, ...]
     part_count: int = 1
+    independent_parts: bool = False
 
 
 def load_plan(path: Path) -> tuple[str, int, list[AccountPlan]]:
@@ -100,6 +101,7 @@ def load_plan(path: Path) -> tuple[str, int, list[AccountPlan]]:
                 kernel_slug=kernel_slug,
                 assigned_shards=(shard_index,),
                 part_count=part_count,
+                independent_parts=bool(item.get('independent_parts', False)),
             )
         )
     if len(plans) != shard_count:
@@ -126,17 +128,25 @@ def load_plan(path: Path) -> tuple[str, int, list[AccountPlan]]:
                 "The final owner's shards must be private and the other "
                 f"account's shards must be public: {plan.runner_account!r}"
             )
-    if sorted(account_counts.values()) != [5, 5]:
+    independent = all(plan.independent_parts for plan in plans)
+    if independent:
+        physical_counts = {
+            account: sum(plan.part_count for plan in plans if plan.runner_account.casefold() == account)
+            for account in account_counts
+        }
+        if sorted(physical_counts.values()) != [6, 6, 6]:
+            raise RuntimeError(f'Three-account plan must own six partitions each: {physical_counts}')
+    elif sorted(account_counts.values()) != [5, 5]:
         raise RuntimeError(
             f"Exactly two runner accounts must own five shards each: {account_counts}"
         )
-    if any(
+    if not independent and any(
         plan.dataset_owner.casefold()
         != (final_dataset_owner if plan.assigned_shards[0] < 5 else plan.runner_account).casefold()
         for plan in plans
     ):
         raise RuntimeError("Shards 00-04 must belong to the final owner")
-    return final_dataset_owner, shard_count, plans
+    return final_dataset_owner, shard_count, sorted(plans, key=lambda plan: plan.assigned_shards[0])
 
 
 def load_credential(path: Path, expected_username: str) -> dict[str, str]:
@@ -229,6 +239,8 @@ def kernel_metadata(
     shard_index = plan.assigned_shards[0]
     kernel_slug = partition_kernel_slug(plan, part_index)
     title = f"TypePro Python Shard {shard_index:02d}"
+    if plan.independent_parts and plan.part_count > 1:
+        title += f" Part {part_index + 1:02d}"
     return {
         "id": f"{plan.runner_account}/{kernel_slug}",
         # Kaggle derives the effective slug from title even when `id` is set.
@@ -255,6 +267,8 @@ def partition_kernel_slug(plan: AccountPlan, part_index: int) -> str:
         )
     # Every part is a new version of the pre-existing logical-shard notebook.
     # Keep both the id and title stable so Kaggle cannot derive a new slug.
+    if plan.independent_parts and plan.part_count > 1:
+        return f'{plan.kernel_slug}-part-{part_index + 1:02d}'
     return plan.kernel_slug
 
 
@@ -327,15 +341,15 @@ def kernel_status(
 
 def parse_credentials(values: list[str], plans: list[AccountPlan]) -> dict[str, Path]:
     if not values:
-        defaults = [REPO_ROOT / "kaggle.json", REPO_ROOT / "kaggle2.json"]
+        defaults = [REPO_ROOT / "kaggle.json", REPO_ROOT / "kaggle2.json", REPO_ROOT / "kaggle3.json"]
         accounts = list(dict.fromkeys(
             plan.runner_account.casefold() for plan in plans
         ))
-        if len(accounts) != 2:
-            raise ValueError(f"Expected two runner accounts, found {accounts}")
+        if len(accounts) not in (2, 3):
+            raise ValueError(f"Expected two or three runner accounts, found {accounts}")
         return {
             account: path
-            for account, path in zip(accounts, defaults, strict=True)
+            for account, path in zip(accounts, defaults[:len(accounts)], strict=True)
         }
     parsed: dict[str, Path] = {}
     for value in values:

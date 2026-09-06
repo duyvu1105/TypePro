@@ -1,4 +1,5 @@
 import ast
+from target_context import source_open as open
 from loguru import logger
 from typing import List, Union, Optional, Dict
 import os

@@ -457,7 +457,7 @@ def shard_notebook(
         # This rerun keeps built-in annotations and adds function returns.
         INCLUDE_BUILTINS = True
         INCLUDE_RETURNS = True
-        RETRIEVAL_SCHEMA_VERSION = "typepro-project-kb-top10-generative-v3-class-qualified"
+        RETRIEVAL_SCHEMA_VERSION = "typepro-project-kb-top10-generative-v4-target-source-view"
 
         from pathlib import Path
 
@@ -1075,13 +1075,13 @@ def merge_notebook(
     shard_accounts: list[dict],
     merge_datasets: list[dict] | None = None,
 ) -> dict:
-    if len(shard_accounts) != 2:
-        raise ValueError("Merge notebook requires exactly two shard accounts")
+    if len(shard_accounts) not in (2, 3):
+        raise ValueError("Merge notebook requires two or three shard accounts")
     shard_source_config = []
     for position, item in enumerate(shard_accounts):
         owner = item["dataset_owner"]
         shards = list(item["assigned_shards"])
-        if len(shards) != 5:
+        if len(shard_accounts) == 2 and len(shards) != 5:
             raise ValueError(f"Merge source {owner!r} must contain five shards")
         shard_source_config.append({
             "label": f"runner_{chr(ord('a') + position)}",
@@ -1338,6 +1338,7 @@ def merge_notebook(
             sys.executable, "-u", merge_script,
             "--shard-build-dirs", *shard_builds,
             "--work-dir", MERGED_BUILD,
+            "--expected-retrieval-schema", "typepro-project-kb-top10-generative-v4-target-source-view",
         ])
         """),
         markdown("## Finalize generative train/validation/test and retain project KBs"),
@@ -1937,11 +1938,11 @@ def main(argv: list[str] | None = None) -> None:
         parser.error(f"unrecognized arguments: {' '.join(remaining)}")
     if args.shards <= 0:
         raise ValueError("shards must be positive")
-    if len(args.runner_accounts) != 2:
-        raise ValueError("This workflow requires exactly two runner accounts")
+    if len(args.runner_accounts) not in (2, 3):
+        raise ValueError("This workflow requires two or three runner accounts")
     if args.shards != 10:
         raise ValueError("The two-account workflow requires exactly 10 shards")
-    if len(set(account.casefold() for account in args.runner_accounts)) != 2:
+    if len(set(account.casefold() for account in args.runner_accounts)) != len(args.runner_accounts):
         raise ValueError("Runner account names must be distinct")
     if not OWNER_RE.fullmatch(args.dataset_owner):
         raise ValueError(f"Invalid Dataset owner: {args.dataset_owner!r}")
@@ -1961,7 +1962,9 @@ def main(argv: list[str] | None = None) -> None:
         for stale in ROOT.glob(pattern):
             stale.unlink()
     generated = [owner_test_path.name]
-    shard_groups = [list(range(0, 5)), list(range(5, 10))]
+    shard_groups = ([list(range(0, 5)), list(range(5, 10))]
+                    if len(args.runner_accounts) == 2
+                    else [[0, 1, 2, 4, 5], [3, 6, 7], [8, 9]])
     shard_accounts = []
     shard_notebooks = []
     for account, shard_group in zip(
@@ -2001,6 +2004,7 @@ def main(argv: list[str] | None = None) -> None:
                 "public_dataset": public_dataset,
                 "notebook": path.name,
                 "kernel_slug": f"typepro-python-shard-{shard_index:02d}",
+                "independent_parts": len(args.runner_accounts) == 3,
             })
     merge_datasets = canonical_merge_datasets(shard_accounts)
     merge_plan_path = ROOT / "shard_merge_plan.json"

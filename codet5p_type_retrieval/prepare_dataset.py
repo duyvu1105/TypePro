@@ -96,7 +96,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--retrieval-schema-version",
-        default="typepro-class-qualified-retrieval-v1",
+        default="typepro-project-kb-top10-generative-v4-target-source-view",
         help="Invalidates restored raw slices when recommendation logic changes",
     )
     parser.add_argument(
@@ -727,6 +727,12 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
         knowledge_base_paths.append(knowledge_base)
     if knowledge_base_paths:
         os.environ["TYPEPRO_THIRD_PARTY_DATASET"] = os.pathsep.join(map(str, knowledge_base_paths))
+    previous_runtime_path = work_dir / 'runtime_manifest.json'
+    previous_runtime = (json.loads(previous_runtime_path.read_text(encoding='utf-8'))
+                        if previous_runtime_path.exists() else {})
+    if previous_runtime.get('retrieval_schema_version') != args.retrieval_schema_version:
+        # Keep source/download caches, but never skip old completed outputs.
+        args.force_projects = True
     write_json(work_dir / "runtime_manifest.json", {
         "third_party_knowledge_base_provided": bool(args.third_party_kb),
         "third_party_knowledge_base_path": str(Path(args.third_party_kb).resolve()) if args.third_party_kb else None,
@@ -793,6 +799,8 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
         if (
             output_path.exists() and status_path.exists() and project_kb_path.exists()
             and not args.force_projects
+            and json.loads(status_path.read_text(encoding='utf-8')).get('retrieval_schema_version')
+                == args.retrieval_schema_version
         ):
             counters["skipped_complete"] += 1
             if not args.keep_repos and not args.repos_root:
@@ -924,6 +932,7 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
             status = {
                 "project": project,
                 "commit": commit,
+                "retrieval_schema_version": args.retrieval_schema_version,
                 "annotations": len(project_rows),
                 "exported": exported,
                 "failed_annotations": len(project_rows) - exported,
