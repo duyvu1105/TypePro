@@ -1,6 +1,5 @@
 """Submit independent partitions with a durable ledger and account slot limits."""
 import argparse
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import json
 import os
@@ -90,18 +89,34 @@ def main():
                         break
                 else:
                     raise RuntimeError('Account kernel listing exceeded pagination limit')
-                refs = {kernel.ref for kernel in kernels}
-                refs.update(job['kernel'] for job in state['jobs'] if job['account'] == account and job['status'] != 'pending')
+                run_times = {kernel.ref: str(kernel.last_run_time) for kernel in kernels}
+                refs = set(run_times)
+                submitted_refs = {job['kernel'] for job in state['jobs'] if job['account'] == account and job['status'] != 'pending'}
+                refs.update(submitted_refs)
                 def check(ref):
-                    try:
-                        return ref, status_name(api.kernels_status(ref))
-                    except Exception as error:
-                        response = getattr(error, 'response', None)
-                        if response is not None and response.status_code == 404 and 'No runs found for this kernel' in response.text:
-                            return ref, 'NO_RUNS'
-                        raise
-                with ThreadPoolExecutor(max_workers=4) as pool:
-                    statuses = dict(pool.map(check, sorted(refs)))
+                    cache = state.setdefault('status_cache', {})
+                    cached = cache.get(ref, {})
+                    if ref not in submitted_refs and cached.get('run_time') == run_times.get(ref) and cached.get('status') in TERMINAL:
+                        return ref, cached['status']
+                    for attempt in range(6):
+                        try:
+                            status = status_name(api.kernels_status(ref))
+                            break
+                        except Exception as error:
+                            response = getattr(error, 'response', None)
+                            if response is not None and response.status_code == 404 and 'No runs found for this kernel' in response.text:
+                                status = 'NO_RUNS'
+                                break
+                            if response is not None and response.status_code in (429, 502, 503, 504) and attempt < 5:
+                                print(f'Waiting for Kaggle API rate limit: {ref}', flush=True)
+                                time.sleep(min(60, 10 * (attempt + 1)))
+                                continue
+                            raise
+                    cache[ref] = {'run_time': run_times.get(ref), 'status': status}
+                    save(args.state, state)
+                    time.sleep(0.5)
+                    return ref, status
+                statuses = dict(check(ref) for ref in sorted(refs))
                 active = {ref for ref, status in statuses.items() if status not in TERMINAL}
                 for job in state['jobs']:
                     if job['account'] == account and job['status'] != 'pending':
