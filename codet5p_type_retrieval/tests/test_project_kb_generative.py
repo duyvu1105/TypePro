@@ -12,7 +12,7 @@ sys.path.insert(0, str(PYTHON_DIR))
 from project_kb import build_project_kb, top_project_types
 
 
-def test_project_kb_contains_definitions_imports_returns_and_reexports(tmp_path):
+def test_project_kb_contains_definitions_imports_body_returns_and_reexports(tmp_path):
     project = tmp_path / "repo"
     project.mkdir()
     (project / "models.py").write_text(
@@ -20,7 +20,8 @@ def test_project_kb_contains_definitions_imports_returns_and_reexports(tmp_path)
         "from torch import Tensor as TorchTensor\n"
         "UserId: TypeAlias = str\n"
         "class User: pass\n"
-        "def load() -> User:\n    return User()\n",
+        "def load() -> User:\n    return User()\n"
+        "def annotation_only() -> HiddenAnnotation:\n    return None\n",
         encoding="utf-8",
     )
     imports = tmp_path / "imports"
@@ -39,7 +40,10 @@ def test_project_kb_contains_definitions_imports_returns_and_reexports(tmp_path)
     assert ("TorchTensor", "reexport_alias") in kinds
     assert ("load", "function") in kinds
     assert ("User", "function_return") in kinds
+    assert ("HiddenAnnotation", "function_return") not in kinds
     assert ("Tensor", "class") in kinds
+    load = next(item for item in kb["records"] if item["name"] == "load" and item["kind"] == "function")
+    assert "->" not in load["definition"]
 
 
 def test_top_project_types_never_uses_candidate_outside_project_kb(tmp_path):

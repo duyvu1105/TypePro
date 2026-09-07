@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import copy
 import json
 import re
 from pathlib import Path
@@ -16,7 +17,7 @@ from project_index import module_name, python_files
 from target_context import MASK
 
 
-SCHEMA_VERSION = "typepro-project-kb-v1"
+SCHEMA_VERSION = "typepro-project-kb-v2-no-return-annotations"
 TYPE_WRAPPERS = {
     "Annotated", "Callable", "ClassVar", "Final", "Generic", "Literal",
     "Optional", "Protocol", "Type", "Union",
@@ -115,14 +116,20 @@ def build_project_kb(project_root: Path, imports_dir: Path | None = None, *, par
                 })
             elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 qualified = ".".join(filter(None, (module, node.name)))
-                returns = set(annotation_types(node.returns))
+                # A return annotation is a label for some samples.  Never let
+                # it create a candidate, rank signal, or KB signature.  A
+                # concrete constructor in the function body remains valid
+                # source-level evidence, for example ``return User()``.
+                returns: set[str] = set()
                 for child in ast.walk(node):
                     if isinstance(child, ast.Return) and isinstance(child.value, ast.Call):
                         called = dotted_name(child.value.func)
                         if called and called.rsplit(".", 1)[-1][:1].isupper():
                             returns.add(called)
                 inferred_returns[qualified] = returns
-                signature = ast.unparse(node).splitlines()[0]
+                signature_node = copy.deepcopy(node)
+                signature_node.returns = None
+                signature = ast.unparse(signature_node).splitlines()[0]
                 add_record(records, seen, {
                     "type": "function", "kind": "function", "name": node.name,
                     "qualified_name": qualified, "module": module,
@@ -157,8 +164,9 @@ def build_project_kb(project_root: Path, imports_dir: Path | None = None, *, par
     for item in [*imported_records(imports_dir), *external_records]:
         add_record(records, seen, item)
 
-    # Return types are first-class KB entries even when only mentioned by a
-    # function contract and absent from a scanned import package.
+    # Return types inferred from executable function bodies are first-class KB
+    # entries even when absent from a scanned import package.  Annotation-only
+    # types are intentionally excluded above.
     for function_name, return_types in sorted(inferred_returns.items()):
         for value in sorted(return_types):
             name = value.rsplit(".", 1)[-1]

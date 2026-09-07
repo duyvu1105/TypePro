@@ -42,22 +42,24 @@ before merge. Do not publish or train the final dataset automatically.
 
 ## Shared project KB and masked source
 
-Retrieval schema: `typepro-project-kb-top10-generative-v5-shared-kb`.
-Build one KB per project and reuse it unchanged for every sample. Mask the
-sample target in an in-memory source overlay before slicing and retrieval.
+Retrieval schema: `typepro-project-kb-top10-generative-v6-no-return-annotations`.
+Build one KB per project and reuse it for every sample. The KB never reads a
+function return annotation: it creates neither a candidate nor `returned_by`
+metadata from one, and stored function signatures omit it. It retains candidates
+from class definitions, imports, aliases, and executable return expressions such
+as `return User()`. Mask the sample target in an in-memory source overlay before
+slicing and retrieval.
+
 Reuse project semantic analysis built from source flow without return annotation
 seeds; create lightweight masked signature indexes and fresh slicing caches per
-sample. Do not rebuild the project KB or semantic solver per sample.
-
-Candidate selection and ranking use the original project KB, including its
-annotation-derived metadata such as `returned_by`. This is the user-requested
-shared-KB setting, not a claim that candidate ranking is independent of gold
-annotations. Mask target signatures in copies of the selected definitions before
-rendering the prompt; never mutate the KB. Other annotations are retained.
+sample. Do not rebuild the project KB or semantic solver per sample. Mask target
+signatures in copies of selected definitions before rendering the prompt; never
+mutate the KB. Other annotations are retained.
 
 Tests verify that changing source target annotations with the same fixed KB
 preserves slices and ordered candidates, and prohibit per-sample KB/solver
-rebuilding. Rows use `target_masking_version=typepro-shared-kb-masked-source-v2`.
+rebuilding. Rows use
+`target_masking_version=typepro-shared-kb-masked-source-v3-no-return-annotations`.
 
 Old restored datasets fail the retrieval-schema check. Local completed-project
 resume also requires a matching schema stamp on each status file, including

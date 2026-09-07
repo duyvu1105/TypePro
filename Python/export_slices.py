@@ -373,7 +373,7 @@ def export_one(
         for item in result['recommendation_types']:
             item['definition'] = render_masks(clean(item['definition']))
         result['other_prompt'] = [render_masks(value) for value in result['other_prompt']]
-        result['target_masking_version'] = 'typepro-shared-kb-masked-source-v2'
+        result['target_masking_version'] = 'typepro-shared-kb-masked-source-v3-no-return-annotations'
     return result
 
 
