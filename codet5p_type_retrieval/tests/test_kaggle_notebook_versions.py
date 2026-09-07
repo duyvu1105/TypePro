@@ -467,6 +467,20 @@ def test_shard_12_children_exactly_replace_parent_without_dataset_collision():
     assert {'duyvu1105/typepro-build-shard-12-of-40', 'duyvu1105/typepro-build-shard-32-of-40'} <= ids
 
 
+def test_visit_deps_exclusion_only_in_stalled_subdivision():
+    template = json.loads((NOTEBOOK_DIR / '03_typepro_shard_02.ipynb').read_text())
+    for index, count in [(2, 20), (12, 40), (32, 40)]:
+        rendered = commit_shard_versions.render_shard_version(
+            template, 2, (2,), 'duyvu1105', False,
+            physical_shard_index=index, physical_shard_count=count,
+        )
+        config = source_with_tag(rendered, 'typepro-shard-config')
+        namespace = {}
+        exec(config.split('from pathlib import Path')[0], namespace)
+        assert namespace['SKIP_PROJECTS'] == (['visit-dav/visit-deps'] if index == 12 else [])
+        assert '--skip-project' in json.dumps(rendered)
+
+
 def test_recovery_notebook_only_restores_and_publishes_completed_shard():
     notebook = generate_notebooks.recovery_notebook(
         8,

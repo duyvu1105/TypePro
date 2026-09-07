@@ -17,6 +17,9 @@ The two new kernels end in `-part-02-subpart-01` and `-part-02-subpart-02`;
 their private Dataset slugs end in `-12-of-40` and `-32-of-40`, avoiding writes
 from the retired 12/20 kernel. Render/push these with `--shard 2 --part 2`
 and `--shard 2 --part 3`, respectively. Do not rerun part 1 for this split.
+As authorized on 2026-09-08, 12/40 skips `visit-dav/visit-deps` before cloning
+or KB construction. Its project status records the exclusion; no samples from
+that project are exported. Other partitions have an empty skip list.
 Split parts now have separate kernel IDs ending in `-part-01`, etc. Each
 account starts at most five jobs, then submits remaining jobs when slots are free.
 Local credentials map to `kaggle.json`, `kaggle2.json`, `kaggle3.json` in that

@@ -445,6 +445,9 @@ def shard_notebook(
         # Trace every annotation so the parent hard-kill timer is armed for
         # each one; a pathological slice in native code cannot stall a shard.
         SLICE_TRACE_EVERY = 1
+        # User-authorized exclusion for the stalled 12/40 subdivision only.
+        SKIP_PROJECTS = (["visit-dav/visit-deps"]
+                         if (SHARD_INDEX, SHARD_COUNT) == (12, 40) else [])
         # Bound every annotation so one pathological slice cannot stall a shard.
         SLICE_ANNOTATION_TIMEOUT_SECONDS = 120
         # Bound work that happens before annotation export as well.
@@ -713,6 +716,7 @@ def shard_notebook(
             "--shard-index", SHARD_INDEX,
             "--slice-log-every", SLICE_LOG_EVERY,
             "--slice-trace-every", SLICE_TRACE_EVERY,
+            *[value for project in SKIP_PROJECTS for value in ("--skip-project", project)],
             "--slice-annotation-timeout-seconds", SLICE_ANNOTATION_TIMEOUT_SECONDS,
             "--package-download-timeout-seconds", PACKAGE_DOWNLOAD_TIMEOUT_SECONDS,
             "--kb-phase-timeout-seconds", KB_PHASE_TIMEOUT_SECONDS,
