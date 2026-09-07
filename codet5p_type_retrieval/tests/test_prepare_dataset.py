@@ -1,6 +1,7 @@
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -123,6 +124,34 @@ def test_run_logged_terminates_a_timed_out_phase(tmp_path):
             tmp_path / "phase.log",
             timeout_seconds=0.1,
         )
+
+
+def test_run_logged_bounds_silent_exporter_startup(tmp_path):
+    with pytest.raises(subprocess.TimeoutExpired):
+        run_logged(
+            [sys.executable, "-c", "import time; time.sleep(2)"],
+            tmp_path, tmp_path / "silent.log",
+            annotation_stall_timeout_seconds=0.2,
+        )
+
+
+@pytest.mark.parametrize("partial_line", [False, True])
+def test_run_logged_bounds_pipe_held_after_parent_exit(tmp_path, monkeypatch, partial_line):
+    monkeypatch.setattr(prepare_dataset_module, "PIPE_CLOSE_GRACE_SECONDS", 0.1)
+    child = "import time; time.sleep(3)"
+    script = (
+        "import subprocess, sys; "
+        f"subprocess.Popen([sys.executable, '-c', {child!r}], "
+        "stdout=sys.stdout, start_new_session=True); "
+        + ("sys.stdout.write('unfinished'); sys.stdout.flush()" if partial_line else "")
+    )
+    started = time.monotonic()
+    with pytest.raises(subprocess.TimeoutExpired):
+        run_logged(
+            [sys.executable, "-u", "-c", script],
+            tmp_path, tmp_path / "inherited.log", timeout_seconds=0.5,
+        )
+    assert time.monotonic() - started < 2.5
 
 
 def test_run_logged_hard_kills_annotation_when_soft_timeout_stalls(tmp_path):

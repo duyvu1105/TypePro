@@ -13,7 +13,7 @@ import json
 import os
 import random
 import re
-import select
+import queue
 import signal
 import stat
 import shutil
@@ -469,12 +469,13 @@ def run_logged(
         index_timer_lock = threading.Lock()
 
         def kill_process(timeout_event: threading.Event) -> None:
-            if process.poll() is not None:
-                return
             timeout_event.set()
             if os.name != "nt":
-                os.killpg(process.pid, signal.SIGKILL)
-            else:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            elif process.poll() is None:
                 process.kill()
 
         def terminate_process() -> None:
@@ -535,48 +536,51 @@ def run_logged(
         if timer is not None:
             timer.start()
         assert process.stdout is not None
+        # Never block the supervisor on readline(). A descendant may retain
+        # stdout after its parent exits, or write a line without a newline.
+        # select() also cannot see lines buffered by TextIOWrapper.
+        lines = queue.Queue()
 
-        def stream_ready(timeout: float) -> bool:
-            # Windows cannot select() on pipes; fall back to a blocking read
-            # where the killed process normally closes the pipe immediately.
-            if os.name == "nt":
-                return True
+        def read_output() -> None:
             try:
-                readable, _, _ = select.select([process.stdout], [], [], timeout)
-            except (OSError, ValueError):
-                return True
-            return bool(readable)
+                for line in process.stdout:
+                    lines.put(line)
+            finally:
+                lines.put(None)
+                process.stdout.close()
+
+        threading.Thread(target=read_output, daemon=True).start()
+        # Cover imports and KB loading before the exporter's first log line.
+        arm_annotation_timer()
 
         try:
             pipe_deadline: float | None = None
             while True:
-                if not stream_ready(1.0):
-                    if (
-                        timed_out.is_set()
-                        or annotation_timed_out.is_set()
-                        or index_timed_out.is_set()
-                    ):
-                        if pipe_deadline is None:
-                            pipe_deadline = (
-                                time.monotonic() + PIPE_CLOSE_GRACE_SECONDS
-                            )
-                        elif time.monotonic() >= pipe_deadline:
-                            # A killed process can leave a descendant holding
-                            # the stdout pipe open, so EOF never arrives.
-                            raise subprocess.TimeoutExpired(
-                                command,
-                                (
-                                    timeout_seconds
-                                    or annotation_stall_timeout_seconds
-                                    or index_stall_timeout_seconds
-                                ),
-                                output=tail,
-                            )
+                if (
+                    timed_out.is_set()
+                    or annotation_timed_out.is_set()
+                    or index_timed_out.is_set()
+                ):
+                    if pipe_deadline is None:
+                        pipe_deadline = time.monotonic() + PIPE_CLOSE_GRACE_SECONDS
+                    elif time.monotonic() >= pipe_deadline:
+                        # This deadline applies even if descendants keep
+                        # writing after the supervised process is killed.
+                        raise subprocess.TimeoutExpired(
+                            command,
+                            (
+                                timeout_seconds
+                                or annotation_stall_timeout_seconds
+                                or index_stall_timeout_seconds
+                            ),
+                            output=tail,
+                        )
+                try:
+                    line = lines.get(timeout=0.1)
+                except queue.Empty:
                     continue
-                line = process.stdout.readline()
-                if line == "":
+                if line is None:
                     break
-                pipe_deadline = None
                 log_handle.write(line)
                 log_handle.flush()
                 tail = (tail + line)[-4000:]
@@ -586,6 +590,7 @@ def run_logged(
                 ):
                     tqdm.write(line.rstrip())
                 if line.startswith("[export:index:start]"):
+                    cancel_annotation_timer()
                     arm_index_timer()
                 elif line.startswith((
                     "[export:project-analysis:done]",
