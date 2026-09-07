@@ -151,6 +151,8 @@ def main() -> None:
             f"expected={args.expected_shard_index}/{args.expected_shard_count}"
         )
     expected_slug = f"typepro-build-shard-{manifest['shard_index']:02d}"
+    if manifest['shard_count'] == 40:
+        expected_slug += "-of-40"
     actual_slug = args.dataset_id.rsplit("/", 1)[-1]
     if actual_slug != expected_slug:
         raise RuntimeError(

@@ -19,6 +19,7 @@ OWNER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{1,49}$")
 # modulo partition, while unsplit shards retain their native index/10 coordinate.
 SHARD_PART_COUNTS = {2: 2, 3: 3, 7: 2, 9: 3}
 SHARD_PARTITIONS = {
+    2: [(2, 20), (12, 40), (32, 40)],
     9: [(9, 30), (19, 30), (29, 90), (59, 90), (89, 90)],
 }
 
@@ -626,6 +627,8 @@ def shard_notebook(
         import zipfile
 
         dataset_id = f"{publish_username}/typepro-build-shard-{SHARD_INDEX:02d}"
+        if SHARD_COUNT == 40:
+            dataset_id += "-of-40"
         resume_dir = Path(f"/kaggle/working/resume_shard_{SHARD_INDEX:02d}")
         resume_dir.mkdir(parents=True, exist_ok=True)
         probe = subprocess.run(
@@ -802,6 +805,7 @@ def canonical_merge_datasets(shard_accounts: list[dict]) -> list[dict]:
                     "dataset_id": (
                         f"{account['dataset_owner']}/"
                         f"typepro-build-shard-{physical_index:02d}"
+                        + ("-of-40" if physical_count == 40 else "")
                     ),
                     "logical_shard_index": index,
                     "part_index": part_index,
@@ -832,7 +836,8 @@ def validate_merge_datasets(
         if (
             not OWNER_RE.fullmatch(owner)
             or not isinstance(shard_index, int)
-            or slug != f"typepro-build-shard-{shard_index:02d}"
+            or slug != (f"typepro-build-shard-{shard_index:02d}"
+                        + ("-of-40" if shard_count == 40 else ""))
         ):
             raise ValueError(f"Dataset id does not match its physical shard: {item!r}")
         if dataset_id.casefold() in seen_ids:
@@ -1048,6 +1053,8 @@ def recovery_notebook(
         code("""
         PUBLISH_DIR = Path(f"/kaggle/working/recover_publish_{SHARD_INDEX:02d}")
         dataset_id = f"{EXPECTED_DATASET_OWNER}/typepro-build-shard-{SHARD_INDEX:02d}"
+        if SHARD_COUNT == 40:
+            dataset_id += "-of-40"
         publish_command = [
             sys.executable, "-u", PIPELINE_DIR / "publish_shard.py",
             "--work-dir", WORK_DIR,

@@ -67,7 +67,7 @@ def main():
             directory = args.state.parent / 'scheduled' / plan.runner_account / f'{index:02d}'
             write_version(directory, plan, rendered, part_index=part)
             jobs.append({'account': plan.runner_account, 'kernel': f'{plan.runner_account}/{partition_kernel_slug(plan, part)}',
-                         'shard_index': index, 'shard_count': count, 'dataset': f'{plan.dataset_owner}/typepro-build-shard-{index:02d}',
+                         'shard_index': index, 'shard_count': count, 'dataset': f'{plan.dataset_owner}/typepro-build-shard-{index:02d}' + ('-of-40' if count == 40 else ''),
                          'payload': str(directory), 'status': 'pending'})
     if not args.push:
         print(json.dumps({'revision': args.revision, 'jobs': jobs}, indent=2))

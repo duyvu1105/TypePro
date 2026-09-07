@@ -1,19 +1,24 @@
 # TypePro Kaggle workflow: target masking rerun
 
-Current workflow (2026-09-06): **18 independent physical partitions**, generated
+Current workflow (2026-09-07): **19 independent physical partitions**, generated
 from 10 logical shard templates, on three accounts. The table below supersedes
 the historical two-account workflow documented later in this file.
 
 | Runner / Dataset owner | Logical shards | Physical jobs | Visibility |
 | --- | --- | ---: | --- |
-| duyvu1105 | 00, 01, 02 (2 parts), 04, 05 | 6 | private |
+| duyvu1105 | 00, 01, 02 (3 parts), 04, 05 | 7 | private |
 | duymign | 03 (3 parts), 06, 07 (2 parts) | 6 | public |
 | vdduy1105 | 08, 09 (5 parts) | 6 | public |
 
-Final merge remains under `duyvu1105`. The authoritative inputs are the 18
-entries in `shard_merge_plan.json`; existing physical coordinates are preserved.
+Final merge remains under `duyvu1105`. The authoritative inputs are the 19
+entries in `shard_merge_plan.json`. Shard 2 retains 2/20, while 12/20 is replaced
+by 12/40 and 32/40. All other physical coordinates are preserved.
+The two new kernels end in `-part-02-subpart-01` and `-part-02-subpart-02`;
+their private Dataset slugs end in `-12-of-40` and `-32-of-40`, avoiding writes
+from the retired 12/20 kernel. Render/push these with `--shard 2 --part 2`
+and `--shard 2 --part 3`, respectively. Do not rerun part 1 for this split.
 Split parts now have separate kernel IDs ending in `-part-01`, etc. Each
-account starts at most five jobs, then submits its sixth when a slot is free.
+account starts at most five jobs, then submits remaining jobs when slots are free.
 Local credentials map to `kaggle.json`, `kaggle2.json`, `kaggle3.json` in that
 order. Never print keys or commit credentials.
 
@@ -36,7 +41,7 @@ The scheduler pins the source checkout to that commit, counts nonterminal jobs
 across each account, reserves newly submitted slots, and keeps a durable ledger
 at `typepro_kernel_versions/rerun_state.json`. Reusing the same ledger avoids
 duplicate pushes. An interrupted `submitting` entry requires inspecting the
-remote version before any retry. The watcher exits after all 18 submissions;
+remote version before any retry. The watcher exits after all 19 submissions;
 submission is not proof of completed datasets. Verify manifests/file listings
 before merge. Do not publish or train the final dataset automatically.
 

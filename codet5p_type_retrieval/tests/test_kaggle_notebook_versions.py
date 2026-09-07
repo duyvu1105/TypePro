@@ -193,7 +193,7 @@ def test_generated_artifacts_are_ten_standalone_notebooks_and_partitioned_merge(
         for index in range(10)
     ]
     assert len({plan.kernel_slug for plan in plans}) == 10
-    assert [plan.part_count for plan in plans] == [1, 1, 2, 3, 1, 1, 1, 2, 1, 5]
+    assert [plan.part_count for plan in plans] == [1, 1, 3, 3, 1, 1, 1, 2, 1, 5]
     from collections import Counter
     physical_counts = Counter()
     kernel_ids = set()
@@ -205,8 +205,8 @@ def test_generated_artifacts_are_ten_standalone_notebooks_and_partitioned_merge(
             assert metadata['id'].split('/')[1] == metadata['title'].lower().replace(' ', '-')
             physical_counts[plan.runner_account] += 1
             assert plan.public_dataset == (plan.runner_account != owner)
-    assert sorted(physical_counts.values()) == [6, 6, 6]
-    assert len(kernel_ids) == 18
+    assert sorted(physical_counts.values()) == [6, 6, 7]
+    assert len(kernel_ids) == 19
     for index, plan in enumerate(plans):
         notebook = json.loads(plan.notebook_path.read_text(encoding="utf-8"))
         config = source_with_tag(notebook, "typepro-shard-config")
@@ -341,8 +341,8 @@ def test_merge_kernel_metadata_attaches_exact_merge_plan_inputs():
     dataset_ids = commit_merge_finalize.merge_dataset_ids()
     metadata = commit_merge_finalize.kernel_metadata("typepro_merge_finalize.ipynb")
 
-    assert len(dataset_ids) == 18
-    assert len(set(dataset_ids)) == 18
+    assert len(dataset_ids) == 19
+    assert len(set(dataset_ids)) == 19
     assert metadata["id"] == "duyvu1105/merge-dataset"
     assert metadata["dataset_sources"] == dataset_ids
 
@@ -447,13 +447,24 @@ def test_merge_plan_covers_all_logical_shards_without_overlap():
         plan["datasets"], 10, "duyvu1105"
     )
 
-    assert len(datasets) == 18
+    assert len(datasets) == 19
     assert {(item["shard_index"], item["shard_count"]) for item in datasets} == {
-        (0, 10), (1, 10), (2, 20), (12, 20),
+        (0, 10), (1, 10), (2, 20), (12, 40), (32, 40),
         (3, 30), (13, 30), (23, 30), (4, 10),
         (5, 10), (6, 10), (7, 20), (17, 20), (8, 10),
         (9, 30), (19, 30), (29, 90), (59, 90), (89, 90),
     }
+
+
+def test_shard_12_children_exactly_replace_parent_without_dataset_collision():
+    children = generate_notebooks.physical_partitions(2)[1:]
+    assert children == [(12, 40), (32, 40)]
+    for value in range(4000):
+        assert sum(value % count == index for index, count in children) == int(value % 20 == 12)
+    plan = json.loads((NOTEBOOK_DIR / "shard_merge_plan.json").read_text())
+    ids = {item['dataset_id'] for item in plan['datasets']}
+    assert 'duyvu1105/typepro-build-shard-12' not in ids
+    assert {'duyvu1105/typepro-build-shard-12-of-40', 'duyvu1105/typepro-build-shard-32-of-40'} <= ids
 
 
 def test_recovery_notebook_only_restores_and_publishes_completed_shard():

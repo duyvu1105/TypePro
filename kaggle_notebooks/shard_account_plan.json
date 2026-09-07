@@ -25,7 +25,7 @@
     },
     {
       "shard_index": 2,
-      "part_count": 2,
+      "part_count": 3,
       "runner_account": "duyvu1105",
       "dataset_owner": "duyvu1105",
       "public_dataset": false,
@@ -127,18 +127,27 @@
       "dataset_id": "duyvu1105/typepro-build-shard-02",
       "logical_shard_index": 2,
       "part_index": 0,
-      "part_count": 2,
+      "part_count": 3,
       "shard_index": 2,
       "shard_count": 20,
       "public_dataset": false
     },
     {
-      "dataset_id": "duyvu1105/typepro-build-shard-12",
+      "dataset_id": "duyvu1105/typepro-build-shard-12-of-40",
       "logical_shard_index": 2,
       "part_index": 1,
-      "part_count": 2,
+      "part_count": 3,
       "shard_index": 12,
-      "shard_count": 20,
+      "shard_count": 40,
+      "public_dataset": false
+    },
+    {
+      "dataset_id": "duyvu1105/typepro-build-shard-32-of-40",
+      "logical_shard_index": 2,
+      "part_index": 2,
+      "part_count": 3,
+      "shard_index": 32,
+      "shard_count": 40,
       "public_dataset": false
     },
     {

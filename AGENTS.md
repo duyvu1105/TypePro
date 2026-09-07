@@ -1,19 +1,21 @@
 # TypePro agent runbook
 
-## Current authorized workflow (2026-09-06)
+## Current authorized workflow (2026-09-07)
 
 The user authorized replacing the historical two-account workflow below with
-18 independent physical jobs across three accounts. For current generate,
+19 independent physical jobs across three accounts. For current generate,
 validate and scheduling commands, read `kaggle_notebooks/README.md` and
 `kaggle_notebooks/shard_account_plan.json`.
 
-- duyvu1105 (`kaggle.json`): logical shards 0, 1, 2 (2 parts), 4, 5; private.
+- duyvu1105 (`kaggle.json`): logical shards 0, 1, 2 (3 parts), 4, 5; private.
 - duymign (`kaggle2.json`): logical shards 3 (3 parts), 6, 7 (2 parts); public.
 - vdduy1105 (`kaggle3.json`): logical shards 8, 9 (5 parts); public.
-- Six physical jobs per account, at most five active jobs per account.
-- Split parts use distinct kernels. Preserve all 18 physical coordinates in the
+- Physical jobs per account: 7/6/6, at most five active jobs per account.
+- Shard 2 retains 2/20; old 12/20 is replaced by 12/40 and 32/40.
+  New kernels use part-02-subpart-01/02; new Dataset slugs end in -of-40.
+- Split parts use distinct kernels. Preserve all 19 physical coordinates in the
   plans, including shard 9's hierarchical /30 and /90 partitions.
-- Final merge uses the exact 18 plan inputs and publishes privately as duyvu1105.
+- Final merge uses the exact 19 plan inputs and publishes privately as duyvu1105.
 - Use `schedule_shards.py` for the complete rerun; dry-run before `--push`.
 - Never read/print credential contents for inspection. Programs may load keys
   solely to authenticate and must validate the expected username.

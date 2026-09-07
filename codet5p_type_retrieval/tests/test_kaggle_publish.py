@@ -15,6 +15,25 @@ from kaggle_dataset_utils import publish_dataset, validate_dataset_id, write_met
 from publish_shard import package_shard
 
 
+@pytest.mark.parametrize('index', [12, 32])
+def test_publish_subdivision_uses_isolated_dataset_slug(tmp_path, monkeypatch, index):
+    import publish_shard
+    from types import SimpleNamespace
+    args = SimpleNamespace(work_dir=tmp_path, payload_dir=tmp_path / 'payload',
+        expected_shard_index=index, expected_shard_count=40,
+        dataset_id=f'duyvu1105/typepro-build-shard-{index}-of-40',
+        title='Subdivision', message='Complete', public=False)
+    monkeypatch.setattr(publish_shard, 'parse_args', lambda: args)
+    monkeypatch.setattr(publish_shard, 'package_shard', lambda *a: (None, {'shard_index': index, 'shard_count': 40}))
+    calls = []
+    monkeypatch.setattr(publish_shard, 'publish_dataset', lambda *a, **kw: calls.append(a[1]))
+    publish_shard.main()
+    assert calls == [args.dataset_id]
+    args.dataset_id = f'duyvu1105/typepro-build-shard-{index}'
+    with pytest.raises(RuntimeError, match='slug'):
+        publish_shard.main()
+
+
 def make_shard(tmp_path: Path) -> Path:
     work = tmp_path / "typepro_build_shard_00"
     (work / "metadata").mkdir(parents=True)

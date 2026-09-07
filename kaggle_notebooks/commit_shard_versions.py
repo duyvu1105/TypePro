@@ -134,8 +134,8 @@ def load_plan(path: Path) -> tuple[str, int, list[AccountPlan]]:
             account: sum(plan.part_count for plan in plans if plan.runner_account.casefold() == account)
             for account in account_counts
         }
-        if sorted(physical_counts.values()) != [6, 6, 6]:
-            raise RuntimeError(f'Three-account plan must own six partitions each: {physical_counts}')
+        if physical_counts != {'duyvu1105': 7, 'duymign': 6, 'vdduy1105': 6}:
+            raise RuntimeError(f'Three-account partition counts must be 7/6/6: {physical_counts}')
     elif sorted(account_counts.values()) != [5, 5]:
         raise RuntimeError(
             f"Exactly two runner accounts must own five shards each: {account_counts}"
@@ -239,7 +239,9 @@ def kernel_metadata(
     shard_index = plan.assigned_shards[0]
     kernel_slug = partition_kernel_slug(plan, part_index)
     title = f"TypePro Python Shard {shard_index:02d}"
-    if plan.independent_parts and plan.part_count > 1:
+    if plan.independent_parts and shard_index == 2 and part_index > 0:
+        title += f" Part 02 Subpart {part_index:02d}"
+    elif plan.independent_parts and plan.part_count > 1:
         title += f" Part {part_index + 1:02d}"
     return {
         "id": f"{plan.runner_account}/{kernel_slug}",
@@ -267,6 +269,8 @@ def partition_kernel_slug(plan: AccountPlan, part_index: int) -> str:
         )
     # Every part is a new version of the pre-existing logical-shard notebook.
     # Keep both the id and title stable so Kaggle cannot derive a new slug.
+    if plan.independent_parts and plan.assigned_shards[0] == 2 and part_index > 0:
+        return f'{plan.kernel_slug}-part-02-subpart-{part_index:02d}'
     if plan.independent_parts and plan.part_count > 1:
         return f'{plan.kernel_slug}-part-{part_index + 1:02d}'
     return plan.kernel_slug
@@ -452,6 +456,7 @@ def main(argv: list[str] | None = None) -> None:
                 "dataset_id": (
                     f"{plan.dataset_owner}/"
                     f"typepro-build-shard-{physical_shard_index:02d}"
+                    + ("-of-40" if physical_shard_count == 40 else "")
                 ),
             }
             if args.check_status:
