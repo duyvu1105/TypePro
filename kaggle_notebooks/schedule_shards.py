@@ -25,13 +25,21 @@ def save(path, state):
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix('.tmp')
     temporary.write_text(json.dumps(state, indent=2), encoding='utf-8')
-    temporary.replace(path)
+    for attempt in range(10):
+        try:
+            temporary.replace(path)
+            break
+        except PermissionError:
+            if attempt == 9:
+                raise
+            time.sleep(0.2 * (attempt + 1))
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--push', action='store_true')
     parser.add_argument('--watch', action='store_true')
+    parser.add_argument('--account', action='append', choices=['duyvu1105', 'duymign', 'vdduy1105'], default=[])
     parser.add_argument('--revision', required=True)
     parser.add_argument('--state', type=Path, default=REPO_ROOT / 'typepro_kernel_versions' / 'rerun_state.json')
     parser.add_argument('--max-active', type=int, default=5)
@@ -73,6 +81,8 @@ def main():
     with tempfile.TemporaryDirectory(prefix='typepro_scheduler_auth_') as auth_dir:
         while True:
             for account, credential_path in credentials.items():
+                if args.account and account not in args.account:
+                    continue
                 credential = load_credential(credential_path, account)
                 os.environ['KAGGLE_CONFIG_DIR'] = auth_dir
                 os.environ['KAGGLE_USERNAME'] = credential['username']
@@ -137,7 +147,7 @@ def main():
                     slots -= 1  # Reserve the slot even if status propagation is delayed.
                     print(json.dumps(job), flush=True)
                 save(args.state, state)
-            pending = sum(job['status'] == 'pending' for job in state['jobs'])
+            pending = sum(job['status'] == 'pending' and (not args.account or job['account'] in args.account) for job in state['jobs'])
             print(json.dumps({'pending': pending, 'state': str(args.state)}), flush=True)
             if not pending or not args.watch:
                 break

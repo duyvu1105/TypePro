@@ -36,7 +36,7 @@ class Function_methods:
         self.total_function_data = self.read_projects_from_json(self.project_data_path)
         self.total_function_use_data = self.read_projects_from_json2(self.project_use_path)
         self.total_class_data = self.read_project_class_from_json(self.project_class_path)
-        self.project_type_analyzer = ProjectTypeAnalyzer(project_root, parsed_files)
+        self.project_type_analyzer = ProjectTypeAnalyzer(project_root, parsed_files, use_return_annotations=False)
         self._rebuild_indexes()
 
     @classmethod
@@ -50,7 +50,7 @@ class Function_methods:
         instance.total_function_data = records['function_records']
         instance.total_function_use_data = records['use_records']
         instance.total_class_data = records['class_records']
-        instance.project_type_analyzer = ProjectTypeAnalyzer(project_root, parsed_files)
+        instance.project_type_analyzer = ProjectTypeAnalyzer(project_root, parsed_files, use_return_annotations=False)
         instance._rebuild_indexes()
         return instance
 

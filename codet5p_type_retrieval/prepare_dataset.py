@@ -96,7 +96,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--retrieval-schema-version",
-        default="typepro-project-kb-top10-generative-v4-target-source-view",
+        default="typepro-project-kb-top10-generative-v5-shared-kb",
         help="Invalidates restored raw slices when recommendation logic changes",
     )
     parser.add_argument(

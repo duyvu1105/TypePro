@@ -19,7 +19,9 @@ validate and scheduling commands, read `kaggle_notebooks/README.md` and
   solely to authenticate and must validate the expected username.
 - Edit generated notebooks through the generator. Run the full pipeline test
   suite before Git/Kaggle push. Do not commit datasets, credentials or temp outputs.
-- Target masking schema v4 invalidates old raw slices; merge rejects legacy rows.
+- Shared-KB schema v5 invalidates old raw slices; merge rejects legacy rows.
+- Reuse the original project KB unchanged. Mask source before retrieval and
+  target signatures in returned definition copies; KB ranking metadata remains.
 - Report actual kernel versions and statuses; submission is not dataset success.
 
 The remainder preserves the historical runbook. Its two-account, ten-input

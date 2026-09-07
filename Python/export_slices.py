@@ -6,6 +6,7 @@ TypePro implementation resolves its data/ and Third-party-data/ paths there.
 from __future__ import annotations
 
 import argparse
+import copy
 import ast
 import json
 import re
@@ -20,8 +21,8 @@ from typing import Any, Iterable
 from slicing_code_class import ProjectAnalysisCache, Slicer
 from function_methods import Function_methods
 from project_index import build_project_index, scan_project
-from project_kb import top_project_types, build_project_kb
-from target_context import MASK, mask_annotation, read_source, render_masks, source_overlay
+from project_kb import top_project_types
+from target_context import MASK, mask_annotation, mask_definition, read_source, render_masks, source_overlay
 
 
 FUNCTION_NODES = (ast.FunctionDef, ast.AsyncFunctionDef)
@@ -319,11 +320,7 @@ def export_one(
     project_kb: dict[str, Any] | None = None,
     recommendation_limit: int = 10,
 ) -> dict[str, Any] | None:
-    """Build all target-dependent analysis from a masked source view.
-
-    Shared analysis may contain the gold annotation and is deliberately not
-    passed through. Reusing source parses is safe; reusing derived caches is not.
-    """
+    """Retrieve from the unchanged project KB using a masked source view."""
     source = file_path.read_text(encoding='utf-8')
     tree = ast.parse(source)
     add_parent_links(tree)
@@ -351,36 +348,32 @@ def export_one(
                 annotation = getattr(node, 'annotation', None)
                 break
     masked = mask_annotation(source, annotation) if annotation is not None else source
-    project_root = Path(getattr(function_methods, 'project_root', None) or file_path.parent)
-    parsed = getattr(function_methods, 'parsed_files', None)
-    if parsed is None:
-        parsed, _ = scan_project(project_root)
-    target_path = file_path.resolve()
-    target_parsed = [
-        (path, module, masked, ast.parse(masked, filename=str(path)))
-        if Path(path).resolve() == target_path else (path, module, text, root)
-        for path, module, text, root in parsed
-    ]
-    if not any(Path(item[0]).resolve() == target_path for item in target_parsed):
-        raise ValueError('Target file is absent from the project source snapshot')
+    function_name = function.name if function is not None else str(row.get('loc', '')).split('@')[0]
+    clean = lambda text: mask_definition(text, function_name, str(row.get('name', '')), scope)
     with source_overlay(file_path, masked):
-        methods = Function_methods.from_parsed(project_root, target_parsed)
-        kb = build_project_kb(
-            project_root, parsed_files=target_parsed,
-            external_records=[item for item in (project_kb or {}).get('records', [])
-                              if item.get('source') != 'project'],
-        ) if project_kb is not None else None
+        # Reuse project indexes. Only copy records containing the target's name;
+        # do not rescan the project or rerun the whole-project type solver.
+        base = function_methods or Function_methods()
+        methods = copy.copy(base)
+        methods.total_function_data = [item._replace(source_code=clean(item.source_code))
+                                       for item in base.total_function_data]
+        methods.total_class_data = [item._replace(signature=clean(item.signature))
+                                    for item in base.total_class_data]
+        methods.total_function_use_data = base.total_function_use_data
+        # The shared solver uses code/call flow, not return annotations.
+        # Its results are target-independent and can be reused.
+        methods._rebuild_indexes()
         result = _export_masked_one(
             row, file_path, function_methods=methods,
-            analysis_cache=ProjectAnalysisCache(), project_kb=kb,
+            analysis_cache=ProjectAnalysisCache(), project_kb=project_kb,
             recommendation_limit=recommendation_limit,
         )
     if result is not None:
         result['interprocedural_slice'] = render_masks(result['interprocedural_slice'])
         for item in result['recommendation_types']:
-            item['definition'] = render_masks(item['definition'])
+            item['definition'] = render_masks(clean(item['definition']))
         result['other_prompt'] = [render_masks(value) for value in result['other_prompt']]
-        result['target_masking_version'] = 'typepro-target-source-view-v1'
+        result['target_masking_version'] = 'typepro-shared-kb-masked-source-v2'
     return result
 
 

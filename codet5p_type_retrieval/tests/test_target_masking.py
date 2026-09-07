@@ -1,4 +1,5 @@
 import ast
+import copy
 from pathlib import Path
 import sys
 
@@ -9,7 +10,7 @@ from export_slices import export_one
 from function_methods import Function_methods
 from project_index import scan_project
 from project_kb import build_project_kb
-from target_context import MASK, mask_annotation, read_source, source_overlay
+from target_context import MASK, mask_annotation, mask_definition, read_source, source_overlay
 
 
 @pytest.mark.parametrize('scope,name,function,line', [
@@ -17,7 +18,7 @@ from target_context import MASK, mask_annotation, read_source, source_overlay
     ('return', 'fetch', 'fetch', 4),
     ('return', 'load', 'load', 7),
 ])
-def test_target_annotation_cannot_change_slice_or_candidates(tmp_path, monkeypatch, scope, name, function, line):
+def test_shared_kb_is_reused_unchanged_with_masked_source(tmp_path, monkeypatch, scope, name, function, line):
     monkeypatch.chdir(tmp_path)
     (tmp_path / 'data').mkdir()
     project = tmp_path / 'repo'
@@ -27,6 +28,7 @@ def test_target_annotation_cannot_change_slice_or_candidates(tmp_path, monkeypat
         'from app import create_attacker, fetch\n'
         'result = create_attacker("ip", "ubuntu")\nvalue = fetch()\n', encoding='utf-8')
     outputs = []
+    kb = None
     for gold in ('HiddenGoldA', 'HiddenGoldB'):
         source.write_text(
             'class Visible: pass\n'
@@ -49,15 +51,26 @@ def test_target_annotation_cannot_change_slice_or_candidates(tmp_path, monkeypat
         target = next(n for n in ast.walk(ast.parse(source.read_text())) if isinstance(n, ast.FunctionDef) and n.name == function)
         parsed, _ = scan_project(project)
         methods = Function_methods.from_parsed(project, parsed)
-        kb = build_project_kb(project)
+        if kb is None:
+            kb = build_project_kb(project)
+        kb_before = copy.deepcopy(kb)
         original = source.read_bytes()
         row = {'name': name, 'scope': scope, 'loc': f'{function}@{target.lineno}', 'gttype': gold}
-        result = export_one(row, source, function_methods=methods, project_kb=kb)
+        with monkeypatch.context() as guard:
+            def forbidden(*args, **kwargs):
+                raise AssertionError('Per-sample project rebuild is forbidden')
+            guard.setattr('project_kb.build_project_kb', forbidden)
+            guard.setattr(Function_methods, 'from_parsed', forbidden)
+            guard.setattr('type_signal_analyzer.ProjectTypeAnalyzer._build', forbidden)
+            result = export_one(row, source, function_methods=methods, project_kb=kb)
+        assert kb == kb_before
         assert result is not None
         assert source.read_bytes() == original
         assert '<mask>' in result['interprocedural_slice']
         context = result['interprocedural_slice'] + str(result['recommendation_types'])
-        assert gold not in context
+        assert gold not in result['interprocedural_slice']
+        assert '-> ' + gold not in context
+        assert 'container: ' + gold not in context
         assert MASK not in context
         assert 'int' in str(result['recommendation_types']) or scope == 'arg'
         outputs.append((result['interprocedural_slice'], result['recommendation_types']))
@@ -65,7 +78,7 @@ def test_target_annotation_cannot_change_slice_or_candidates(tmp_path, monkeypat
 
 
 def test_overlay_restores_on_error_and_preserves_unicode_multiline(tmp_path):
-    source = 'def f(é: tuple[\n    str, int\n]):\n    pass\n'
+    source = 'def f(\u00e9: tuple[\n    str, int\n]):\n    pass\n'
     path = tmp_path / 'source.py'
     path.write_text(source, encoding='utf-8')
     annotation = ast.parse(source).body[0].args.args[0].annotation
@@ -77,3 +90,12 @@ def test_overlay_restores_on_error_and_preserves_unicode_multiline(tmp_path):
             assert read_source(path) == masked
             raise RuntimeError('stop')
     assert read_source(path) == source
+
+
+@pytest.mark.parametrize('definition', [
+    'function target(value: HiddenGold) -> bool',
+    'class Owner:\n    def target(\n        self, value: HiddenGold,\n',
+])
+def test_incomplete_candidate_signature_cannot_expose_target(definition):
+    masked = mask_definition(definition, 'target', 'value', 'arg')
+    assert 'HiddenGold' not in masked

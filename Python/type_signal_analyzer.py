@@ -171,7 +171,9 @@ class ProjectTypeAnalyzer:
         self,
         project_root: str | os.PathLike[str] | None,
         parsed_files=None,
+        use_return_annotations=True,
     ):
+        self.use_return_annotations = use_return_annotations
         self.root = Path(project_root).resolve() if project_root else None
         self.definitions: dict[str, list[str]] = defaultdict(list)
         self.module_symbols: dict[str, set[str]] = defaultdict(set)
@@ -235,7 +237,8 @@ class ProjectTypeAnalyzer:
                     self._functions[node.name].append(node)
                     # Return annotations are API contracts. Parameter
                     # annotations are intentionally ignored to avoid labels.
-                    self.function_returns[node.name].update(annotation_names(node.returns))
+                    if self.use_return_annotations:
+                        self.function_returns[node.name].update(annotation_names(node.returns))
                 elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
                     if _leaf(_name(node.annotation)) == "TypeAlias":
                         self._add_definition(node.target.id, source_kind, "alias", module)

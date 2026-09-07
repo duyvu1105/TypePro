@@ -457,7 +457,7 @@ def shard_notebook(
         # This rerun keeps built-in annotations and adds function returns.
         INCLUDE_BUILTINS = True
         INCLUDE_RETURNS = True
-        RETRIEVAL_SCHEMA_VERSION = "typepro-project-kb-top10-generative-v4-target-source-view"
+        RETRIEVAL_SCHEMA_VERSION = "typepro-project-kb-top10-generative-v5-shared-kb"
 
         from pathlib import Path
 
@@ -1338,7 +1338,7 @@ def merge_notebook(
             sys.executable, "-u", merge_script,
             "--shard-build-dirs", *shard_builds,
             "--work-dir", MERGED_BUILD,
-            "--expected-retrieval-schema", "typepro-project-kb-top10-generative-v4-target-source-view",
+            "--expected-retrieval-schema", "typepro-project-kb-top10-generative-v5-shared-kb",
         ])
         """),
         markdown("## Finalize generative train/validation/test and retain project KBs"),
