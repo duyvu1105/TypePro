@@ -53,7 +53,7 @@ def main() -> None:
             for raw_file in (build / 'raw_slices').glob('*.jsonl'):
                 with raw_file.open(encoding='utf-8') as handle:
                     for line in handle:
-                        if line.strip() and json.loads(line).get('target_masking_version') != 'typepro-shared-kb-masked-source-v3-no-return-annotations':
+                        if line.strip() and json.loads(line).get('target_masking_version') != 'typepro-shared-kb-masked-source-v4-masked-candidate-ranking':
                             raise ValueError(f'Unmasked legacy record: {raw_file}')
     reference_manifest = None
     copied = {"raw_slices": 0, "project_status": 0, "project_kb": 0}

@@ -1,4 +1,5 @@
 import json
+import copy
 import subprocess
 import sys
 from pathlib import Path
@@ -10,6 +11,7 @@ PIPELINE_DIR = ROOT / "codet5p_type_retrieval"
 sys.path.insert(0, str(PYTHON_DIR))
 
 from project_kb import build_project_kb, top_project_types
+from target_context import MASK
 
 
 def test_project_kb_contains_definitions_imports_body_returns_and_reexports(tmp_path):
@@ -60,6 +62,36 @@ def test_top_project_types_never_uses_candidate_outside_project_kb(tmp_path):
         limit=10,
     )
     assert [item["name"] for item in ranked] == ["LocalType"]
+
+
+def test_top_project_types_masks_target_before_candidate_scoring(tmp_path):
+    orders = []
+    for annotation in ("marker", "OtherGold"):
+        project = tmp_path / annotation
+        project.mkdir()
+        (project / "app.py").write_text(
+            "class A:\n"
+            f"    def target(self, value: {annotation}):\n"
+            "        pass\n"
+            "class B:\n"
+            "    marker = 1\n"
+            "    def target(self, value):\n"
+            "        pass\n",
+            encoding="utf-8",
+        )
+        kb = build_project_kb(project)
+        before = copy.deepcopy(kb)
+        ranked = top_project_types(
+            kb, "value", "def target(self, value: <mask>):\n    return marker",
+            target_function="target", target_scope="arg", limit=2,
+        )
+        assert kb == before
+        class_a = next(item for item in ranked if item["name"] == "A")
+        assert annotation not in class_a["definition"]
+        assert MASK in class_a["definition"]
+        orders.append([item["name"] for item in ranked])
+
+    assert orders[0] == orders[1] == ["B", "A"]
 
 
 def test_generative_preprocess_writes_tagged_input_and_exact_label(tmp_path):

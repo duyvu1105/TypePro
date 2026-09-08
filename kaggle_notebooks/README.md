@@ -50,7 +50,7 @@ before merge. Do not publish or train the final dataset automatically.
 
 ## Shared project KB and masked source
 
-Retrieval schema: `typepro-project-kb-top10-generative-v6-no-return-annotations`.
+Retrieval schema: `typepro-project-kb-top10-generative-v7-masked-candidate-ranking`.
 Build one KB per project and reuse it for every sample. The KB never reads a
 function return annotation: it creates neither a candidate nor `returned_by`
 metadata from one, and stored function signatures omit it. It retains candidates
@@ -67,7 +67,7 @@ mutate the KB. Other annotations are retained.
 Tests verify that changing source target annotations with the same fixed KB
 preserves slices and ordered candidates, and prohibit per-sample KB/solver
 rebuilding. Rows use
-`target_masking_version=typepro-shared-kb-masked-source-v3-no-return-annotations`.
+`target_masking_version=typepro-shared-kb-masked-source-v4-masked-candidate-ranking`.
 
 Old restored datasets fail the retrieval-schema check. Local completed-project
 resume also requires a matching schema stamp on each status file, including

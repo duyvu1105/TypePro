@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from project_index import module_name, python_files
-from target_context import MASK
+from target_context import MASK, mask_definition
 
 
 SCHEMA_VERSION = "typepro-project-kb-v2-no-return-annotations"
@@ -199,8 +199,9 @@ def candidate_records(kb: dict[str, Any]) -> list[dict[str, Any]]:
 def top_project_types(
     kb: dict[str, Any], target_name: str, code_slice: str,
     seed_candidates: Iterable[dict[str, Any]] = (), limit: int = 10,
+    *, target_function: str = "", target_scope: str = "",
 ) -> list[dict[str, Any]]:
-    """Rank only records contained in this project's KB."""
+    """Rank project-KB records without reading the target annotation."""
     seeds: dict[str, int] = {}
     for index, item in enumerate(seed_candidates):
         for value in (item.get("qualified_name"), item.get("name")):
@@ -212,13 +213,18 @@ def top_project_types(
     for item in candidate_records(kb):
         name = str(item["name"])
         qualified = str(item.get("qualified_name") or name)
+        definition = str(item.get("definition") or name)
+        if target_function and target_scope:
+            definition = mask_definition(
+                definition, target_function, target_name, target_scope
+            )
         seed_rank = min(
             seeds.get(qualified.casefold(), 10_000),
             seeds.get(name.casefold(), 10_000),
         )
         words = set(re.findall(
             r"[A-Za-z_]\w*",
-            f"{name} {qualified} {item.get('definition', '')}".casefold(),
+            f"{name} {qualified} {definition}".casefold(),
         ))
         score = 0.0
         if seed_rank < 10_000:
@@ -227,11 +233,11 @@ def top_project_types(
         score += min(25, len(slice_tokens & words))
         if name.casefold() in slice_tokens:
             score += 100
-        ranked.append((-score, qualified.casefold(), item))
+        ranked.append((-score, qualified.casefold(), item, definition))
     ranked.sort(key=lambda value: (value[0], value[1]))
     result = []
     seen_names = set()
-    for _, _, item in ranked:
+    for _, _, item, definition in ranked:
         key = str(item.get("qualified_name") or item["name"]).casefold()
         if key in seen_names:
             continue
@@ -241,7 +247,7 @@ def top_project_types(
             "qualified_name": str(item.get("qualified_name") or item["name"]),
             "source": str(item.get("source") or "project"),
             "kind": str(item.get("kind") or "class"),
-            "definition": str(item.get("definition") or item["name"]),
+            "definition": definition,
         })
         if len(result) >= limit:
             break

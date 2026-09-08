@@ -373,7 +373,7 @@ def export_one(
         for item in result['recommendation_types']:
             item['definition'] = render_masks(clean(item['definition']))
         result['other_prompt'] = [render_masks(value) for value in result['other_prompt']]
-        result['target_masking_version'] = 'typepro-shared-kb-masked-source-v3-no-return-annotations'
+        result['target_masking_version'] = 'typepro-shared-kb-masked-source-v4-masked-candidate-ranking'
     return result
 
 
@@ -469,6 +469,8 @@ def _export_masked_one(
         top_project_types(
             project_kb, target_name, code_slice, seed_recommendations,
             limit=recommendation_limit,
+            target_function=target_function_label,
+            target_scope=scope,
         )
         if project_kb is not None else seed_recommendations
     )
