@@ -54,7 +54,7 @@ def test_standalone_notebook_locks_publish_owner_and_single_shard():
     assert "SLICE_INDEX_TIMEOUT_SECONDS = 1800" in config
     assert "SLICE_TRACE_EVERY = 1" in config
     assert "CLONE_TIMEOUT_SECONDS = 900" in config
-    assert 'RETRIEVAL_SCHEMA_VERSION = "typepro-project-kb-top10-generative-v7-masked-candidate-ranking"' in config
+    assert 'RETRIEVAL_SCHEMA_VERSION = "typepro-project-kb-top10-generative-v8-target-member-matching"' in config
     assert "force-projects" in serialized
     assert "INCLUDE_BUILTINS = True" in config
     assert "INCLUDE_RETURNS = True" in config
@@ -383,6 +383,19 @@ def test_data_analysis_notebook_reports_all_context_limits():
         assert str(limit) in serialized
     assert "prompt_truncated_pct" in serialized
     assert "Tokenizing {split}" in serialized
+
+
+def test_test_retrieval_ablation_is_test_only_and_revision_pinned():
+    serialized = json.dumps(generate_notebooks.test_retrieval_ablation_notebook(
+        "https://github.com/duyvu1105/TypePro.git"
+    ))
+
+    assert "__TYPEPRO_REVISION__" in serialized
+    assert "--only-project-list" in serialized
+    assert "test_projects.txt" in serialized
+    assert "comparison.json" in serialized
+    assert "datasets create" not in serialized
+    assert "publish_kaggle.py" not in serialized
 
 
 def test_generative_batch_uses_left_padding_for_suffix_labels():

@@ -461,7 +461,7 @@ def shard_notebook(
         # This rerun keeps built-in annotations and adds function returns.
         INCLUDE_BUILTINS = True
         INCLUDE_RETURNS = True
-        RETRIEVAL_SCHEMA_VERSION = "typepro-project-kb-top10-generative-v7-masked-candidate-ranking"
+        RETRIEVAL_SCHEMA_VERSION = "typepro-project-kb-top10-generative-v8-target-member-matching"
 
         from pathlib import Path
 
@@ -1349,7 +1349,7 @@ def merge_notebook(
             sys.executable, "-u", merge_script,
             "--shard-build-dirs", *shard_builds,
             "--work-dir", MERGED_BUILD,
-            "--expected-retrieval-schema", "typepro-project-kb-top10-generative-v7-masked-candidate-ranking",
+            "--expected-retrieval-schema", "typepro-project-kb-top10-generative-v8-target-member-matching",
         ])
         """),
         markdown("## Finalize generative train/validation/test and retain project KBs"),
@@ -1919,6 +1919,182 @@ def data_analysis_notebook(repository: str, branch: str) -> dict:
     ], gpu=False)
 
 
+def test_retrieval_ablation_notebook(repository: str) -> dict:
+    """Rebuild only the current held-out projects and compare candidate recall."""
+    return notebook([
+        markdown("""
+        # TypePro test-only retrieval ablation
+
+        This CPU notebook reads the exact 100-project list from the attached
+        published v12 Dataset, rebuilds only those projects with the target-member
+        and keyword-only propagation changes, and compares exact candidate recall
+        with the attached baseline. It never publishes or replaces a Dataset.
+        """),
+        code(f"""
+        REPOSITORY = {repository!r}
+        REVISION = "__TYPEPRO_REVISION__"
+        BASELINE_DATASET = "duyvu1105/typepro-python-generative"
+        BASELINE_REVISION = "2e6625f4259fd488f89c5e97ac50c018b6b0326c"
+        EXPECTED_BASELINE_TEST_ROWS = 3296
+        RETRIEVAL_SCHEMA_VERSION = "typepro-project-kb-top10-generative-v8-target-member-matching"
+
+        import json
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        REPO_DIR = Path("/kaggle/working/TypePro")
+        WORK_DIR = Path("/kaggle/working/typepro_test_member_ablation")
+        OUTPUT_DIR = Path("/kaggle/working/typepro_test_member_ablation_results")
+        SELECTED_PROJECTS = WORK_DIR / "test_projects.txt"
+
+        def run(command, cwd=None):
+            print("+", " ".join(map(str, command)), flush=True)
+            subprocess.run([str(value) for value in command], cwd=cwd, check=True)
+
+        candidates = []
+        for path in Path("/kaggle/input").rglob("manifest.json"):
+            try:
+                value = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if value.get("schema_version") == "typepro-codet5p-generative-project-kb-v2":
+                candidates.append(path.parent)
+        if len(candidates) != 1:
+            raise RuntimeError(f"Expected one attached final TypePro Dataset, found {{candidates}}")
+        BASELINE_DIR = candidates[0]
+        BASELINE_MANIFEST = json.loads((BASELINE_DIR / "manifest.json").read_text(encoding="utf-8"))
+        if BASELINE_MANIFEST["source"]["typepro_git_revision"] != BASELINE_REVISION:
+            raise RuntimeError("Attached Dataset is not the audited v12 baseline")
+        if BASELINE_MANIFEST["output"]["test"]["rows"] != EXPECTED_BASELINE_TEST_ROWS:
+            raise RuntimeError("Attached v12 baseline test row count changed")
+        WORK_DIR.mkdir(parents=True, exist_ok=True)
+        SELECTED_PROJECTS.write_text(
+            (BASELINE_DIR / "test_projects.txt").read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+        print({{"baseline": str(BASELINE_DIR), "revision": REVISION}})
+        """),
+        markdown("## Checkout and validate the new retrieval implementation"),
+        code("""
+        if not REPO_DIR.exists():
+            run(["git", "clone", REPOSITORY, REPO_DIR])
+        run(["git", "-C", REPO_DIR, "fetch", "origin", REVISION, "--depth", "1"])
+        run(["git", "-C", REPO_DIR, "checkout", "--detach", REVISION])
+        PIPELINE_DIR = REPO_DIR / "codet5p_type_retrieval"
+        run([sys.executable, "-m", "pip", "install", "-q", "-U", "-r", PIPELINE_DIR / "requirements-build.txt"])
+        run([
+            sys.executable, "-m", "pytest",
+            PIPELINE_DIR / "tests/test_type_signal_analyzer.py",
+            PIPELINE_DIR / "tests/test_project_kb_generative.py",
+            PIPELINE_DIR / "tests/test_target_masking.py",
+            "-q", "-p", "no:cacheprovider",
+        ], cwd=REPO_DIR)
+        """),
+        markdown("## Build metadata and slice only the v12 test projects"),
+        code("""
+        prepare = PIPELINE_DIR / "prepare_dataset.py"
+        common = [
+            "--typepro-root", REPO_DIR,
+            "--work-dir", WORK_DIR,
+            "--split-profile", "paper_project",
+            "--test-projects", 100,
+            "--validation-project-ratio", 0.10,
+            "--seed", 13,
+            "--include-builtins",
+            "--include-returns",
+            "--preview-samples", 0,
+        ]
+        run([sys.executable, "-u", prepare, "--stage", "metadata", *common])
+        run([
+            sys.executable, "-u", prepare, "--stage", "slice", *common,
+            "--only-project-list", SELECTED_PROJECTS,
+            "--shard-count", 1, "--shard-index", 0,
+            "--slice-log-every", 50, "--slice-trace-every", 1,
+            "--slice-annotation-timeout-seconds", 120,
+            "--package-download-timeout-seconds", 900,
+            "--kb-phase-timeout-seconds", 1800,
+            "--project-analysis-timeout-seconds", 300,
+            "--slice-index-timeout-seconds", 1800,
+            "--clone-timeout-seconds", 900,
+            "--retrieval-schema-version", RETRIEVAL_SCHEMA_VERSION,
+            "--force-projects", "--build-import-kb", "--download-missing-imports",
+            "--kb-max-files-per-package", 3000,
+        ])
+        """),
+        markdown("## Preprocess rebuilt rows as one test split"),
+        code("""
+        projects = [line.strip() for line in SELECTED_PROJECTS.read_text(encoding="utf-8").splitlines() if line.strip()]
+        split_map = WORK_DIR / "test_project_split_map.json"
+        split_map.write_text(json.dumps({project: "test" for project in projects}, indent=2), encoding="utf-8")
+        NEW_DATA_DIR = OUTPUT_DIR / "dataset"
+        run([
+            sys.executable, "-u", PIPELINE_DIR / "preprocess_generative.py",
+            "--input", WORK_DIR / "raw_slices",
+            "--output-dir", NEW_DATA_DIR,
+            "--project-split-map", split_map,
+        ])
+        """),
+        markdown("## Compare exact top-10 recall and save evidence"),
+        code("""
+        import csv
+
+        def load_rows(path):
+            with path.open(encoding="utf-8") as handle:
+                return {row["id"]: row for line in handle if line.strip() for row in [json.loads(line)]}
+
+        baseline = load_rows(BASELINE_DIR / "test.jsonl")
+        rebuilt = load_rows(NEW_DATA_DIR / "test.jsonl")
+        common_ids = sorted(baseline.keys() & rebuilt.keys())
+
+        def hit(row):
+            return row["label"] in [item["type"] for item in row["recommendation_types"]]
+
+        changed = []
+        for sample_id in common_ids:
+            old, new = baseline[sample_id], rebuilt[sample_id]
+            old_names = [item["type"] for item in old["recommendation_types"]]
+            new_names = [item["type"] for item in new["recommendation_types"]]
+            if old_names != new_names:
+                changed.append({
+                    "id": sample_id,
+                    "project": new["project"],
+                    "scope": new["target_scope"],
+                    "label": new["label"],
+                    "baseline_hit": hit(old),
+                    "rebuilt_hit": hit(new),
+                    "baseline_candidates": old_names,
+                    "rebuilt_candidates": new_names,
+                })
+        summary = {
+            "baseline_revision": BASELINE_REVISION,
+            "implementation_revision": REVISION,
+            "retrieval_schema_version": RETRIEVAL_SCHEMA_VERSION,
+            "baseline_rows": len(baseline),
+            "rebuilt_rows": len(rebuilt),
+            "common_rows": len(common_ids),
+            "baseline_exact_top10": sum(hit(baseline[item]) for item in common_ids),
+            "rebuilt_exact_top10": sum(hit(rebuilt[item]) for item in common_ids),
+            "improved_rows": sum(not item["baseline_hit"] and item["rebuilt_hit"] for item in changed),
+            "regressed_rows": sum(item["baseline_hit"] and not item["rebuilt_hit"] for item in changed),
+            "changed_candidate_rows": len(changed),
+            "missing_baseline_ids": len(rebuilt.keys() - baseline.keys()),
+            "missing_rebuilt_ids": len(baseline.keys() - rebuilt.keys()),
+        }
+        denominator = max(1, len(common_ids))
+        summary["baseline_exact_top10_pct"] = 100 * summary["baseline_exact_top10"] / denominator
+        summary["rebuilt_exact_top10_pct"] = 100 * summary["rebuilt_exact_top10"] / denominator
+        summary["delta_percentage_points"] = summary["rebuilt_exact_top10_pct"] - summary["baseline_exact_top10_pct"]
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        (OUTPUT_DIR / "comparison.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+        with (OUTPUT_DIR / "changed_candidates.jsonl").open("w", encoding="utf-8") as handle:
+            for item in changed:
+                handle.write(json.dumps(item, ensure_ascii=False) + "\n")
+        print(json.dumps(summary, indent=2))
+        """),
+    ], gpu=False)
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--shards", type=int, default=10)
@@ -2062,6 +2238,16 @@ def main(argv: list[str] | None = None) -> None:
         encoding="utf-8",
     )
     generated.append(analysis_path.name)
+    ablation_path = ROOT / "14_test_retrieval_ablation.ipynb"
+    ablation_path.write_text(
+        json.dumps(
+            test_retrieval_ablation_notebook(args.repository),
+            ensure_ascii=False,
+            indent=1,
+        ),
+        encoding="utf-8",
+    )
+    generated.append(ablation_path.name)
     plan_path = ROOT / "shard_account_plan.json"
     plan_path.write_text(
         json.dumps(

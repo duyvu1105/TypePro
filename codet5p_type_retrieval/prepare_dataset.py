@@ -55,6 +55,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--validation-project-ratio", type=float, default=0.10)
     parser.add_argument("--test-projects", type=int, default=100)
     parser.add_argument("--test-project-list", type=Path, help="Finalize only: prefer these projects, filling up to --test-projects from usable projects")
+    parser.add_argument(
+        "--only-project-list", type=Path,
+        help="Slice only the exact owner/repository values in this file",
+    )
     parser.add_argument("--seed", type=int, default=13)
     parser.add_argument("--shard-index", type=int, default=0)
     parser.add_argument("--shard-count", type=int, default=1)
@@ -96,7 +100,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--retrieval-schema-version",
-        default="typepro-project-kb-top10-generative-v7-masked-candidate-ranking",
+        default="typepro-project-kb-top10-generative-v8-target-member-matching",
         help="Invalidates restored raw slices when recommendation logic changes",
     )
     parser.add_argument(
@@ -707,6 +711,21 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
     skip_project_patterns = list(args.skip_project)
 
     projects = sorted(rows_by_project, key=lambda value: stable_number(value, args.seed + 3))
+    only_projects = None
+    if args.only_project_list:
+        only_projects = {
+            line.strip().casefold()
+            for line in args.only_project_list.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        }
+        projects = [project for project in projects if project.casefold() in only_projects]
+        found = {project.casefold() for project in projects}
+        missing = sorted(only_projects - found)
+        if missing:
+            raise ValueError(
+                f"--only-project-list contains {len(missing)} projects absent "
+                f"from metadata: {missing[:20]}"
+            )
     projects = [project for project in projects if stable_number(project, args.seed + 4) % args.shard_count == args.shard_index]
     if args.max_projects:
         projects = projects[: args.max_projects]
@@ -755,6 +774,8 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
         "include_builtins": bool(args.include_builtins),
         "include_returns": bool(args.include_returns),
         "skip_project_patterns": skip_project_patterns,
+        "only_project_list": str(args.only_project_list.resolve()) if args.only_project_list else None,
+        "only_project_count": len(only_projects) if only_projects is not None else None,
         "retrieval_schema_version": args.retrieval_schema_version,
     })
 

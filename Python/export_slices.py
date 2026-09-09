@@ -21,7 +21,7 @@ from typing import Any, Iterable
 from slicing_code_class import ProjectAnalysisCache, Slicer
 from function_methods import Function_methods
 from project_index import build_project_index, scan_project
-from project_kb import top_project_types
+from project_kb import target_member_query, top_project_types
 from target_context import MASK, mask_annotation, mask_definition, read_source, render_masks, source_overlay
 
 
@@ -373,7 +373,7 @@ def export_one(
         for item in result['recommendation_types']:
             item['definition'] = render_masks(clean(item['definition']))
         result['other_prompt'] = [render_masks(value) for value in result['other_prompt']]
-        result['target_masking_version'] = 'typepro-shared-kb-masked-source-v4-masked-candidate-ranking'
+        result['target_masking_version'] = 'typepro-shared-kb-masked-source-v5-target-member-matching'
     return result
 
 
@@ -471,12 +471,14 @@ def _export_masked_one(
             limit=recommendation_limit,
             target_function=target_function_label,
             target_scope=scope,
+            target_members=target_member_query(target_node, target_name) if scope == "arg" else None,
         )
         if project_kb is not None else seed_recommendations
     )
     result["recommendation_types"] = recommendations
     result["recommendation_diagnostics"] = {
         "count": len(recommendations),
+        "target_members": target_member_query(target_node, target_name) if scope == "arg" else {"methods": [], "attributes": []},
         "by_source": dict(Counter(item["source"] for item in recommendations)),
         "by_kind": dict(Counter(item["kind"] for item in recommendations)),
         "timings_seconds": {

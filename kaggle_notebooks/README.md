@@ -50,7 +50,7 @@ before merge. Do not publish or train the final dataset automatically.
 
 ## Shared project KB and masked source
 
-Retrieval schema: `typepro-project-kb-top10-generative-v7-masked-candidate-ranking`.
+Retrieval schema: `typepro-project-kb-top10-generative-v8-target-member-matching`.
 Build one KB per project and reuse it for every sample. The KB never reads a
 function return annotation: it creates neither a candidate nor `returned_by`
 metadata from one, and stored function signatures omit it. It retains candidates
@@ -67,7 +67,7 @@ mutate the KB. Other annotations are retained.
 Tests verify that changing source target annotations with the same fixed KB
 preserves slices and ordered candidates, and prohibit per-sample KB/solver
 rebuilding. Rows use
-`target_masking_version=typepro-shared-kb-masked-source-v4-masked-candidate-ranking`.
+`target_masking_version=typepro-shared-kb-masked-source-v5-target-member-matching`.
 
 Old restored datasets fail the retrieval-schema check. Local completed-project
 resume also requires a matching schema stamp on each status file, including
@@ -95,12 +95,17 @@ disjoint physical Dataset partition.
   Dataset.
 - `13_data_analysis.ipynb`: measure token lengths and truncation impact before
   choosing a training context length.
+- `14_test_retrieval_ablation.ipynb`: rebuild only the current v12 test-project
+  set with target-member matching and keyword-only propagation, then compare
+  exact top-10 candidate recall without publishing a Dataset.
 - `shard_account_plan.json`: notebook, kernel, owner, visibility and shard
   mapping.
 - `shard_merge_plan.json`: the exact 16 Dataset inputs accepted by merge.
 - `commit_shard_versions.py`: dry-run or push selected/all shard notebooks.
 - `commit_merge_finalize.py`: dry-run, push, or check the merge kernel.
 - `commit_data_analysis.py`: dry-run or push the token-analysis kernel.
+- `commit_test_retrieval_ablation.py`: render, push or inspect the test-only
+  retrieval comparison kernel.
 - `generate_notebooks.py`: the only source for generated notebook changes.
 
 Do not edit generated notebooks manually when the change belongs in

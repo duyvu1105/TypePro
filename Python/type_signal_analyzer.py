@@ -414,6 +414,30 @@ class ProjectTypeAnalyzer:
             if isinstance(child, ast.stmt):
                 self._process_statement(child, env, function_name)
 
+    def _propagate_one_call(
+        self, call: ast.Call, env: dict[str, set[str]]
+    ) -> None:
+        """Propagate visible call-site types without reading annotations."""
+        callee = _leaf(_name(call.func))
+        for target in self._functions.get(callee, ()):
+            positional = [
+                *getattr(target.args, "posonlyargs", []), *target.args.args
+            ]
+            for parameter, argument in zip(positional, call.args):
+                self.parameter_types[(callee, parameter.arg)].update(
+                    self._expr_types(argument, env)
+                )
+            # Positional-only arguments must never be addressed by keyword.
+            keyword_parameters = {
+                parameter.arg: parameter
+                for parameter in [*target.args.args, *target.args.kwonlyargs]
+            }
+            for keyword in call.keywords:
+                if keyword.arg in keyword_parameters:
+                    self.parameter_types[(callee, keyword.arg)].update(
+                        self._expr_types(keyword.value, env)
+                    )
+
     def _propagate_call_arguments(self) -> None:
         for _, _, tree in self._trees:
             for caller in (
@@ -431,19 +455,7 @@ class ProjectTypeAnalyzer:
                 for statement in caller.body:
                     self._process_statement(statement, env, caller.name)
                 for call in (node for node in ast.walk(caller) if isinstance(node, ast.Call)):
-                    callee = _leaf(_name(call.func))
-                    for target in self._functions.get(callee, ()):
-                        parameters = [*getattr(target.args, "posonlyargs", []), *target.args.args]
-                        for parameter, argument in zip(parameters, call.args):
-                            self.parameter_types[(callee, parameter.arg)].update(
-                                self._expr_types(argument, env)
-                            )
-                        by_name = {argument.arg: argument for argument in parameters}
-                        for keyword in call.keywords:
-                            if keyword.arg in by_name:
-                                self.parameter_types[(callee, keyword.arg)].update(
-                                    self._expr_types(keyword.value, env)
-                                )
+                    self._propagate_one_call(call, env)
             module_env: dict[str, set[str]] = defaultdict(set)
             module_statements = [
                 statement for statement in tree.body
@@ -453,19 +465,7 @@ class ProjectTypeAnalyzer:
                 self._process_statement(statement, module_env, "")
             for statement in module_statements:
                 for call in (node for node in ast.walk(statement) if isinstance(node, ast.Call)):
-                    callee = _leaf(_name(call.func))
-                    for target in self._functions.get(callee, ()):
-                        parameters = [*getattr(target.args, "posonlyargs", []), *target.args.args]
-                        for parameter, argument in zip(parameters, call.args):
-                            self.parameter_types[(callee, parameter.arg)].update(
-                                self._expr_types(argument, module_env)
-                            )
-                        parameter_names = {parameter.arg for parameter in parameters}
-                        for keyword in call.keywords:
-                            if keyword.arg in parameter_names:
-                                self.parameter_types[(callee, keyword.arg)].update(
-                                    self._expr_types(keyword.value, module_env)
-                                )
+                    self._propagate_one_call(call, module_env)
             # Pytest injects fixture functions by matching parameter names.
             fixtures = {}
             for name, functions in self._functions.items():

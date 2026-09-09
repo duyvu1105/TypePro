@@ -130,3 +130,27 @@ def test_pytest_fixture_and_factory_framework_rules(tmp_path):
     assert "ApiClient" in analyzer.parameter_types[("test_api", "client")]
     assert "User" in analyzer.variable_types["user"]
     assert {"MagicMock", "ApiClient"} <= analyzer.variable_types["mocked"]
+
+
+def test_call_graph_propagates_keyword_only_arguments(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    source = project / "app.py"
+    source.write_text(
+        "class Client: pass\n"
+        "def consume(positional, /, regular=None, *, client=None):\n"
+        "    return client\n"
+        "def wrapper():\n"
+        "    current = Client()\n"
+        "    return consume(None, client=current)\n"
+        "consume(None, client=Client())\n",
+        encoding="utf-8",
+    )
+
+    analyzer = ProjectTypeAnalyzer(project)
+
+    assert analyzer.parameter_types[("consume", "client")] == {"Client"}
+    assert not analyzer.parameter_types[("consume", "positional")]
+    assert "Client" in names(
+        analyzer.recommendations(str(source), "client", "consume")
+    )

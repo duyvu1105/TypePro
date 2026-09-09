@@ -114,6 +114,17 @@ def test_slice_trace_defaults_to_every_annotation():
     assert args.kb_phase_timeout_seconds == 0
     assert args.project_analysis_timeout_seconds == 0
     assert args.slice_index_timeout_seconds == 1800
+    assert args.only_project_list is None
+
+
+def test_only_project_list_argument_is_parsed(tmp_path):
+    selected = tmp_path / "projects.txt"
+    with patch.object(
+        sys, "argv", ["prepare_dataset.py", "--only-project-list", str(selected)]
+    ):
+        args = parse_args()
+
+    assert args.only_project_list == selected
 
 
 def test_run_logged_terminates_a_timed_out_phase(tmp_path):

@@ -1,4 +1,5 @@
 import json
+import ast
 import copy
 import subprocess
 import sys
@@ -10,7 +11,7 @@ PYTHON_DIR = ROOT / "Python"
 PIPELINE_DIR = ROOT / "codet5p_type_retrieval"
 sys.path.insert(0, str(PYTHON_DIR))
 
-from project_kb import build_project_kb, top_project_types
+from project_kb import build_project_kb, target_member_query, top_project_types
 from target_context import MASK
 
 
@@ -92,6 +93,67 @@ def test_top_project_types_masks_target_before_candidate_scoring(tmp_path):
         orders.append([item["name"] for item in ranked])
 
     assert orders[0] == orders[1] == ["B", "A"]
+
+
+def test_target_member_matching_uses_target_receiver_and_inheritance(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    source = project / "app.py"
+    source.write_text(
+        "class BaseDebugger:\n"
+        "    def debug_with(self, code): pass\n"
+        "    @property\n"
+        "    def target_pid(self): return 1\n"
+        "class Debugger(BaseDebugger): pass\n"
+        "class Distractor:\n"
+        "    def unrelated(self): pass\n"
+        "def inspect(debugger: HiddenGold):\n"
+        "    alias = debugger\n"
+        "    alias.debug_with('code')\n"
+        "    other = Distractor()\n"
+        "    other.unrelated()\n"
+        "    return debugger.target_pid\n",
+        encoding="utf-8",
+    )
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    function = next(node for node in tree.body if isinstance(node, ast.FunctionDef))
+    query = target_member_query(function, "debugger")
+    kb = build_project_kb(project)
+
+    assert query == {"methods": ["debug_with"], "attributes": ["target_pid"]}
+    debugger = next(item for item in kb["records"] if item.get("name") == "Debugger")
+    assert {"debug_with", "target_pid"} <= set(debugger["members"])
+    ranked = top_project_types(
+        kb, "debugger", "def inspect(debugger: <mask>): pass", limit=3,
+        target_function="inspect", target_scope="arg", target_members=query,
+    )
+    assert [item["name"] for item in ranked[:2]] == ["BaseDebugger", "Debugger"]
+
+
+def test_target_member_matching_is_annotation_invariant(tmp_path):
+    outputs = []
+    for annotation in ("HiddenGoldA", "HiddenGoldB"):
+        project = tmp_path / annotation
+        project.mkdir()
+        source = project / "app.py"
+        source.write_text(
+            "class Client:\n"
+            "    def send(self, payload): pass\n"
+            f"def consume(client: {annotation}):\n"
+            "    return client.send('value')\n",
+            encoding="utf-8",
+        )
+        tree = ast.parse(source.read_text(encoding="utf-8"))
+        function = next(node for node in tree.body if isinstance(node, ast.FunctionDef))
+        query = target_member_query(function, "client")
+        kb = build_project_kb(project)
+        ranked = top_project_types(
+            kb, "client", "def consume(client: <mask>): return client.send('value')",
+            target_function="consume", target_scope="arg", target_members=query,
+        )
+        outputs.append((query, [(item["name"], item["definition"]) for item in ranked]))
+
+    assert outputs[0] == outputs[1]
 
 
 def test_generative_preprocess_writes_tagged_input_and_exact_label(tmp_path):
