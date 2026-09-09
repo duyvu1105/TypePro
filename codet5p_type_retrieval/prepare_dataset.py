@@ -1118,6 +1118,7 @@ def finalize_dataset(args: argparse.Namespace, work_dir: Path, output_dir: Path,
         "preprocessing": {
             "task": "sequence_to_sequence_type_generation",
             "label_field": "gttype",
+            "label_format": "python-annotation-v1",
             "recommendation_limit": 10,
             "recommendation_source": "isolated_project_kb",
             "scope": sorted({"arg", "return"} if args.include_returns else {"arg"}),

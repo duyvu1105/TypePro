@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Any
 
 import torch
+from type_labels import normalize_type_label
 
 
 SYSTEM_PROMPT = (
@@ -21,7 +22,7 @@ def messages(instruction: str, response: str | None = None) -> list[dict[str, st
         {"role": "user", "content": instruction},
     ]
     if response is not None:
-        result.append({"role": "assistant", "content": response})
+        result.append({"role": "assistant", "content": normalize_type_label(response)})
     return result
 
 

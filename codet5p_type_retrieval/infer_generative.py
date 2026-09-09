@@ -10,6 +10,7 @@ from peft import PeftModel
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
 from generative_chat import chat_token_ids
+from type_labels import normalize_type_label
 
 
 def main() -> None:
@@ -65,10 +66,17 @@ def main() -> None:
         )
         for row, prediction in zip(batch, values):
             prediction = prediction.strip()
-            correct += prediction == row["label"]
+            label = normalize_type_label(row["label"])
+            try:
+                normalized_prediction = normalize_type_label(prediction)
+            except ValueError:
+                normalized_prediction = None
+            matched = normalized_prediction == label
+            correct += matched
             predictions.append({
                 "id": row["id"], "prediction": prediction,
-                "label": row["label"], "exact_match": prediction == row["label"],
+                "label": label, "normalized_prediction": normalized_prediction,
+                "exact_match": matched, "raw_exact_match": prediction == row["label"],
             })
     output = Path(args.output)
     with output.open("w", encoding="utf-8") as handle:

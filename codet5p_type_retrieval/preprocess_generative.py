@@ -8,6 +8,7 @@ import os
 from collections import Counter
 from pathlib import Path
 from typing import Any, Iterable
+from type_labels import normalize_type_label
 
 
 SPLITS = ("train", "validation", "test")
@@ -99,9 +100,13 @@ def format_input(
 
 def record_fields(row: dict[str, Any], label_field: str = "gttype", limit: int = 10):
     """Shared eligibility check for project selection and actual sample writing."""
+    try:
+        label = normalize_type_label(str(row.get(label_field) or ""))
+    except ValueError:
+        label = ""  # Invalid labels cannot become training targets.
     return (
         str(row.get("name") or "").strip(),
-        str(row.get(label_field) or "").strip(),
+        label,
         str(row.get("interprocedural_slice") or "").strip(),
         normalized_recommendations(row, limit),
     )
@@ -131,6 +136,8 @@ def main() -> None:
             stats["input_records"] += 1
             name, label, code_slice, recommendations = record_fields(row, args.label_field, args.recommendation_limit)
             if not name or not label or not code_slice or not recommendations:
+                if str(row.get(args.label_field) or "").strip() and not label:
+                    stats["dropped_invalid_label"] += 1
                 stats["dropped_incomplete"] += 1
                 continue
             project = project_name(row)
