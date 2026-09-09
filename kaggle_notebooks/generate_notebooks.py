@@ -693,6 +693,8 @@ def shard_notebook(
         common = [
             "--typepro-root", REPO_DIR,
             "--work-dir", WORK_DIR,
+            "--project-revision-lock", PIPELINE_DIR / "project_revision_lock.json",
+            "--revision-lock-policy", "only",
             "--split-profile", "paper_project",
             "--test-projects", TEST_PROJECTS,
             "--validation-project-ratio", VALIDATION_PROJECT_RATIO,
@@ -1997,6 +1999,8 @@ def test_retrieval_ablation_notebook(repository: str) -> dict:
         common = [
             "--typepro-root", REPO_DIR,
             "--work-dir", WORK_DIR,
+            "--project-revision-lock", PIPELINE_DIR / "project_revision_lock.json",
+            "--revision-lock-policy", "only",
             "--split-profile", "paper_project",
             "--test-projects", 100,
             "--validation-project-ratio", 0.10,

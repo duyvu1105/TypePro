@@ -1,4 +1,5 @@
 import os
+import json
 import subprocess
 import sys
 import time
@@ -16,9 +17,11 @@ from prepare_dataset import (
     eligible_parameter_rows,
     finalize_dataset,
     matching_skip_pattern,
+    load_project_revision_lock,
     parse_args,
     project_from_row,
     run_logged,
+    clone_project,
 )
 
 
@@ -125,6 +128,36 @@ def test_only_project_list_argument_is_parsed(tmp_path):
         args = parse_args()
 
     assert args.only_project_list == selected
+
+
+def test_revision_lock_is_validated_and_case_insensitive(tmp_path):
+    lock = tmp_path / "lock.json"
+    lock.write_text(json.dumps({
+        "schema_version": "typepro-project-revision-lock-v1",
+        "projects": {"Owner/Repo": "a" * 40},
+    }), encoding="utf-8")
+    projects, payload = load_project_revision_lock(lock)
+    assert projects == {"owner/repo": "a" * 40}
+    assert payload["schema_version"] == "typepro-project-revision-lock-v1"
+
+
+def test_clone_project_checks_out_locked_commit_from_existing_cache(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    subprocess.run(["git", "init", "-q", str(source)], check=True)
+    subprocess.run(["git", "-C", str(source), "config", "user.email", "test@example.com"], check=True)
+    subprocess.run(["git", "-C", str(source), "config", "user.name", "Test"], check=True)
+    (source / "value.txt").write_text("first", encoding="utf-8")
+    subprocess.run(["git", "-C", str(source), "add", "value.txt"], check=True)
+    subprocess.run(["git", "-C", str(source), "commit", "-qm", "first"], check=True)
+    first = subprocess.run(["git", "-C", str(source), "rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip()
+    (source / "value.txt").write_text("second", encoding="utf-8")
+    subprocess.run(["git", "-C", str(source), "commit", "-qam", "second"], check=True)
+    cache = tmp_path / "cache"
+    subprocess.run(["git", "clone", "-q", str(source), str(cache)], check=True)
+    actual = clone_project("owner/repo", cache, expected_commit=first)
+    assert actual == first
+    assert (cache / "value.txt").read_text(encoding="utf-8") == "first"
 
 
 def test_run_logged_terminates_a_timed_out_phase(tmp_path):

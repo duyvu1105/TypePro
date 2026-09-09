@@ -74,6 +74,14 @@ resume also requires a matching schema stamp on each status file, including
 after an interrupted rebuild. Merge requires the new runtime schema and row
 stamps, preventing mixed old/new partitions.
 
+Repository checkout revisions are pinned in
+`codet5p_type_retrieval/project_revision_lock.json`, generated from the
+published v13 rows. Shard notebooks process only projects in this lock and
+fetch each exact 40-character commit before slicing. The runtime manifest
+records the lock SHA-256 and source Dataset version. Regenerate the lock
+deliberately with `build_project_revision_lock.py` when changing the project
+cohort; do not silently refresh branch heads.
+
 ## Historical two-account workflow (reference only)
 
 

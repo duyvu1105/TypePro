@@ -59,6 +59,15 @@ def parse_args() -> argparse.Namespace:
         "--only-project-list", type=Path,
         help="Slice only the exact owner/repository values in this file",
     )
+    parser.add_argument(
+        "--project-revision-lock", type=Path,
+        help="JSON map that pins owner/repository checkouts to full Git commits",
+    )
+    parser.add_argument(
+        "--revision-lock-policy", choices=("prefer", "require", "only"),
+        default="prefer",
+        help="Use available pins, require every selected project, or process only pinned projects",
+    )
     parser.add_argument("--seed", type=int, default=13)
     parser.add_argument("--shard-index", type=int, default=0)
     parser.add_argument("--shard-count", type=int, default=1)
@@ -151,6 +160,8 @@ def parse_args() -> argparse.Namespace:
         help="Kill a stuck git clone after this many seconds; 0 disables",
     )
     args = parser.parse_args()
+    if args.revision_lock_policy != "prefer" and args.project_revision_lock is None:
+        parser.error("--revision-lock-policy require/only needs --project-revision-lock")
     if args.slice_annotation_timeout_seconds < 0:
         parser.error("--slice-annotation-timeout-seconds must be >= 0")
     if args.slice_trace_every < 0:
@@ -637,21 +648,65 @@ def run_logged(
 
 
 def clone_project(
-    project: str, destination: Path, timeout_seconds: int = 0
+    project: str, destination: Path, timeout_seconds: int = 0,
+    expected_commit: str | None = None,
 ) -> str:
+    def execute(command: list[str]) -> subprocess.CompletedProcess:
+        try:
+            return run(command, capture=True, timeout=timeout_seconds)
+        except subprocess.TimeoutExpired as error:
+            raise RuntimeError(
+                f"git operation timed out after {timeout_seconds}s for {project}"
+            ) from error
+
     if destination.exists() and (destination / ".git").exists():
-        return run(["git", "-C", str(destination), "rev-parse", "HEAD"], capture=True).stdout.strip()
+        actual = execute(["git", "-C", str(destination), "rev-parse", "HEAD"]).stdout.strip()
+        if expected_commit and actual.casefold() != expected_commit.casefold():
+            execute(["git", "-C", str(destination), "fetch", "--quiet", "--depth", "1", "origin", expected_commit])
+            execute(["git", "-C", str(destination), "checkout", "--quiet", "--detach", "--force", "FETCH_HEAD"])
+        actual = execute(["git", "-C", str(destination), "rev-parse", "HEAD"]).stdout.strip()
+        if expected_commit and actual.casefold() != expected_commit.casefold():
+            raise RuntimeError(f"Checkout mismatch for {project}: expected {expected_commit}, got {actual}")
+        return actual
     destination.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        run([
+    if expected_commit:
+        destination.mkdir()
+        execute(["git", "-C", str(destination), "init", "--quiet"])
+        execute(["git", "-C", str(destination), "remote", "add", "origin", f"https://github.com/{project}.git"])
+        execute(["git", "-C", str(destination), "fetch", "--quiet", "--depth", "1", "origin", expected_commit])
+        execute(["git", "-C", str(destination), "checkout", "--quiet", "--detach", "FETCH_HEAD"])
+    else:
+        execute([
             "git", "clone", "--quiet", "--depth", "1", "--no-tags", "--single-branch",
             f"https://github.com/{project}.git", str(destination),
-        ], capture=True, timeout=timeout_seconds)
-    except subprocess.TimeoutExpired as error:
-        raise RuntimeError(
-            f"git clone timed out after {timeout_seconds}s for {project}"
-        ) from error
-    return run(["git", "-C", str(destination), "rev-parse", "HEAD"], capture=True).stdout.strip()
+        ])
+    actual = execute(["git", "-C", str(destination), "rev-parse", "HEAD"]).stdout.strip()
+    if expected_commit and actual.casefold() != expected_commit.casefold():
+        raise RuntimeError(f"Checkout mismatch for {project}: expected {expected_commit}, got {actual}")
+    return actual
+
+
+def load_project_revision_lock(path: Path | None) -> tuple[dict[str, str], dict[str, Any]]:
+    if path is None:
+        return {}, {}
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if payload.get("schema_version") != "typepro-project-revision-lock-v1":
+        raise ValueError(f"Unsupported project revision lock: {path}")
+    projects = payload.get("projects")
+    if not isinstance(projects, dict):
+        raise ValueError("Project revision lock must contain a projects object")
+    result: dict[str, str] = {}
+    for project, commit in projects.items():
+        if not PROJECT_RE.fullmatch(str(project)):
+            raise ValueError(f"Invalid locked project: {project!r}")
+        commit = str(commit).strip().lower()
+        if not re.fullmatch(r"[0-9a-f]{40}", commit):
+            raise ValueError(f"Invalid locked commit for {project}: {commit!r}")
+        key = str(project).casefold()
+        if key in result and result[key] != commit:
+            raise ValueError(f"Conflicting case-insensitive project lock: {project}")
+        result[key] = commit
+    return result, payload
 
 
 def safe_remove_repo(path: Path, allowed_root: Path) -> None:
@@ -709,6 +764,7 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
         rows_by_project[project_from_row(row)].append(row)
     timeout_projects = set(args.slice_timeout_project)
     skip_project_patterns = list(args.skip_project)
+    revision_lock, revision_lock_payload = load_project_revision_lock(args.project_revision_lock)
 
     projects = sorted(rows_by_project, key=lambda value: stable_number(value, args.seed + 3))
     only_projects = None
@@ -725,6 +781,14 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
             raise ValueError(
                 f"--only-project-list contains {len(missing)} projects absent "
                 f"from metadata: {missing[:20]}"
+            )
+    if args.revision_lock_policy == "only":
+        projects = [project for project in projects if project.casefold() in revision_lock]
+    elif args.revision_lock_policy == "require":
+        unlocked = sorted(project for project in projects if project.casefold() not in revision_lock)
+        if unlocked:
+            raise ValueError(
+                f"Project revision lock misses {len(unlocked)} selected projects: {unlocked[:20]}"
             )
     projects = [project for project in projects if stable_number(project, args.seed + 4) % args.shard_count == args.shard_index]
     if args.max_projects:
@@ -777,6 +841,11 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
         "only_project_list": str(args.only_project_list.resolve()) if args.only_project_list else None,
         "only_project_count": len(only_projects) if only_projects is not None else None,
         "retrieval_schema_version": args.retrieval_schema_version,
+        "project_revision_lock": str(args.project_revision_lock.resolve()) if args.project_revision_lock else None,
+        "project_revision_lock_sha256": sha256_file(args.project_revision_lock) if args.project_revision_lock else None,
+        "project_revision_lock_projects": len(revision_lock),
+        "revision_lock_policy": args.revision_lock_policy,
+        "revision_lock_source": revision_lock_payload.get("source"),
     })
 
     counters = Counter(selected_projects=len(projects))
@@ -794,6 +863,7 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
         output_path = raw_dir / f"{slug}.jsonl"
         status_path = status_dir / f"{slug}.json"
         repository_path = clone_root.joinpath(*project.split("/"))
+        expected_commit = revision_lock.get(project.casefold())
         project_kb_dir = project_kb_root / slug
         imports_kb_dir = project_kb_dir / "imports"
         project_kb_path = project_kb_dir / "knowledge_base.json"
@@ -822,11 +892,15 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
                 f"annotations={len(rows_by_project[project]):,}"
             )
             continue
+        existing_status = (
+            json.loads(status_path.read_text(encoding='utf-8'))
+            if status_path.exists() else {}
+        )
         if (
             output_path.exists() and status_path.exists() and project_kb_path.exists()
             and not args.force_projects
-            and json.loads(status_path.read_text(encoding='utf-8')).get('retrieval_schema_version')
-                == args.retrieval_schema_version
+            and existing_status.get('retrieval_schema_version') == args.retrieval_schema_version
+            and (not expected_commit or existing_status.get('commit') == expected_commit)
         ):
             counters["skipped_complete"] += 1
             if not args.keep_repos and not args.repos_root:
@@ -840,6 +914,7 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
                 project,
                 repository_path,
                 timeout_seconds=args.clone_timeout_seconds,
+                expected_commit=expected_commit,
             )
             tqdm.write(
                 f"[project:clone:done] {project} seconds={time.monotonic() - phase_started:.1f}"
@@ -992,6 +1067,7 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
             counters["failed_projects"] += 1
             write_json(status_path, {
                 "project": project,
+                "expected_commit": expected_commit,
                 "error": f"{type(error).__name__}: {error}",
                 "completed_at": datetime.now(timezone.utc).isoformat(),
             })
@@ -1112,7 +1188,13 @@ def finalize_dataset(args: argparse.Namespace, work_dir: Path, output_dir: Path,
             "typegen_url": TYPEGEN_URL,
             "typegen_sha256": TYPEGEN_SHA256,
             "typepro_git_revision": git_revision(typepro_root),
-            "repository_revision_policy": "source_commit from metadata when present; otherwise default-branch HEAD at build time",
+            "repository_revision_policy": (
+                "exact commits from project revision lock"
+                if runtime_manifest.get("project_revision_lock_sha256")
+                else "default-branch HEAD at build time"
+            ),
+            "project_revision_lock_sha256": runtime_manifest.get("project_revision_lock_sha256"),
+            "project_revision_lock_source": runtime_manifest.get("revision_lock_source"),
         },
         "split": split_manifest,
         "preprocessing": {

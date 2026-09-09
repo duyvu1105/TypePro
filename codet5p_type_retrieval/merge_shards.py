@@ -56,10 +56,22 @@ def main() -> None:
                         if line.strip() and json.loads(line).get('target_masking_version') != 'typepro-shared-kb-masked-source-v5-target-member-matching':
                             raise ValueError(f'Unmasked legacy record: {raw_file}')
     reference_manifest = None
+    reference_lock = None
     copied = {"raw_slices": 0, "project_status": 0, "project_kb": 0}
     for build in builds:
         manifest_path = build / "metadata" / "split_manifest.json"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        runtime_path = build / "runtime_manifest.json"
+        runtime_value = json.loads(runtime_path.read_text(encoding="utf-8"))
+        lock_identity = (
+            runtime_value.get("project_revision_lock_sha256"),
+            runtime_value.get("revision_lock_source"),
+            runtime_value.get("revision_lock_policy"),
+        )
+        if reference_lock is None:
+            reference_lock = lock_identity
+        elif lock_identity != reference_lock:
+            raise ValueError(f"Shard project revision locks differ: {build}")
         if reference_manifest is None:
             reference_manifest = manifest
             for metadata_file in (build / "metadata").glob("*.json"):
