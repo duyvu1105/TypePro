@@ -19,3 +19,5 @@ typepro_cloudrun_downloads/
 /.codex
 /.cursor
 .orchestra-skills.json
+reports/typepro_test_audit/dataset_v10_audit.json
+/.tmp
