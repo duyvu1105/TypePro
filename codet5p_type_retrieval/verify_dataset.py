@@ -132,3 +132,7 @@ def main() -> None:
     if errors:
         raise SystemExit("Dataset verification failed:\n- " + "\n- ".join(errors))
     print(json.dumps({"verified": True, "schema": manifest["schema_version"], "output": manifest["output"]}, indent=2))
+
+
+if __name__ == "__main__":
+    main()
