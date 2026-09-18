@@ -66,6 +66,9 @@ def test_standalone_notebook_locks_publish_owner_and_single_shard():
     assert "--slice-trace-every" in serialized
     assert "--slice-timeout-project" not in serialized
     assert "--retrieval-schema-version" in serialized
+    assert 'PIPELINE_DIR / \\"project_revision_lock.json\\"' in serialized
+    assert "project.casefold() in locked_projects" in serialized
+    assert "excluded_unlocked_projects" in serialized
     assert "restored_runtime.get" in serialized
     assert notebook["metadata"]["typepro"] == {
         "assigned_shards": [0],

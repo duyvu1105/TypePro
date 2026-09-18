@@ -744,10 +744,22 @@ def shard_notebook(
         for split in ("train", "validation", "test"):
             for row in read_json(WORK_DIR / "metadata" / f"{split}.json"):
                 projects.add(project_from_row(row))
-        selected = {
+        assigned = {
             project for project in projects
             if stable_number(project, SEED + 4) % SHARD_COUNT == SHARD_INDEX
         }
+        revision_lock_payload = json.loads(
+            (PIPELINE_DIR / "project_revision_lock.json").read_text(encoding="utf-8")
+        )
+        locked_projects = {
+            project.casefold()
+            for project in revision_lock_payload.get("projects", {})
+        }
+        selected = {
+            project for project in assigned
+            if project.casefold() in locked_projects
+        }
+        excluded_unlocked = sorted(assigned - selected)
         statuses = []
         for path in (WORK_DIR / "project_status").glob("*.json"):
             statuses.append(json.loads(path.read_text(encoding="utf-8")))
@@ -756,7 +768,9 @@ def shard_notebook(
         summary = {
             "shard_index": SHARD_INDEX,
             "shard_count": SHARD_COUNT,
+            "metadata_assigned_projects": len(assigned),
             "selected_projects": len(selected),
+            "excluded_unlocked_projects": excluded_unlocked,
             "attempted_projects": len(selected & attempted),
             "successful_projects": sum(item.get("project") in selected and "error" not in item for item in statuses),
             "failed_projects": sum(item.get("project") in selected and "error" in item for item in statuses),
