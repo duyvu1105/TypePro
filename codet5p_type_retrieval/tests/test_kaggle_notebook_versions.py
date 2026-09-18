@@ -105,6 +105,26 @@ def test_rendered_version_contains_exactly_one_assigned_shard(shard_index):
     )
 
 
+def test_scheduler_can_limit_each_account_to_five_physical_jobs(tmp_path):
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(NOTEBOOK_DIR / "schedule_shards.py"),
+            "--revision", "a" * 40,
+            "--state", str(tmp_path / "state.json"),
+            "--jobs-per-account", "5",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    jobs = json.loads(result.stdout)["jobs"]
+
+    assert len(jobs) == 15
+    for account in ("duyvu1105", "duymign", "vdduy1105"):
+        assert sum(job["account"] == account for job in jobs) == 5
+
+
 def test_render_rejects_shard_owned_by_other_account():
     template = generate_notebooks.shard_notebook(
         0,

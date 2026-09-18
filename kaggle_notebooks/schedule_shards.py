@@ -43,20 +43,27 @@ def main():
     parser.add_argument('--revision', required=True)
     parser.add_argument('--state', type=Path, default=REPO_ROOT / 'typepro_kernel_versions' / 'rerun_state.json')
     parser.add_argument('--max-active', type=int, default=5)
+    parser.add_argument('--jobs-per-account', type=int)
     parser.add_argument('--poll-seconds', type=int, default=60)
     args = parser.parse_args()
     if not re.fullmatch(r'[0-9a-f]{40}', args.revision):
         parser.error('--revision must be a full Git commit SHA')
     if not 1 <= args.max_active <= 5:
         parser.error('--max-active must be 1..5')
+    if args.jobs_per_account is not None and args.jobs_per_account < 1:
+        parser.error('--jobs-per-account must be >= 1')
     _, _, plans = load_plan(ROOT / 'shard_account_plan.json')
     if not all(plan.independent_parts for plan in plans):
         parser.error('Scheduling requires independent partition kernels')
     credentials = parse_credentials([], plans)
     jobs = []
+    jobs_by_account = {}
     for plan in plans:
         template = json.loads(plan.notebook_path.read_text(encoding='utf-8'))
         for part, (index, count) in enumerate(physical_partitions(plan.assigned_shards[0])):
+            account_jobs = jobs_by_account.get(plan.runner_account, 0)
+            if args.jobs_per_account is not None and account_jobs >= args.jobs_per_account:
+                continue
             rendered = render_shard_version(template, plan.assigned_shards[0], plan.assigned_shards,
                 plan.dataset_owner, plan.public_dataset, physical_shard_index=index, physical_shard_count=count)
             clone_cells = [cell for cell in rendered['cells'] if '"git", "clone"' in ''.join(cell.get('source', []))]
@@ -69,6 +76,7 @@ def main():
             jobs.append({'account': plan.runner_account, 'kernel': f'{plan.runner_account}/{partition_kernel_slug(plan, part)}',
                          'shard_index': index, 'shard_count': count, 'dataset': f'{plan.dataset_owner}/typepro-build-shard-{index:02d}' + ('-of-40' if count == 40 else ''),
                          'payload': str(directory), 'status': 'pending'})
+            jobs_by_account[plan.runner_account] = account_jobs + 1
     if not args.push:
         print(json.dumps({'revision': args.revision, 'jobs': jobs}, indent=2))
         return
