@@ -15,6 +15,26 @@ from kaggle_dataset_utils import publish_dataset, validate_dataset_id, write_met
 from publish_shard import package_shard
 
 
+def test_final_publisher_archives_project_kbs(tmp_path, monkeypatch):
+    import publish_kaggle
+    from types import SimpleNamespace
+
+    for name in ("train.jsonl", "validation.jsonl", "test.jsonl", "manifest.json"):
+        (tmp_path / name).write_text("{}", encoding="utf-8")
+    kb = tmp_path / "project_kb" / "owner__repo"
+    kb.mkdir(parents=True)
+    (kb / "knowledge_base.json").write_text("{}", encoding="utf-8")
+    args = SimpleNamespace(
+        data_dir=str(tmp_path), dataset_id="duyvu1105/typepro-python-generative",
+        title="TypePro Python Generative", message="Merge 19 shards", public=False,
+    )
+    monkeypatch.setattr(publish_kaggle, "parse_args", lambda: args)
+    calls = []
+    monkeypatch.setattr(publish_kaggle, "publish_dataset", lambda *a, **kw: calls.append(kw))
+    publish_kaggle.main()
+    assert calls == [{"public": False, "directory_mode": "zip"}]
+
+
 @pytest.mark.parametrize('index', [12, 32])
 def test_publish_subdivision_uses_isolated_dataset_slug(tmp_path, monkeypatch, index):
     import publish_shard
@@ -102,8 +122,12 @@ def test_dataset_id_rejects_null_or_mismatched_owner(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    ("dataset_exists", "existing_state", "expected_operation"),
-    [(False, None, "create"), (True, "failed", "version")],
+    ("dataset_exists", "existing_state", "expected_operation", "directory_mode"),
+    [
+        (False, None, "create", "skip"),
+        (True, "failed", "version", "skip"),
+        (True, "failed", "version", "zip"),
+    ],
 )
 def test_publish_selects_create_or_repair_version(
     tmp_path,
@@ -111,6 +135,7 @@ def test_publish_selects_create_or_repair_version(
     dataset_exists,
     existing_state,
     expected_operation,
+    directory_mode,
 ):
     monkeypatch.setenv("KAGGLE_USERNAME", "another-account")
     monkeypatch.setenv("KAGGLE_KEY", "secret")
@@ -148,8 +173,10 @@ def test_publish_selects_create_or_repair_version(
         "another-account/typepro-build-shard-00",
         "TypePro Python shard 00 of 10",
         "completed",
+        directory_mode=directory_mode,
     )
     assert commands[0][:3] == ["kaggle", "datasets", expected_operation]
+    assert commands[0][commands[0].index("--dir-mode") + 1] == directory_mode
 
 
 def test_publish_rejects_cli_semantic_error_with_zero_exit(tmp_path, monkeypatch):

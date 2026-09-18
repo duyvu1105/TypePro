@@ -23,12 +23,16 @@ def main() -> None:
     missing = [str(path) for path in required if not path.exists()]
     if missing:
         raise FileNotFoundError(f"Missing processed dataset files: {missing}")
+    project_kb = data_dir / "project_kb"
+    if not project_kb.is_dir() or not any(project_kb.glob("*/knowledge_base.json")):
+        raise FileNotFoundError(f"Missing final project knowledge bases: {project_kb}")
     publish_dataset(
         data_dir,
         args.dataset_id,
         args.title,
         args.message,
         public=args.public,
+        directory_mode="zip",
     )
 
 

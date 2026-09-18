@@ -243,6 +243,7 @@ def publish_dataset(
     message: str,
     *,
     public: bool = False,
+    directory_mode: str = "skip",
 ) -> str:
     data_dir = data_dir.resolve()
     if not data_dir.is_dir():
@@ -250,6 +251,8 @@ def publish_dataset(
     if shutil.which("kaggle") is None:
         raise RuntimeError("Install the Kaggle CLI first: pip install -U kaggle")
     validate_dataset_id(dataset_id)
+    if directory_mode not in {"skip", "zip", "tar"}:
+        raise ValueError(f"Unsupported Kaggle directory mode: {directory_mode}")
     write_metadata(data_dir, dataset_id, title)
     payloads = [path for path in data_dir.iterdir() if path.name != "dataset-metadata.json"]
     if not payloads:
@@ -269,7 +272,7 @@ def publish_dataset(
             wait_for_status(dataset_id)
             state, _ = _status(dataset_id)
 
-    common = ["-p", str(data_dir), "--dir-mode", "skip"]
+    common = ["-p", str(data_dir), "--dir-mode", directory_mode]
     if state == "missing":
         command = ["kaggle", "datasets", "create", *common]
         if public:
