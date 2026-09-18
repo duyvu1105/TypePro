@@ -44,6 +44,7 @@ def main():
     parser.add_argument('--state', type=Path, default=REPO_ROOT / 'typepro_kernel_versions' / 'rerun_state.json')
     parser.add_argument('--max-active', type=int, default=5)
     parser.add_argument('--jobs-per-account', type=int)
+    parser.add_argument('--skip-jobs-per-account', type=int, default=0)
     parser.add_argument('--poll-seconds', type=int, default=60)
     args = parser.parse_args()
     if not re.fullmatch(r'[0-9a-f]{40}', args.revision):
@@ -52,15 +53,22 @@ def main():
         parser.error('--max-active must be 1..5')
     if args.jobs_per_account is not None and args.jobs_per_account < 1:
         parser.error('--jobs-per-account must be >= 1')
+    if args.skip_jobs_per_account < 0:
+        parser.error('--skip-jobs-per-account must be >= 0')
     _, _, plans = load_plan(ROOT / 'shard_account_plan.json')
     if not all(plan.independent_parts for plan in plans):
         parser.error('Scheduling requires independent partition kernels')
     credentials = parse_credentials([], plans)
     jobs = []
     jobs_by_account = {}
+    seen_by_account = {}
     for plan in plans:
         template = json.loads(plan.notebook_path.read_text(encoding='utf-8'))
         for part, (index, count) in enumerate(physical_partitions(plan.assigned_shards[0])):
+            seen_jobs = seen_by_account.get(plan.runner_account, 0)
+            seen_by_account[plan.runner_account] = seen_jobs + 1
+            if seen_jobs < args.skip_jobs_per_account:
+                continue
             account_jobs = jobs_by_account.get(plan.runner_account, 0)
             if args.jobs_per_account is not None and account_jobs >= args.jobs_per_account:
                 continue
