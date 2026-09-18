@@ -50,7 +50,7 @@ before merge. Do not publish or train the final dataset automatically.
 
 ## Shared project KB and masked source
 
-Retrieval schema: `typepro-project-kb-top10-generative-v8-target-member-matching`.
+Retrieval schema: `typepro-project-kb-top10-generative-v9-nonredundant-import-aliases`.
 Build one KB per project and reuse it for every sample. The KB never reads a
 function return annotation: it creates neither a candidate nor `returned_by`
 metadata from one, and stored function signatures omit it. It retains candidates

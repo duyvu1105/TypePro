@@ -21,6 +21,7 @@ def test_project_kb_contains_definitions_imports_body_returns_and_reexports(tmp_
     (project / "models.py").write_text(
         "from typing import TypeAlias\n"
         "from torch import Tensor as TorchTensor\n"
+        "from typing import Any as Any\n"
         "UserId: TypeAlias = str\n"
         "class User: pass\n"
         "def load() -> User:\n    return User()\n"
@@ -41,12 +42,36 @@ def test_project_kb_contains_definitions_imports_body_returns_and_reexports(tmp_
     assert ("User", "class") in kinds
     assert ("UserId", "type_alias") in kinds
     assert ("TorchTensor", "reexport_alias") in kinds
+    assert ("Any", "reexport_alias") not in kinds
     assert ("load", "function") in kinds
     assert ("User", "function_return") in kinds
     assert ("HiddenAnnotation", "function_return") not in kinds
     assert ("Tensor", "class") in kinds
     load = next(item for item in kb["records"] if item["name"] == "load" and item["kind"] == "function")
     assert "->" not in load["definition"]
+
+
+def test_project_kb_keeps_only_imports_with_a_distinct_alias(tmp_path):
+    project = tmp_path / "repo"
+    package = project / "package"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text(
+        "from typing import Any\n"
+        "from typing import Dict as Dict\n"
+        "from typing import List as ListAlias\n",
+        encoding="utf-8",
+    )
+
+    kb = build_project_kb(project)
+    aliases = [
+        item for item in kb["records"]
+        if item.get("kind") == "reexport_alias"
+    ]
+
+    assert [(item["name"], item["target"]) for item in aliases] == [
+        ("ListAlias", "typing.List")
+    ]
+    assert aliases[0]["definition"] == "from typing import List as ListAlias"
 
 
 def test_top_project_types_never_uses_candidate_outside_project_kb(tmp_path):

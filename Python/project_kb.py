@@ -18,7 +18,7 @@ from project_index import module_name, python_files
 from target_context import MASK, mask_definition
 
 
-SCHEMA_VERSION = "typepro-project-kb-v3-target-member-index"
+SCHEMA_VERSION = "typepro-project-kb-v4-nonredundant-import-aliases"
 TYPE_WRAPPERS = {
     "Annotated", "Callable", "ClassVar", "Final", "Generic", "Literal",
     "Optional", "Protocol", "Type", "Union",
@@ -223,8 +223,13 @@ def build_project_kb(project_root: Path, imports_dir: Path | None = None, *, par
                 for alias in node.names:
                     if alias.name == "*":
                         continue
-                    local = alias.asname or alias.name
-                    if alias.asname or path.stem == "__init__":
+                    # A re-export is useful as an alias candidate only when it
+                    # introduces a genuinely different local name.  Previously
+                    # every import in __init__.py was rendered with ``as``,
+                    # producing meaningless records such as
+                    # ``from typing import Any as Any``.
+                    if alias.asname and alias.asname != alias.name:
+                        local = alias.asname
                         qualified = ".".join(filter(None, (module, local)))
                         target = f"{node.module}.{alias.name}"
                         add_record(records, seen, {

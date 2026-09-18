@@ -109,7 +109,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--retrieval-schema-version",
-        default="typepro-project-kb-top10-generative-v8-target-member-matching",
+        default="typepro-project-kb-top10-generative-v9-nonredundant-import-aliases",
         help="Invalidates restored raw slices when recommendation logic changes",
     )
     parser.add_argument(
