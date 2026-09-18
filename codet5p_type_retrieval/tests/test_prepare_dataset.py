@@ -339,6 +339,58 @@ def test_finalize_dataset_prunes_consumed_sources(tmp_path):
     assert (output / "manifest.json").exists()
 
 
+def test_finalize_only_expects_projects_in_verified_revision_lock(tmp_path):
+    work = tmp_path / "build"
+    output = tmp_path / "final"
+    source = tmp_path / "source" / "codet5p_type_retrieval"
+    source.mkdir(parents=True)
+    lock_path = source / "project_revision_lock.json"
+    lock_path.write_text(json.dumps({
+        "schema_version": "typepro-project-revision-lock-v1",
+        "projects": {"owner/locked": "a" * 40},
+    }), encoding="utf-8")
+    (work / "raw_slices").mkdir(parents=True)
+    (work / "raw_slices" / "owner__locked.jsonl").write_text("{}\n", encoding="utf-8")
+    kb = work / "project_kb" / "owner__locked"
+    kb.mkdir(parents=True)
+    (kb / "knowledge_base.json").write_text("{}", encoding="utf-8")
+    status_dir = work / "project_status"
+    status_dir.mkdir()
+    (status_dir / "owner__locked.json").write_text(
+        '{"project": "owner/locked"}', encoding="utf-8"
+    )
+    metadata = work / "metadata"
+    metadata.mkdir()
+    (metadata / "split_manifest.json").write_text(
+        '{"split_profile": "paper_project"}', encoding="utf-8"
+    )
+    (metadata / "train.json").write_text(
+        json.dumps([row("owner/locked", 1), row("owner/unlocked", 2)]),
+        encoding="utf-8",
+    )
+    for split in ("validation", "test"):
+        (metadata / f"{split}.json").write_text("[]", encoding="utf-8")
+    (work / "runtime_manifest.json").write_text(json.dumps({
+        "revision_lock_policy": "only",
+        "project_revision_lock_sha256": prepare_dataset_module.sha256_file(lock_path),
+    }), encoding="utf-8")
+    output.mkdir()
+    for split in ("train", "validation", "test"):
+        (output / f"{split}.jsonl").write_text("", encoding="utf-8")
+    (output / "preprocess_stats.json").write_text("{}", encoding="utf-8")
+    args = Args()
+    args.allow_partial = False
+    args.strict_projects = False
+    args.preview_samples = 0
+    args.preview_max_chars = 1600
+    with patch("prepare_dataset.run") as fake_run:
+        fake_run.return_value.stdout = "deadbeef"
+        manifest = finalize_dataset(args, work, output, tmp_path / "source")
+    assert manifest["projects"]["expected"] == 1
+    assert manifest["projects"]["excluded_unlocked"] == 1
+    assert manifest["projects"]["missing"] == []
+
+
 def test_skip_project_patterns_match_case_insensitive_owner_or_repository():
     patterns = ["F-shakalaka", "home-assistant"]
 

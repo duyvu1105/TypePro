@@ -1171,6 +1171,17 @@ def finalize_dataset(args: argparse.Namespace, work_dir: Path, output_dir: Path,
     expected_projects = set()
     for split in ("train", "validation", "test"):
         expected_projects.update(project_from_row(row) for row in read_json(work_dir / "metadata" / f"{split}.json"))
+    metadata_project_count = len(expected_projects)
+    if runtime_manifest.get("revision_lock_policy") == "only":
+        lock_path = typepro_root / "codet5p_type_retrieval" / "project_revision_lock.json"
+        lock_sha256 = runtime_manifest.get("project_revision_lock_sha256")
+        if not lock_sha256 or sha256_file(lock_path) != lock_sha256:
+            raise ValueError("Merged project revision lock does not match the source checkout")
+        revision_lock, _ = load_project_revision_lock(lock_path)
+        expected_projects = {
+            project for project in expected_projects
+            if project.casefold() in revision_lock
+        }
     completed_projects = {status["project"] for status in statuses if "error" not in status}
     missing_projects = sorted(expected_projects - {status.get("project") for status in statuses})
     if not args.allow_partial and missing_projects:
@@ -1223,6 +1234,7 @@ def finalize_dataset(args: argparse.Namespace, work_dir: Path, output_dir: Path,
             "completed": len(statuses) - len(failures),
             "failed": len(failures),
             "expected": len(expected_projects),
+            "excluded_unlocked": metadata_project_count - len(expected_projects),
             "missing": missing_projects,
             "failures": failures,
             "knowledge_bases": len(list(destination_kb.glob("*/knowledge_base.json"))),
