@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 REPO_DIR=/home/anhnd_02/TypePro
-DATA_DIR="$REPO_DIR/datasets/typepro-python-generative"
+DATA_DIR="$REPO_DIR/datasets/typepro-python-generative-v15"
 PIPELINE_DIR="$REPO_DIR/codet5p_type_retrieval"
 VENV_DIR="$REPO_DIR/.venv"
 OUTPUT_DIR="$REPO_DIR/outputs/qwen25-coder-05b-8192"
@@ -35,17 +35,18 @@ cd "$REPO_DIR"
   --data-dir "$DATA_DIR" \
   --output-dir "$OUTPUT_DIR" \
   --model-name Qwen/Qwen2.5-Coder-0.5B-Instruct \
-  --input-length 8192 \
-  --label-length 128 \
+  --input-length 12288 \
+  --label-length 64 \
   --batch-size 1 \
   --gradient-accumulation-steps 16 \
   --epochs 3 \
-  --learning-rate 2e-5 \
+  --learning-rate 1e-4 \
   --mixed-precision fp16 \
   --attn-implementation sdpa \
   --gradient-checkpointing \
   --group-by-length \
   --length-cache \
   --length-log-every 1000 \
+  --preview-samples 0 \
   --seed 13 \
-  --log-every 10
+  --log-every 50

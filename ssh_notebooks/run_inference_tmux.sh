@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 REPO_DIR=/home/anhnd_02/TypePro
-DATA_DIR="$REPO_DIR/datasets/typepro-python-generative"
+DATA_DIR="$REPO_DIR/datasets/typepro-python-generative-v15"
 PIPELINE_DIR="$REPO_DIR/codet5p_type_retrieval"
 VENV_DIR="$REPO_DIR/.venv"
 OUTPUT_DIR="$REPO_DIR/outputs/qwen25-coder-05b-8192"
@@ -43,5 +43,5 @@ cd "$REPO_DIR"
   --input "$DATA_DIR/test.jsonl" \
   --output "$PREDICTIONS" \
   --input-length 8192 \
-  --label-length 128 \
-  --batch-size 1
+  --label-length 64 \
+  --batch-size 2

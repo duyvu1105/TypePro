@@ -20,7 +20,7 @@ def main() -> None:
     parser.add_argument("--input", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--input-length", type=int, default=8192)
-    parser.add_argument("--label-length", type=int, default=128)
+    parser.add_argument("--label-length", type=int, default=64)
     parser.add_argument("--batch-size", type=int, default=4)
     args = parser.parse_args()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

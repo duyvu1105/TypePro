@@ -55,7 +55,7 @@ def main() -> None:
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--model-name", default="Qwen/Qwen2.5-Coder-1.5B-Instruct")
     parser.add_argument("--input-length", type=int, default=8192)
-    parser.add_argument("--label-length", type=int, default=128)
+    parser.add_argument("--label-length", type=int, default=64)
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--gradient-accumulation-steps", type=int, default=16)
     parser.add_argument("--epochs", type=int, default=3)
@@ -82,7 +82,12 @@ def main() -> None:
     )
     parser.add_argument("--preview-samples", type=int, default=2)
     parser.add_argument("--preview-max-chars", type=int, default=1200)
-    parser.add_argument("--log-every", type=int, default=10)
+    parser.add_argument(
+        "--log-every",
+        type=int,
+        default=50,
+        help="Log training metrics every N optimizer updates; 0 disables periodic logs",
+    )
     parser.add_argument(
         "--group-by-length",
         action=argparse.BooleanOptionalAction,
@@ -339,8 +344,12 @@ def main() -> None:
         total=total_updates,
         desc="training",
         unit="update",
+        mininterval=0,
+        miniters=max(1, args.log_every),
+        maxinterval=float("inf"),
         disable=not accelerator.is_local_main_process,
     )
+    completed_updates = 0
     for epoch in range(args.epochs):
         model.train()
         accelerator.print(f"epoch {epoch + 1}/{args.epochs} started", flush=True)
@@ -363,14 +372,21 @@ def main() -> None:
                     grad_norm = accelerator.clip_grad_norm_(model.parameters(), 1.0)
                     last_grad_norm = float(grad_norm.detach().float().item())
                 optimizer.step()
+                optimizer_update_completed = (
+                    accelerator.sync_gradients
+                    and not accelerator.optimizer_step_was_skipped
+                )
                 if accelerator.sync_gradients and not accelerator.optimizer_step_was_skipped:
                     scheduler.step()
+                if optimizer_update_completed:
+                    completed_updates += 1
                 optimizer.zero_grad()
-                if accelerator.sync_gradients:
+                if optimizer_update_completed:
                     progress.update(1)
                     progress.set_postfix(
                         loss=f"{loss.detach().float().item():.4f}",
                         lr=f"{optimizer.param_groups[0]['lr']:.2e}",
+                        refresh=False,
                     )
             loss_window.append(float(loss.detach().float().item()))
             # Causal-LM loss shifts labels by one; the first label in the
@@ -379,16 +395,18 @@ def main() -> None:
             epoch_loss_totals[0] += loss.detach().double() * label_tokens
             epoch_loss_totals[1] += label_tokens
             if (
-                batch_index == 1
-                or (args.log_every > 0 and batch_index % args.log_every == 0)
+                optimizer_update_completed
+                and args.log_every > 0
+                and completed_updates % args.log_every == 0
             ):
                 average_loss = sum(loss_window) / len(loss_window)
                 grad_norm_text = (
                     f"{last_grad_norm:.4f}" if last_grad_norm is not None else "n/a"
                 )
                 accelerator.print(
-                    f"epoch {epoch + 1}/{args.epochs} batch "
-                    f"{batch_index}/{len(train_loader)} "
+                    f"update {completed_updates}/{total_updates} "
+                    f"epoch {epoch + 1}/{args.epochs} "
+                    f"batch {batch_index}/{len(train_loader)} "
                     f"loss_avg={average_loss:.4f} "
                     f"lr={optimizer.param_groups[0]['lr']:.3e} "
                     f"grad_norm={grad_norm_text}",

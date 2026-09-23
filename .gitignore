@@ -1,6 +1,7 @@
 # Local Kaggle API credentials. Never commit these files.
 /kaggle.json
 /kaggle[0-9]*.json
+/.env
 **/__pycache__/
 *.py[cod]
 .pytest_cache/

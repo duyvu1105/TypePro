@@ -13,8 +13,9 @@ REPO_ROOT = ROOT.parent
 def markdown(source: str) -> dict:
     return {
         "cell_type": "markdown",
+        "id": "",
         "metadata": {},
-        "source": dedent(source).strip() + "\n",
+        "source": (dedent(source).strip() + "\n").splitlines(keepends=True),
     }
 
 
@@ -22,9 +23,10 @@ def code(source: str) -> dict:
     return {
         "cell_type": "code",
         "execution_count": None,
+        "id": "",
         "metadata": {},
         "outputs": [],
-        "source": dedent(source).strip() + "\n",
+        "source": (dedent(source).strip() + "\n").splitlines(keepends=True),
     }
 
 
@@ -43,7 +45,7 @@ def build_notebook() -> dict:
         from pathlib import Path
 
         REPO_DIR = Path({str(REPO_ROOT)!r})
-        DATA_DIR = REPO_DIR / "datasets" / "typepro-python-generative"
+        DATA_DIR = REPO_DIR / "datasets" / "typepro-python-generative-v15"
         PIPELINE_DIR = REPO_DIR / "codet5p_type_retrieval"
         VENV_DIR = REPO_DIR / ".venv"
         OUTPUT_DIR = REPO_DIR / "outputs" / "qwen25-coder-05b-8192"
@@ -51,7 +53,7 @@ def build_notebook() -> dict:
 
         MODEL_NAME = "Qwen/Qwen2.5-Coder-0.5B-Instruct"
         INPUT_LENGTH = 8192
-        LABEL_LENGTH = 128
+        LABEL_LENGTH = 64
         EPOCHS = 3
         TRAIN_BATCH_SIZE = 1
         GRADIENT_ACCUMULATION_STEPS = 16
@@ -177,8 +179,9 @@ def build_notebook() -> dict:
             "--attn-implementation", "sdpa",
             "--gradient-checkpointing",
             "--group-by-length",
+            "--preview-samples", "0",
             "--seed", "13",
-            "--log-every", "10",
+            "--log-every", "50",
         ]
         if TRAIN_SAMPLES is not None:
             train_command.extend(["--train-samples", TRAIN_SAMPLES])
@@ -222,11 +225,11 @@ def build_notebook() -> dict:
         "cells": cells,
         "metadata": {
             "kernelspec": {
-                "display_name": "Python 3",
+                "display_name": ".venv (3.12.11)",
                 "language": "python",
                 "name": "python3",
             },
-            "language_info": {"name": "python", "version": "3.12"},
+            "language_info": {"name": "python", "version": "3.12.11"},
         },
         "nbformat": 4,
         "nbformat_minor": 5,
@@ -236,7 +239,7 @@ def build_notebook() -> dict:
 def main() -> None:
     output = ROOT / "01_typepro_qwen25_05b_a4000.ipynb"
     output.write_text(
-        json.dumps(build_notebook(), ensure_ascii=False, indent=1),
+        json.dumps(build_notebook(), ensure_ascii=False, indent=1) + "\n",
         encoding="utf-8",
     )
     print(output)
