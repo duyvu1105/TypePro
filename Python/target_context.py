@@ -55,13 +55,16 @@ def render_masks(text):
 def mask_definition(text, function_name, target_name, scope):
     """Mask matching target annotations in a returned text copy, never in KB."""
     leaf = function_name.rsplit('.', 1)[-1]
-    if not re.search(r'\b(?:def|function)\s+' + re.escape(leaf) + r'\s*\(', text):
+    variable = scope not in {'arg', 'return'}
+    if not variable and not re.search(r'\b(?:def|function)\s+' + re.escape(leaf) + r'\s*\(', text):
         return text
     # Complete candidate definitions can be parsed as Python. Pseudo-signatures
     # and truncated definitions are handled one signature at a time below.
     try:
         tree = ast.parse(text)
     except (SyntaxError, ValueError):
+        if variable and re.search(r'\b' + re.escape(target_name) + r'\s*:', text):
+            return '# target definition omitted: unparseable variable annotation\n'
         lines = text.splitlines(keepends=True)
         for i, line in enumerate(lines):
             stripped = line.strip()
@@ -79,6 +82,12 @@ def mask_definition(text, function_name, target_name, scope):
             lines[i] = line[:len(line) - len(line.lstrip())] + masked + '\n'
         return ''.join(lines)
     annotations = []
+    if variable:
+        # Conservatively mask matching variable declarations in returned
+        # copies, including a class containing the target. No label lookup.
+        annotations.extend(n.annotation for n in ast.walk(tree)
+                           if isinstance(n, ast.AnnAssign)
+                           and ast.unparse(n.target) == target_name)
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == leaf:
             if scope == 'return' and node.returns is not None:

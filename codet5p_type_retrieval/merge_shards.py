@@ -50,11 +50,15 @@ def main() -> None:
             runtime = json.loads((build / 'runtime_manifest.json').read_text(encoding='utf-8'))
             if runtime.get('retrieval_schema_version') != args.expected_retrieval_schema:
                 raise ValueError(f'Incompatible retrieval schema: {build}')
+            if runtime.get('context_policy_version') != 'ast-context-v1':
+                raise ValueError(f'Incompatible context policy: {build}')
             for raw_file in (build / 'raw_slices').glob('*.jsonl'):
                 with raw_file.open(encoding='utf-8') as handle:
                     for line in handle:
-                        if line.strip() and json.loads(line).get('target_masking_version') != 'typepro-shared-kb-masked-source-v5-target-member-matching':
-                            raise ValueError(f'Unmasked legacy record: {raw_file}')
+                        if line.strip():
+                            row = json.loads(line)
+                            if row.get('target_masking_version') != 'typepro-shared-kb-masked-source-v6-ast-context' or row.get('context_policy_version') != 'ast-context-v1':
+                                raise ValueError(f'Unmasked legacy record or incompatible context policy: {raw_file}')
     reference_manifest = None
     reference_lock = None
     copied = {"raw_slices": 0, "project_status": 0, "project_kb": 0}

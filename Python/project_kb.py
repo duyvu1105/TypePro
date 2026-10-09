@@ -16,9 +16,10 @@ from typing import Any, Iterable
 
 from project_index import module_name, python_files
 from target_context import MASK, mask_definition
+from ast_context_slicer import reduce_class
 
 
-SCHEMA_VERSION = "typepro-project-kb-v4-nonredundant-import-aliases"
+SCHEMA_VERSION = "typepro-project-kb-v5-full-class-source"
 TYPE_WRAPPERS = {
     "Annotated", "Callable", "ClassVar", "Final", "Generic", "Literal",
     "Optional", "Protocol", "Type", "Union",
@@ -180,11 +181,20 @@ def build_project_kb(project_root: Path, imports_dir: Path | None = None, *, par
         for node in tree.body:
             if isinstance(node, ast.ClassDef):
                 qualified = ".".join(filter(None, (module, node.name)))
-                definition = ast.get_source_segment(source, node) or ast.unparse(node)
+                stored_class = copy.deepcopy(node)
+                # Shared KB never seeds retrieval from return annotations,
+                # including methods inside a project class.
+                for method in ast.walk(stored_class):
+                    if isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        method.returns = None
+                definition = ast.unparse(stored_class)
                 add_record(records, seen, {
                     "type": "class", "kind": "class", "name": node.name,
                     "qualified_name": qualified, "module": module,
-                    "source": "project", "definition": definition[:16000],
+                    # Complete source is needed for whole-method selection,
+                    # especially members beyond the old 16k cutoff. Stored
+                    # once/project, not repeated as an extra field per row.
+                    "source": "project", "definition": definition,
                     **class_member_metadata(node),
                 })
             elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -349,12 +359,27 @@ def top_project_types(
         if key in seen_names:
             continue
         seen_names.add(key)
+        reduction = None
+        if item.get('source') == 'project' and item.get('kind') == 'class':
+            query = target_members
+            if not query:
+                # Only constructor calls with this exact class spelling are
+                # positive evidence; otherwise retain the full definition.
+                try:
+                    source_tree = ast.parse(code_slice.replace('<mask>', MASK))
+                    constructed = any(isinstance(n, ast.Call) and dotted_name(n.func) in {name, qualified}
+                                      for n in ast.walk(source_tree))
+                except (SyntaxError, ValueError):
+                    constructed = False
+                query = {'methods': ['__init__'], 'attributes': []} if constructed else {}
+            definition, reduction = reduce_class(definition, query)
         result.append({
             "name": str(item["name"]),
             "qualified_name": str(item.get("qualified_name") or item["name"]),
             "source": str(item.get("source") or "project"),
             "kind": str(item.get("kind") or "class"),
             "definition": definition,
+            **({'context_reduction': reduction} if reduction is not None else {}),
         })
         if len(result) >= limit:
             break

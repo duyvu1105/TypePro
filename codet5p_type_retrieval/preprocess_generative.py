@@ -162,6 +162,8 @@ def main() -> None:
                 "input": format_input(name, function, scope, code_slice, recommendations),
                 "label": label,
                 "source_commit": row.get("source_commit"),
+                **({"context_policy_version": row["context_policy_version"]}
+                   if row.get("context_policy_version") else {}),
             }
             handles[split].write(json.dumps(item, ensure_ascii=False) + "\n")
             stats[f"{split}_written"] += 1

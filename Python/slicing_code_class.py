@@ -10,6 +10,7 @@ from typing import List, Optional, Union, Dict, Iterable, Type, NamedTuple
 from import_analyzer import importAnalyzer
 from tool import split_unpack_in_code
 from type_signal_analyzer import visible_type_signals
+from ast_context_slicer import FunctionCatalog, reduce_function, bind_arguments, body_names
 ScopeNode = Union[ast.FunctionDef, ast.ClassDef, ast.Module]
 
 FILE_PATH = ""
@@ -318,6 +319,7 @@ class Slicer:
         self._type_recommend_seen = set()
         self.retrieval_timings = {}
         self.retrieval_counts = {}
+        self.context_diagnostics = []
 
     def timed_recommendations(self, name: str, operation):
         started = time.monotonic()
@@ -509,9 +511,42 @@ class Slicer:
         return f"{prefix}{node.name}({args_str}){ret}:"
 
     def get_call_func_names(self,node: ast.Call) -> list:
-        return self.get_call_func_signatures(_call_target_name(node))
+        catalog = getattr(self.Funcion_methods, 'context_catalog', None)
+        if catalog is None:
+            return self.get_call_func_signatures(_call_target_name(node))
+        matches, certain = catalog.lookup(node, self.file_name, getattr(self, 'context_function', None))
+        if not matches:
+            return self.get_call_func_signatures(_call_target_name(node))
+        values = []
+        clean = getattr(self.Funcion_methods, 'context_masker', lambda text: text)
+        for path, qualified, original, nested in matches:
+            # Raw shared ASTs are never inspected by the binder/reducer before
+            # the target annotation is masked in a private definition copy.
+            function = ast.parse(clean(ast.unparse(original))).body[0]
+            bound, reason = bind_arguments(function, node) if certain and not function.decorator_list else (None, 'ambiguous_callee')
+            if bound is None:
+                code = ast.unparse(function)
+                diagnostic = dict(mode='full_fallback', reason=reason)
+            else:
+                relevant = getattr(self, 'context_names', set())
+                parameters = [key for key, value in bound.items() if body_names(value) & relevant]
+                reduction = reduce_function(function, parameters, returns=True)
+                code, diagnostic = ast.unparse(reduction.node), reduction.diagnostics()
+            diagnostic['callee'] = qualified
+            self.context_diagnostics.append(diagnostic)
+            values.append(code)
+        return list(dict.fromkeys(values))
 
     def get_call_func_signatures(self, target_name: str) -> list:
+        catalog = getattr(self.Funcion_methods, 'context_catalog', None)
+        if catalog is not None:
+            clean = getattr(self.Funcion_methods, 'context_masker', lambda text: text)
+            matches = [r for r in catalog.records if r[1] == target_name]
+            if not matches:
+                matches = [r for r in catalog.records if r[2].name == target_name.rsplit('.', 1)[-1]]
+            if matches:
+                self.context_diagnostics.append(dict(mode='full_fallback', reason='call_context_unavailable', callee=target_name))
+                return list(dict.fromkeys(clean(ast.unparse(r[2])) for r in matches))
         fun_sig = self.Funcion_methods.get_target_name_signals(target_name)
         cls_sigs = self.Funcion_methods.get_class_by_names(target_name)
         if len(cls_sigs)>0:
@@ -524,6 +559,20 @@ class Slicer:
                 if type(i) == FunctionInfo:
                     fun_sig.append(i.signature)
         return fun_sig
+
+    def reduced_target(self, function, parameters=(), returns=False):
+        reduction = reduce_function(function, parameters, returns)
+        self.context_function = function
+        self.context_names = set().union(*(body_names(s) for s in reduction.node.body))
+        self.context_diagnostics.append(dict(component='target', **reduction.diagnostics()))
+        related = []
+        # One hop only. Called function bodies are not recursively expanded.
+        for statement in reduction.node.body:
+            for node in ast.walk(statement):
+                if isinstance(node, ast.Call):
+                    related.extend(self.get_call_func_names(node))
+        code = ast.unparse(reduction.node)
+        return code, list(dict.fromkeys(related))
 
     def get_lhs(self,node: ast.AST) -> List[str]:
         return _lhs(node)
@@ -825,64 +874,12 @@ class Slicer:
         qualified_function_name: str | None = None,
     ):
 
-        with open(file_path, 'r', encoding='utf-8') as f:
-            source = f.read()
-
-        function_name = node.name
-        source = split_unpack_in_code(source)
-        tree = ast.parse(source, filename=file_path)
-        res = []
-        call_node_str = []
-        call_node_seen = set()
-        func_return_data = []
-        for node1 in ast.walk(node):
-            if isinstance(node1, ast.Call):
-                if isinstance(node1.func, ast.Name):
-                    name = node1.func.id
-                elif isinstance(node1.func, ast.Attribute):
-                    name = node1.func.attr
-                else:
-                    continue
-
-                func_sigs = self.get_call_func_names(node1)
-                for i in func_sigs:
-                    _append_unique(call_node_str, call_node_seen, i)
-
-            elif isinstance(node, ast.Return):
-                ret_expr = ast.get_source_segment(source, node.value) if node.value else ""
-                for node2 in ast.walk(node):
-                    if isinstance(node2, ast.Name):
-                        datas = self.find_statements_with_var(file_path, node2.id)
-                        for d in datas:
-                            if not self.is_descendant(node, d) and self.is_assignment(d):
-                                lhs = self.get_lhs(d)
-                                if node2.id in lhs:
-                                    func_return_data.append(ast.get_source_segment(source, d))
-
+        function_code, signatures = self.reduced_target(node, returns=True)
         qualified_function_name = qualified_function_name or self.Funcion_methods.resolve_function_qualified_name(
-            file_path, function_name
+            file_path, node.name
         )
-        total_use_data = self.function_use_data(
-            qualified_function_name, (*call_node_str, *func_sig_list)
-        )
-
-        function_code = ast.unparse(node)
-
-        total_code = ""
-        total_code_list = []
-        total_code_seen = set()
-        for f in call_node_str:
-            _append_unique(total_code_list, total_code_seen, f)
-        for i in func_return_data:
-            _append_unique(total_code_list, total_code_seen, i)
-        total_code_list.append(function_code)
-        total_code_seen.add(function_code)
-        for p in total_use_data:
-            _append_unique(total_code_list, total_code_seen, p)
-
-        total_code = "\n".join(total_code_list)
-
-        return total_code
+        uses = self.function_use_data(qualified_function_name, signatures)
+        return "\n".join(dict.fromkeys([*signatures, function_code, *uses]))
 
     def find_var_node(self,file_name: str, target_code_line: str):
         with open(file_name, 'r', encoding='utf-8') as f:
@@ -1061,10 +1058,9 @@ class Slicer:
                 total_code_list.append(may_class)
                 total_code_seen.add(may_class)
 
-            res, sigs = self.find_statements_for_var(file_path, param_name, is_for_defined=True, Domain=(func_node, ast.unparse(func_node)))
+            function_code, sigs = self.reduced_target(func_node, [param_name])
             for fs in sigs:
                 _append_unique(total_code_list, total_code_seen, fs)
-            function_code = ast.unparse(func_node)
             total_code_list.append(function_code)
             total_code_seen.add(function_code)
 

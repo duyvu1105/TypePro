@@ -50,7 +50,27 @@ before merge. Do not publish or train the final dataset automatically.
 
 ## Shared project KB and masked source
 
-Retrieval schema: `typepro-project-kb-top10-generative-v9-nonredundant-import-aliases`.
+The AST context rerun uses `context_policy_version=ast-context-v1` and masking
+stamp `typepro-shared-kb-masked-source-v6-ast-context`. Target functions retain
+their statement dependency component; control blocks remain whole. Opaque
+effects trigger full-function fallback. Related functions use complete AST
+definitions, even when the old index stored only an annotated signature.
+Only proven, unshadowed same-module plain calls are sliced in this first
+version. Uncertain receiver/import resolution, decorators or unknown argument
+expansions retain whole available candidate functions. Project class
+recommendations select complete methods plus attribute/helper dependencies;
+unknown members/inheritance fall back to the complete available class. Shared
+class definitions no longer truncate at 16,000 characters, and class method
+return annotations are excluded from the shared KB.
+
+For a first batch of exactly five physical jobs per account, use a fresh
+ledger and pass `--jobs-per-account 5` to both scheduler dry-run and push.
+Do not run the unrestricted watcher while waiting for user authorization for
+the remaining jobs. This selects 15 of the 19 partitions, preserving the plan.
+The continuation uses `--skip-jobs-per-account 5` and a separate ledger only
+after the user requests it.
+
+Retrieval schema: `typepro-project-kb-top10-generative-v10-ast-context`.
 Build one KB per project and reuse it for every sample. The KB never reads a
 function return annotation: it creates neither a candidate nor `returned_by`
 metadata from one, and stored function signatures omit it. It retains candidates
@@ -67,7 +87,7 @@ mutate the KB. Other annotations are retained.
 Tests verify that changing source target annotations with the same fixed KB
 preserves slices and ordered candidates, and prohibit per-sample KB/solver
 rebuilding. Rows use
-`target_masking_version=typepro-shared-kb-masked-source-v5-target-member-matching`.
+`target_masking_version=typepro-shared-kb-masked-source-v6-ast-context`.
 
 Old restored datasets fail the retrieval-schema check. Local completed-project
 resume also requires a matching schema stamp on each status file, including

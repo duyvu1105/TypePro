@@ -355,6 +355,20 @@ def export_one(
         # do not rescan the project or rerun the whole-project type solver.
         base = function_methods or Function_methods()
         methods = copy.copy(base)
+        methods.context_masker = clean
+        if not hasattr(methods, 'context_catalog'):
+            from ast_context_slicer import FunctionCatalog
+            # Legacy disk indexes have signatures only. Read source once per
+            # base index; mask every returned definition before AST decisions.
+            parsed = []
+            for path in sorted({i.file_name for i in base.total_function_data if i.file_name}):
+                try:
+                    text = Path(path).read_text(encoding='utf-8')
+                    parsed.append((Path(path), '', text, ast.parse(text)))
+                except (OSError, SyntaxError, ValueError):
+                    continue
+            base.context_catalog = FunctionCatalog(parsed)
+            methods.context_catalog = base.context_catalog
         methods.total_function_data = [item._replace(source_code=clean(item.source_code))
                                        for item in base.total_function_data]
         methods.total_class_data = [item._replace(signature=clean(item.signature))
@@ -373,7 +387,8 @@ def export_one(
         for item in result['recommendation_types']:
             item['definition'] = render_masks(clean(item['definition']))
         result['other_prompt'] = [render_masks(value) for value in result['other_prompt']]
-        result['target_masking_version'] = 'typepro-shared-kb-masked-source-v5-target-member-matching'
+        result['target_masking_version'] = 'typepro-shared-kb-masked-source-v6-ast-context'
+        result['context_policy_version'] = 'ast-context-v1'
     return result
 
 
@@ -477,6 +492,7 @@ def _export_masked_one(
     )
     result["recommendation_types"] = recommendations
     result["recommendation_diagnostics"] = {
+        "context_reduction": slicer.context_diagnostics,
         "count": len(recommendations),
         "target_members": target_member_query(target_node, target_name) if scope == "arg" else {"methods": [], "attributes": []},
         "by_source": dict(Counter(item["source"] for item in recommendations)),
