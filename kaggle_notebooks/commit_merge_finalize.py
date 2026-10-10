@@ -11,7 +11,7 @@ import tempfile
 from pathlib import Path
 
 from commit_shard_versions import load_credential, run_push
-from generate_notebooks import physical_partitions, validate_merge_datasets
+from generate_notebooks import physical_partitions, validate_merge_datasets, republish_final_notebook
 
 
 ROOT = Path(__file__).resolve().parent
@@ -73,7 +73,7 @@ def kernel_metadata(code_file: str) -> dict:
     }
 
 
-def write_payload(destination: Path) -> None:
+def write_payload(destination: Path, *, republish: bool = False) -> None:
     destination.mkdir(parents=True, exist_ok=True)
     notebook = json.loads(NOTEBOOK_PATH.read_text(encoding="utf-8"))
     serialized = json.dumps(notebook, ensure_ascii=False)
@@ -84,20 +84,31 @@ def write_payload(destination: Path) -> None:
         raise RuntimeError("Merge notebook must consume attached inputs, not runtime downloads")
     code_path = destination / "typepro_merge_finalize.ipynb"
     metadata_path = destination / "kernel-metadata.json"
-    shutil.copyfile(NOTEBOOK_PATH, code_path)
+    if republish:
+        code_path.write_text(json.dumps(republish_final_notebook(notebook), indent=1), encoding="utf-8")
+    else:
+        shutil.copyfile(NOTEBOOK_PATH, code_path)
+    metadata = kernel_metadata(code_path.name)
+    if republish:
+        metadata.update(
+            id=f"{OWNER}/republish-final-from-merge",
+            title="Republish Final From Completed Merge",
+            dataset_sources=[],
+            kernel_sources=[f"{OWNER}/{KERNEL_SLUG}"],
+        )
     metadata_path.write_text(
-        json.dumps(kernel_metadata(code_path.name), indent=2), encoding="utf-8"
+        json.dumps(metadata, indent=2), encoding="utf-8"
     )
 
 
-def kernel_status(credential: dict[str, str], config_dir: Path) -> str:
+def kernel_status(credential: dict[str, str], config_dir: Path, kernel_slug: str = KERNEL_SLUG) -> str:
     environment = os.environ.copy()
     environment["KAGGLE_CONFIG_DIR"] = str(config_dir)
     environment["KAGGLE_USERNAME"] = credential["username"]
     environment["KAGGLE_KEY"] = credential["key"]
     environment.pop("KAGGLE_API_TOKEN", None)
     result = subprocess.run(
-        ["kaggle", "kernels", "status", f"{OWNER}/{KERNEL_SLUG}"],
+        ["kaggle", "kernels", "status", f"{OWNER}/{kernel_slug}"],
         env=environment,
         text=True,
         stdout=subprocess.PIPE,
@@ -133,6 +144,7 @@ def check_dataset_sources(
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--push", action="store_true")
+    parser.add_argument("--republish-from-merge-output", action="store_true")
     parser.add_argument("--check-status", action="store_true")
     parser.add_argument("--check-inputs", action="store_true")
     parser.add_argument(
@@ -151,24 +163,25 @@ def main(argv: list[str] | None = None) -> None:
         result = {"pushed": False, "input_statuses": statuses}
     elif args.check_status:
         with tempfile.TemporaryDirectory(prefix="typepro_merge_status_") as temp:
-            status = kernel_status(credential, Path(temp))
+            status = kernel_status(credential, Path(temp), "republish-final-from-merge" if args.republish_from_merge_output else KERNEL_SLUG)
         result = {"pushed": False, "status": status}
     elif args.push:
         with tempfile.TemporaryDirectory(prefix="typepro_merge_push_") as temp:
             payload = Path(temp) / "payload"
             auth = Path(temp) / "auth"
             auth.mkdir()
-            write_payload(payload)
+            write_payload(payload, republish=args.republish_from_merge_output)
             output = run_push(payload, credential, auth)
         result = {"pushed": True, "cli_output": output}
     else:
         destination = args.output_dir.resolve()
-        write_payload(destination)
+        write_payload(destination, republish=args.republish_from_merge_output)
         result = {"pushed": False, "rendered_to": str(destination)}
 
     print(json.dumps({
-        "kernel": f"{OWNER}/{KERNEL_SLUG}",
-        "dataset_sources": merge_dataset_ids(),
+        "kernel": f"{OWNER}/republish-final-from-merge" if args.republish_from_merge_output else f"{OWNER}/{KERNEL_SLUG}",
+        "dataset_sources": [] if args.republish_from_merge_output else merge_dataset_ids(),
+        "kernel_sources": [f"{OWNER}/{KERNEL_SLUG}"] if args.republish_from_merge_output else [],
         **result,
     }, indent=2))
 

@@ -461,7 +461,7 @@ def shard_notebook(
         # This rerun keeps built-in annotations and adds function returns.
         INCLUDE_BUILTINS = True
         INCLUDE_RETURNS = True
-        RETRIEVAL_SCHEMA_VERSION = "typepro-project-kb-top10-generative-v10-ast-context"
+        RETRIEVAL_SCHEMA_VERSION = "typepro-project-kb-top10-generative-v11-resolved-bounded-context"
 
         from pathlib import Path
 
@@ -1365,7 +1365,7 @@ def merge_notebook(
             sys.executable, "-u", merge_script,
             "--shard-build-dirs", *shard_builds,
             "--work-dir", MERGED_BUILD,
-            "--expected-retrieval-schema", "typepro-project-kb-top10-generative-v10-ast-context",
+            "--expected-retrieval-schema", "typepro-project-kb-top10-generative-v11-resolved-bounded-context",
         ])
         """),
         markdown("## Finalize generative train/validation/test and retain project KBs"),
@@ -1444,6 +1444,28 @@ def merge_notebook(
         print(json.dumps(completion, indent=2))
         """),
     ])
+
+
+def republish_final_notebook(merge: dict) -> dict:
+    """Reuse completed merge output, verify it, and run only final publication."""
+    cells = merge["cells"][:4]
+    cells.extend([
+        markdown("## Recover the completed merge output and verify it"),
+        code("""
+        candidates = list(INPUT_ROOT.rglob("typepro_python_generative/manifest.json"))
+        if len(candidates) != 1:
+            raise RuntimeError(f"Expected one completed merge output, found {candidates}")
+        source = candidates[0].parent
+        shutil.copytree(source, FINAL_DIR)
+        # A completion marker from an older publisher must not survive a retry.
+        (FINAL_DIR / "MERGE_COMPLETE.json").unlink(missing_ok=True)
+        run([sys.executable, PIPELINE_DIR / "verify_dataset.py", "--data-dir", FINAL_DIR])
+        manifest = json.loads((FINAL_DIR / "manifest.json").read_text(encoding="utf-8"))
+        """),
+        merge["cells"][-2],
+        merge["cells"][-1],
+    ])
+    return notebook(cells)
 
 
 def train_notebook(repository: str, branch: str) -> dict:
@@ -1952,7 +1974,7 @@ def test_retrieval_ablation_notebook(repository: str) -> dict:
         BASELINE_DATASET = "duyvu1105/typepro-python-generative"
         BASELINE_REVISION = "2e6625f4259fd488f89c5e97ac50c018b6b0326c"
         EXPECTED_BASELINE_TEST_ROWS = 3296
-        RETRIEVAL_SCHEMA_VERSION = "typepro-project-kb-top10-generative-v10-ast-context"
+        RETRIEVAL_SCHEMA_VERSION = "typepro-project-kb-top10-generative-v11-resolved-bounded-context"
 
         import json
         import subprocess

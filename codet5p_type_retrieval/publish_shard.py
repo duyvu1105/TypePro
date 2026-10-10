@@ -59,12 +59,22 @@ def included(relative: PurePosixPath) -> bool:
     return len(relative.parts) == 1 and relative.name in {
         "runtime_manifest.json",
         "shard_manifest.json",
+        "context_audit.json",
     }
 
 
 def package_shard(work_dir: Path, payload_dir: Path) -> tuple[Path, dict[str, Any]]:
     work_dir = work_dir.resolve()
     manifest = read_manifest(work_dir)
+    runtime_path = work_dir / 'runtime_manifest.json'
+    runtime = json.loads(runtime_path.read_text(encoding='utf-8'))
+    if runtime.get('retrieval_schema_version') == 'typepro-project-kb-top10-generative-v11-resolved-bounded-context' and runtime.get('context_policy_version') != 'ast-context-v2-resolved-callees-bounded-candidates':
+        raise RuntimeError('Missing resolved context policy for v11 shard')
+    if runtime.get('context_policy_version') == 'ast-context-v2-resolved-callees-bounded-candidates':
+        from audit_context import audit
+        report = audit(work_dir / 'raw_slices')
+        (work_dir / 'context_audit.json').write_text(json.dumps(report, indent=2), encoding='utf-8')
+        print(json.dumps({k: v for k, v in report.items() if k != 'largest_inputs'}, indent=2), flush=True)
     shard_index = manifest.get("shard_index")
     shard_count = manifest.get("shard_count")
     if not isinstance(shard_index, int) or not isinstance(shard_count, int):

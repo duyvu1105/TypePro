@@ -52,14 +52,11 @@ def without_runtime_timings(record):
     return value
 
 
-def test_indexed_lookups_preserve_legacy_order_and_dotted_fallbacks():
+def test_source_lookup_does_not_promote_name_only_candidates():
     methods = make_methods()
 
-    assert methods.get_target_name_signals("exact") == ["first", "second"]
-    assert methods.get_target_name_signals("module.fallback") == [
-        "fallback-first",
-        "fallback-second",
-    ]
+    assert methods.get_target_name_signals("exact") == []
+    assert methods.get_target_name_signals("module.fallback") == []
     assert [item.source_code for item in methods.get_function_use_data("exact")] == [
         "call-1",
         "call-3",
@@ -429,7 +426,7 @@ def test_shared_analysis_cache_preserves_records_for_repeated_function_uses(
     assert cache.hits["analyzer"] == 0
 
 
-def test_function_use_cache_preserves_event_order_and_signature_filtering(
+def test_unverified_legacy_callers_are_not_added_to_slice(
     tmp_path, monkeypatch
 ):
     source = tmp_path / "sample.py"
@@ -458,11 +455,9 @@ def test_function_use_cache_preserves_event_order_and_signature_filtering(
     first = slicer.function_use_data("target", ["excluded"])
     second = slicer.function_use_data("target", ["excluded"])
 
-    assert first == ["sig-1", "call-1", "shared", "sig-2", "excluded", "call-2"]
+    assert first == []
     assert second == first
-    assert calls == uses
-    assert cache.hits["function"] == 1
-    assert cache.hits["function_output"] == 1
+    assert calls == []
 
 
 def test_annotation_deadline_raises_and_always_cancels_timer(monkeypatch):

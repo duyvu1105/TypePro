@@ -109,7 +109,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--retrieval-schema-version",
-        default="typepro-project-kb-top10-generative-v10-ast-context",
+        default="typepro-project-kb-top10-generative-v11-resolved-bounded-context",
         help="Invalidates restored raw slices when recommendation logic changes",
     )
     parser.add_argument(
@@ -841,7 +841,8 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
         "only_project_list": str(args.only_project_list.resolve()) if args.only_project_list else None,
         "only_project_count": len(only_projects) if only_projects is not None else None,
         "retrieval_schema_version": args.retrieval_schema_version,
-        "context_policy_version": "ast-context-v1",
+        "context_policy_version": "ast-context-v2-resolved-callees-bounded-candidates",
+        "candidate_definition_max_chars": 16000,
         "project_revision_lock": str(args.project_revision_lock.resolve()) if args.project_revision_lock else None,
         "project_revision_lock_sha256": sha256_file(args.project_revision_lock) if args.project_revision_lock else None,
         "project_revision_lock_projects": len(revision_lock),
@@ -1035,7 +1036,8 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
                 "project": project,
                 "commit": commit,
                 "retrieval_schema_version": args.retrieval_schema_version,
-                "context_policy_version": "ast-context-v1",
+                "context_policy_version": "ast-context-v2-resolved-callees-bounded-candidates",
+                "candidate_definition_max_chars": 16000,
                 "annotations": len(project_rows),
                 "exported": exported,
                 "failed_annotations": len(project_rows) - exported,

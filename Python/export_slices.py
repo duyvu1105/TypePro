@@ -23,6 +23,7 @@ from function_methods import Function_methods
 from project_index import build_project_index, scan_project
 from project_kb import target_member_query, top_project_types
 from target_context import MASK, mask_annotation, mask_definition, read_source, render_masks, source_overlay
+from ast_context_slicer import POLICY, CANDIDATE_DEFINITION_MAX_CHARS
 
 
 FUNCTION_NODES = (ast.FunctionDef, ast.AsyncFunctionDef)
@@ -385,10 +386,11 @@ def export_one(
     if result is not None:
         result['interprocedural_slice'] = render_masks(result['interprocedural_slice'])
         for item in result['recommendation_types']:
-            item['definition'] = render_masks(clean(item['definition']))
+            item['definition'] = render_masks(clean(item['definition']))[:CANDIDATE_DEFINITION_MAX_CHARS]
         result['other_prompt'] = [render_masks(value) for value in result['other_prompt']]
-        result['target_masking_version'] = 'typepro-shared-kb-masked-source-v6-ast-context'
-        result['context_policy_version'] = 'ast-context-v1'
+        result['target_masking_version'] = 'typepro-shared-kb-masked-source-v7-resolved-bounded-context'
+        result['context_policy_version'] = POLICY
+        result['candidate_definition_max_chars'] = CANDIDATE_DEFINITION_MAX_CHARS
     return result
 
 

@@ -54,7 +54,7 @@ def test_standalone_notebook_locks_publish_owner_and_single_shard():
     assert "SLICE_INDEX_TIMEOUT_SECONDS = 1800" in config
     assert "SLICE_TRACE_EVERY = 1" in config
     assert "CLONE_TIMEOUT_SECONDS = 900" in config
-    assert 'RETRIEVAL_SCHEMA_VERSION = "typepro-project-kb-top10-generative-v10-ast-context"' in config
+    assert 'RETRIEVAL_SCHEMA_VERSION = "typepro-project-kb-top10-generative-v11-resolved-bounded-context"' in config
     assert "force-projects" in serialized
     assert "INCLUDE_BUILTINS = True" in config
     assert "INCLUDE_RETURNS = True" in config
@@ -581,3 +581,18 @@ def test_recovery_metadata_pins_exact_source_version():
     assert metadata["id"] == "duymign/typepro-recover-shard-08-from-v9"
     assert metadata["kernel_sources"] == []
     assert metadata["enable_gpu"] is False
+
+
+def test_republish_final_uses_completed_kernel_output(tmp_path):
+    commit_merge_finalize.write_payload(tmp_path, republish=True)
+    metadata = json.loads((tmp_path / 'kernel-metadata.json').read_text())
+    assert metadata['id'] == 'duyvu1105/republish-final-from-merge'
+    assert metadata['kernel_sources'] == ['duyvu1105/merge-dataset']
+    assert metadata['dataset_sources'] == []
+    source = ''.join(''.join(cell['source']) for cell in json.loads(
+        (tmp_path / 'typepro_merge_finalize.ipynb').read_text())['cells'] if cell['cell_type'] == 'code')
+    compile(source, '<republish>', 'exec')
+    assert 'verify_dataset.py' in source
+    assert 'publish_kaggle.py' in source
+    assert 'merge_shards.py' not in source
+    assert 'prepare_dataset.py' not in source

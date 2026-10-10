@@ -16,7 +16,7 @@ from typing import Any, Iterable
 
 from project_index import module_name, python_files
 from target_context import MASK, mask_definition
-from ast_context_slicer import reduce_class
+from ast_context_slicer import reduce_class, CANDIDATE_DEFINITION_MAX_CHARS
 
 
 SCHEMA_VERSION = "typepro-project-kb-v5-full-class-source"
@@ -373,12 +373,20 @@ def top_project_types(
                     constructed = False
                 query = {'methods': ['__init__'], 'attributes': []} if constructed else {}
             definition, reduction = reduce_class(definition, query)
+        original_chars = len(str(item.get('definition') or item['name']))
+        rendered_chars = len(definition)
+        definition = definition[:CANDIDATE_DEFINITION_MAX_CHARS]
         result.append({
             "name": str(item["name"]),
             "qualified_name": str(item.get("qualified_name") or item["name"]),
             "source": str(item.get("source") or "project"),
             "kind": str(item.get("kind") or "class"),
             "definition": definition,
+            "definition_reduction": {
+                "kb_chars": original_chars, "rendered_chars": rendered_chars,
+                "output_chars": len(definition), "truncated": rendered_chars > len(definition),
+                "max_chars": CANDIDATE_DEFINITION_MAX_CHARS,
+            },
             **({'context_reduction': reduction} if reduction is not None else {}),
         })
         if len(result) >= limit:

@@ -21,6 +21,11 @@ original KB contents are preserved. `project_kb_index.json` maps each original
 when present, falling back to `project_kb/<owner>__<repo>/knowledge_base.json`
 for older Datasets. The publisher waits for the published version number to
 advance; `ready` from an older version does not establish publication success.
+If only final publication needs retrying after a completed merge, dry-run
+`python kaggle_notebooks/commit_merge_finalize.py --republish-from-merge-output`,
+then use the same command with `--push`. This uses the latest completed
+`duyvu1105/merge-dataset` output as a kernel input, verifies the final files,
+and publishes without rebuilding or merging the shards again.
 The two new kernels end in `-part-02-subpart-01` and `-part-02-subpart-02`;
 their private Dataset slugs end in `-12-of-40` and `-32-of-40`, avoiding writes
 from the retired 12/20 kernel. Render/push these with `--shard 2 --part 2`
@@ -58,18 +63,33 @@ before merge. Do not publish or train the final dataset automatically.
 
 ## Shared project KB and masked source
 
-The AST context rerun uses `context_policy_version=ast-context-v1` and masking
-stamp `typepro-shared-kb-masked-source-v6-ast-context`. Target functions retain
-their statement dependency component; control blocks remain whole. Opaque
-effects trigger full-function fallback. Related functions use complete AST
-definitions, even when the old index stored only an annotated signature.
-Only proven, unshadowed same-module plain calls are sliced in this first
-version. Uncertain receiver/import resolution, decorators or unknown argument
-expansions retain whole available candidate functions. Project class
-recommendations select complete methods plus attribute/helper dependencies;
-unknown members/inheritance fall back to the complete available class. Shared
-class definitions no longer truncate at 16,000 characters, and class method
-return annotations are excluded from the shared KB.
+The resolved-context rerun uses
+`context_policy_version=ast-context-v2-resolved-callees-bounded-candidates`
+and masking stamp `typepro-shared-kb-masked-source-v7-resolved-bounded-context`.
+Target functions retain their statement dependency component; control blocks
+remain whole. Related definitions enter the slice only after resolving an
+unshadowed module-level function or an explicit project import. Both caller
+contexts and callees are checked against the AST catalog; a short-name match
+never permits inserting a body. Unknown callees keep only the original call.
+Only a resolved callee can fall back to its whole function when parameter
+binding or reduction is uncertain. Expansion stops at one hop.
+
+Receiver methods, nested callable scopes and opaque mutation remain unresolved
+in this conservative implementation. Class name similarity supplies retrieval
+evidence rather than adding a guessed class to the slice. Project class
+recommendations select complete methods and their attribute/helper dependencies.
+After target masking and member selection, every candidate definition is capped
+with `definition[:16000]`, including whole-class fallback. This cap can cut a
+statement; it is a Unicode character limit per candidate, not a token limit or
+a total prompt budget. Top-10 ranking is preserved through this cap. Shared KB
+definitions remain complete and class method return annotations remain excluded.
+
+Before publishing, each v2 shard audits every raw row for the policy stamps,
+top-10 count, 16,000-character cap and provenance of inserted related functions.
+Failure stops packaging/publication. `context_audit.json` records median, p95,
+p99, maximum input character lengths and the 20 largest contexts. Large genuine
+target/resolved functions are reported rather than silently truncated. No
+tokenizer is run during shard creation.
 
 For a first batch of exactly five physical jobs per account, use a fresh
 ledger and pass `--jobs-per-account 5` to both scheduler dry-run and push.
@@ -78,7 +98,7 @@ the remaining jobs. This selects 15 of the 19 partitions, preserving the plan.
 The continuation uses `--skip-jobs-per-account 5` and a separate ledger only
 after the user requests it.
 
-Retrieval schema: `typepro-project-kb-top10-generative-v10-ast-context`.
+Retrieval schema: `typepro-project-kb-top10-generative-v11-resolved-bounded-context`.
 Build one KB per project and reuse it for every sample. The KB never reads a
 function return annotation: it creates neither a candidate nor `returned_by`
 metadata from one, and stored function signatures omit it. It retains candidates
@@ -95,7 +115,7 @@ mutate the KB. Other annotations are retained.
 Tests verify that changing source target annotations with the same fixed KB
 preserves slices and ordered candidates, and prohibit per-sample KB/solver
 rebuilding. Rows use
-`target_masking_version=typepro-shared-kb-masked-source-v6-ast-context`.
+`target_masking_version=typepro-shared-kb-masked-source-v7-resolved-bounded-context`.
 
 Old restored datasets fail the retrieval-schema check. Local completed-project
 resume also requires a matching schema stamp on each status file, including

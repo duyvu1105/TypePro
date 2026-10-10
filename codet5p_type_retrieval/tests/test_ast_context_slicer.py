@@ -78,7 +78,7 @@ def test_catalog_same_name_shadowing_is_not_certain(tmp_path):
     catalog = FunctionCatalog(parsed)
     caller = ast.parse(a.read_text()).body[1]
     matches, certain = catalog.lookup(caller.body[0].value, a, caller)
-    assert len(matches) == 2 and not certain
+    assert matches == [] and not certain
 
 
 CLASS = '''class Client:

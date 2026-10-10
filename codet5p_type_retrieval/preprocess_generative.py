@@ -12,6 +12,7 @@ from type_labels import normalize_type_label
 
 
 SPLITS = ("train", "validation", "test")
+CANDIDATE_DEFINITION_MAX_CHARS = 16000
 
 
 def iter_records(path: Path) -> Iterable[dict[str, Any]]:
@@ -60,7 +61,7 @@ def normalized_recommendations(row: dict[str, Any], limit: int) -> list[dict[str
         seen.add(key)
         result.append({
             "type": name,
-            "definition": definition,
+            "definition": definition[:CANDIDATE_DEFINITION_MAX_CHARS],
             **({"qualified_name": qualified} if qualified else {}),
         })
         if len(result) >= limit:
@@ -162,6 +163,7 @@ def main() -> None:
                 "input": format_input(name, function, scope, code_slice, recommendations),
                 "label": label,
                 "source_commit": row.get("source_commit"),
+                "candidate_definition_max_chars": CANDIDATE_DEFINITION_MAX_CHARS,
                 **({"context_policy_version": row["context_policy_version"]}
                    if row.get("context_policy_version") else {}),
             }

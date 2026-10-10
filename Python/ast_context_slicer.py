@@ -11,7 +11,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 FUNCTIONS = (ast.FunctionDef, ast.AsyncFunctionDef)
-POLICY = 'ast-context-v1'
+POLICY = 'ast-context-v2-resolved-callees-bounded-candidates'
+CANDIDATE_DEFINITION_MAX_CHARS = 16000
 
 
 def names(node):
@@ -169,52 +170,192 @@ class FunctionCatalog:
     def __init__(self, parsed_files):
         self.records = []
         self.trees = {}
+        self.modules = {}
+        self.by_module = {}
+        self.callers_cache = None
+        self.nested_scopes = set()
         for path, module, source, tree in parsed_files:
             path = str(Path(path).resolve())
             self.trees[path] = tree
-            def visit(body, scopes=()):
+            self.modules[path] = module
+            self.by_module.setdefault(module, []).append(path)
+            def visit(body, scopes=(), function_depth=0):
                 for node in body:
                     if isinstance(node, FUNCTIONS):
                         qualified = '.'.join(filter(None, (module, *scopes, node.name)))
                         self.records.append((path, qualified, node, bool(scopes)))
-                        visit(node.body, (*scopes, node.name))
+                        if function_depth:
+                            self.nested_scopes.add((path, node.lineno, node.name))
+                        visit(node.body, (*scopes, node.name), function_depth + 1)
                     elif isinstance(node, ast.ClassDef):
-                        visit(node.body, (*scopes, node.name))
+                        visit(node.body, (*scopes, node.name), function_depth)
             visit(tree.body)
+        self.by_identity = {}
+        self.scope_records = {}
+        self.binding_cache = {}
+        for record in self.records:
+            self.by_identity.setdefault((record[0], record[1]), []).append(record)
+            self.scope_records.setdefault((record[0], record[2].lineno, record[2].name), []).append(record)
+
+    def bindings(self, tree, name):
+        key = (id(tree), name)
+        if key not in self.binding_cache:
+            self.binding_cache[key] = self._bindings(tree, name)
+        return self.binding_cache[key]
+
+    @staticmethod
+    def _bindings(tree, name):
+        """All bindings in this lexical scope; never descend into another scope."""
+        found = []
+        class Bindings(ast.NodeVisitor):
+            def visit_FunctionDef(self, node):
+                if node.name == name:
+                    found.append(node)
+            visit_AsyncFunctionDef = visit_FunctionDef
+            def visit_ClassDef(self, node):
+                if node.name == name:
+                    found.append(node)
+            def visit_Lambda(self, node):
+                return
+            def visit_Name(self, node):
+                if node.id == name and isinstance(node.ctx, (ast.Store, ast.Del)):
+                    found.append(node)
+            def visit_Import(self, node):
+                for alias in node.names:
+                    if (alias.asname or alias.name.split('.')[0]) == name:
+                        found.append((node, alias))
+            def visit_ImportFrom(self, node):
+                for alias in node.names:
+                    if alias.name == '*' or (alias.asname or alias.name) == name:
+                        found.append((node, alias))
+            def visit_ExceptHandler(self, node):
+                if node.name == name:
+                    found.append(node)
+                self.generic_visit(node)
+            def visit_MatchAs(self, node):
+                if node.name == name:
+                    found.append(node)
+                self.generic_visit(node)
+        visitor = Bindings()
+        for statement in tree.body:
+            visitor.visit(statement)
+        if isinstance(tree, FUNCTIONS):
+            found.extend(p for p in ast.walk(tree.args) if isinstance(p, ast.arg) and p.arg == name)
+            # Any nonlocal/global declaration makes lexical resolution opaque.
+            found.extend(n for n in ast.walk(tree) if isinstance(n, (ast.Global, ast.Nonlocal)) and name in n.names)
+        return found
+
+    def resolve(self, call, caller_file, caller_function=None):
+        """Fail closed: short-name matches are search candidates, never callees.
+
+        Prove only module-level plain functions and explicit project imports.
+        Dynamic receivers, nested scopes and methods remain unresolved rather
+        than injecting speculative bodies. No annotation participates here.
+        """
+        path = str(Path(caller_file).resolve())
+        tree = self.trees.get(path)
+        if tree is None:
+            return None, 'source_unavailable'
+        if caller_function is None:
+            return None, 'call_scope_unavailable'
+        if any(isinstance(n, (ast.Lambda, *FUNCTIONS)) for s in caller_function.body for n in ast.walk(s)):
+            return None, 'nested_callable_scope'
+        target = call.func
+        chain = []
+        while isinstance(target, ast.Attribute):
+            chain.insert(0, target.attr)
+            target = target.value
+        if not isinstance(target, ast.Name):
+            return None, 'dynamic_receiver'
+        root = target.id
+        if caller_function is not None:
+            # Nested functions can capture bindings not visible in this scope.
+            records = self.scope_records.get((path, caller_function.lineno, caller_function.name), ())
+            if len(records) != 1 or (path, caller_function.lineno, caller_function.name) in self.nested_scopes:
+                return None, 'nested_scope'
+            if self.bindings(records[0][2], root):
+                return None, 'shadowed_name_or_receiver'
+            if any(isinstance(n, ast.Attribute) and isinstance(n.ctx, (ast.Store, ast.Del)) for n in ast.walk(caller_function)):
+                return None, 'possible_attribute_rebinding'
+            if any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id in {'exec', 'eval', 'setattr', 'delattr', 'globals', 'locals', 'vars'} for n in ast.walk(caller_function)):
+                return None, 'dynamic_scope_effect'
+        bindings = self.bindings(tree, root)
+        if len(bindings) != 1:
+            return None, 'ambiguous_or_missing_binding'
+        binding = bindings[0]
+        if isinstance(binding, FUNCTIONS) and not chain:
+            if binding not in tree.body:
+                return None, 'conditional_definition'
+            qualified = '.'.join(filter(None, (self.modules[path], root)))
+            matches = self.by_identity.get((path, qualified), ())
+        elif isinstance(binding, tuple):
+            statement, alias = binding
+            if statement not in tree.body:
+                return None, 'conditional_import'
+            if isinstance(statement, ast.ImportFrom):
+                if alias.name == '*':
+                    return None, 'star_import'
+                module = statement.module or ''
+                if statement.level:
+                    package = self.modules[path].split('.')
+                    if Path(path).name != '__init__.py':
+                        package = package[:-1]
+                    if statement.level > len(package):
+                        return None, 'invalid_relative_import'
+                    module = '.'.join(package[:len(package) - statement.level + 1] + ([module] if module else []))
+                qualified = '.'.join(filter(None, (module, alias.name, *chain)))
+            else:
+                qualified = '.'.join([alias.name, *chain]) if alias.asname else '.'.join([root, *chain])
+            # Only standalone functions directly declared by that module.
+            module = qualified.rsplit('.', 1)[0] if '.' in qualified else ''
+            paths = self.by_module.get(module, ())
+            matches = [r for p in paths for r in self.by_identity.get((p, qualified), ()) if not r[3]]
+            if len(paths) != 1:
+                return None, 'ambiguous_import_module'
+            if matches and (matches[0][2] not in self.trees[matches[0][0]].body or self.bindings(self.trees[matches[0][0]], matches[0][2].name) != [matches[0][2]]):
+                return None, 'rebound_imported_function'
+        else:
+            return None, 'unresolved_receiver'
+        if len(matches) != 1:
+            return None, 'ambiguous_or_missing_definition'
+        # Module attribute assignments can replace even a lexically known name.
+        for module_tree in (tree, self.trees[matches[0][0]]):
+            for statement in module_tree.body:
+                if not isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                    if any(isinstance(n, ast.Attribute) and isinstance(n.ctx, (ast.Store, ast.Del)) for n in ast.walk(statement)):
+                        return None, 'possible_attribute_rebinding'
+                    if any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id in {'exec', 'eval', 'setattr', 'delattr', 'globals', 'locals', 'vars'} for n in ast.walk(statement)):
+                        return None, 'dynamic_module_effect'
+        return matches[0], ''
 
     def lookup(self, call, caller_file, caller_function):
-        """Only unshadowed same-module plain functions are certain in v1.
+        record, _ = self.resolve(call, caller_file, caller_function)
+        return ([record] if record else []), record is not None
 
-        Imported, nested and descriptor calls retain full candidate bodies.
-        Name-only matches must never be treated as a proven callee.
-        """
-        spelling = ast.unparse(call.func)
-        leaf = spelling.rsplit('.', 1)[-1]
-        matches = [r for r in self.records if r[1] == spelling]
-        if not matches:
-            matches = [r for r in self.records if r[2].name == leaf]
-        path = str(Path(caller_file).resolve())
-        local = [r for r in matches if r[0] == path and not r[3]]
-        certain = isinstance(call.func, ast.Name) and len(local) == 1
-        if certain:
-            tree = self.trees[path]
-            # Exclude import/assignment/rebinding at module scope, and any
-            # parameter or assignment in the caller that shadows the name.
-            for statement in tree.body:
-                if not isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                    if leaf in names(statement) or any(
-                        isinstance(n, ast.alias) and (n.asname or n.name.split('.')[0]) == leaf
-                        for n in ast.walk(statement)
-                    ):
-                        certain = False
-            if caller_function is not None:
-                if any(p.arg == leaf for p in ast.walk(caller_function.args) if isinstance(p, ast.arg)):
-                    certain = False
-                for statement in caller_function.body:
-                    if any(isinstance(n, ast.Name) and n.id == leaf and isinstance(n.ctx, (ast.Store, ast.Del))
-                           for n in ast.walk(statement)):
-                        certain = False
-        return (local if certain else matches), certain
+    def callers(self, qualified):
+        """Revalidate caller sites instead of trusting the legacy name index."""
+        if self.callers_cache is None:
+            self.callers_cache = {}
+            for path, tree in self.trees.items():
+                catalog = self
+                class Calls(ast.NodeVisitor):
+                    caller = None
+                    def visit_FunctionDef(self, node):
+                        previous = self.caller
+                        self.caller = node
+                        for statement in node.body:
+                            self.visit(statement)
+                        self.caller = previous
+                    visit_AsyncFunctionDef = visit_FunctionDef
+                    def visit_Lambda(self, node):
+                        return
+                    def visit_Call(self, node):
+                        record, _ = catalog.resolve(node, path, self.caller)
+                        if record is not None and self.caller is not None:
+                            catalog.callers_cache.setdefault(record[1], []).append((path, self.caller, node))
+                        self.generic_visit(node)
+                Calls().visit(tree)
+        return self.callers_cache.get(qualified, ())
 
 
 def reduce_class(definition, query):

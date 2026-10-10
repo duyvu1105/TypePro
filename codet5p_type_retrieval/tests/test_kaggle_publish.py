@@ -84,6 +84,25 @@ def make_shard(tmp_path: Path) -> Path:
     return work
 
 
+def test_v2_shard_publication_audits_before_packaging(tmp_path):
+    from audit_context import POLICY, MASKING
+    work = make_shard(tmp_path)
+    (work / 'runtime_manifest.json').write_text(json.dumps({'context_policy_version': POLICY}), encoding='utf-8')
+    row = {'context_policy_version': POLICY, 'target_masking_version': MASKING,
+           'candidate_definition_max_chars': 16000,
+           'recommendation_types': [{'name': 'C', 'definition': 'class C: pass'}]}
+    raw = work / 'raw_slices' / 'owner__repo.jsonl'
+    raw.write_text(json.dumps(row) + '\n', encoding='utf-8')
+    archive, _ = package_shard(work, tmp_path / 'payload')
+    with zipfile.ZipFile(archive) as bundle:
+        assert 'typepro_build_shard_00/context_audit.json' in bundle.namelist()
+    row['recommendation_types'][0]['definition'] = 'x' * 16001
+    raw.write_text(json.dumps(row) + '\n', encoding='utf-8')
+    with pytest.raises(ValueError, match='Unbounded'):
+        package_shard(work, tmp_path / 'rejected')
+    assert not (tmp_path / 'rejected').exists()
+
+
 def test_dataset_id_uses_authenticated_owner(tmp_path, monkeypatch):
     monkeypatch.setenv("KAGGLE_USERNAME", "another-account")
     monkeypatch.setenv("KAGGLE_KEY", "secret")
@@ -315,8 +334,11 @@ def test_final_packaging_preserves_case_colliding_kbs(tmp_path):
     with zipfile.ZipFile(payload / 'project_kb.zip') as bundle:
         names = bundle.namelist()
         assert len(names) == len({name.casefold() for name in names}) == 3
-        assert bundle.read(index['Stra\u00dfe__Repo']) == b'first'
-        assert bundle.read(index['strasse__repo']) == b'second'
+        assert bundle.read(index['Stra\u00dfe__Repo'].removeprefix('project_kb/')) == b'first'
+        assert bundle.read(index['strasse__repo'].removeprefix('project_kb/')) == b'second'
+        # Simulate Kaggle extracting each ZIP under its filename stem.
+        bundle.extractall(payload / 'project_kb')
+    assert all((payload / relative).is_file() for relative in index.values())
     assert index['other__repo'] == 'project_kb/other__repo/knowledge_base.json'
     assert json.loads((payload / 'project_kb_index.json').read_text(encoding='utf-8')) == index
     assert (payload / 'train.jsonl').read_text() == 'rows'

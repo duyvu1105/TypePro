@@ -31,7 +31,9 @@ def package_final(data_dir: Path, payload_dir: Path) -> dict[str, str]:
                 raise RuntimeError(f"Case-insensitive path collision: {relative}")
             seen.add(relative.casefold())
             index[slug] = relative
-            bundle.write(source, relative)
+            # Kaggle extracts an uploaded ZIP beneath its filename stem
+            # (project_kb/), so do not repeat that prefix inside the archive.
+            bundle.write(source, relative.removeprefix("project_kb/"))
     for source in sorted(data_dir.iterdir()):
         if source.is_file() and source.name not in {
             "dataset-metadata.json", "MERGE_COMPLETE.json", "project_kb_index.json", "project_kb.zip"

@@ -149,11 +149,8 @@ class Function_methods:
         if target_name in IGNORE_FUNCTION_NAME :
             return []
         res = list(self._function_sources_by_qualified_name.get(target_name, ()))
-        if not res:
-            res = list(self._function_sources_by_name.get(target_name, ()))
-        if "." in target_name and len(res) == 0:
-            new_name = target_name.split(".")[-1]
-            res = list(self._function_sources_by_name.get(new_name, ()))
+        # Short-name results are retrieval candidates, not source evidence.
+        # Call expansion must use FunctionCatalog.resolve with caller scope.
         return res
 
     def get_class_by_names(self, target_name: str)-> list[str]:

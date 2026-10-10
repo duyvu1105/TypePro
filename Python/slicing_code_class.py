@@ -513,10 +513,12 @@ class Slicer:
     def get_call_func_names(self,node: ast.Call) -> list:
         catalog = getattr(self.Funcion_methods, 'context_catalog', None)
         if catalog is None:
-            return self.get_call_func_signatures(_call_target_name(node))
-        matches, certain = catalog.lookup(node, self.file_name, getattr(self, 'context_function', None))
-        if not matches:
-            return self.get_call_func_signatures(_call_target_name(node))
+            return []
+        record, reason = catalog.resolve(node, self.file_name, getattr(self, 'context_function', None))
+        if record is None:
+            self.context_diagnostics.append(dict(mode='unresolved', reason=reason, call=ast.unparse(node.func)))
+            return []
+        matches, certain = [record], True
         values = []
         clean = getattr(self.Funcion_methods, 'context_masker', lambda text: text)
         for path, qualified, original, nested in matches:
@@ -533,32 +535,17 @@ class Slicer:
                 reduction = reduce_function(function, parameters, returns=True)
                 code, diagnostic = ast.unparse(reduction.node), reduction.diagnostics()
             diagnostic['callee'] = qualified
+            diagnostic['source_file'] = path
+            diagnostic['source_line'] = original.lineno
+            diagnostic['resolution'] = 'resolved'
             self.context_diagnostics.append(diagnostic)
             values.append(code)
         return list(dict.fromkeys(values))
 
     def get_call_func_signatures(self, target_name: str) -> list:
-        catalog = getattr(self.Funcion_methods, 'context_catalog', None)
-        if catalog is not None:
-            clean = getattr(self.Funcion_methods, 'context_masker', lambda text: text)
-            matches = [r for r in catalog.records if r[1] == target_name]
-            if not matches:
-                matches = [r for r in catalog.records if r[2].name == target_name.rsplit('.', 1)[-1]]
-            if matches:
-                self.context_diagnostics.append(dict(mode='full_fallback', reason='call_context_unavailable', callee=target_name))
-                return list(dict.fromkeys(clean(ast.unparse(r[2])) for r in matches))
-        fun_sig = self.Funcion_methods.get_target_name_signals(target_name)
-        cls_sigs = self.Funcion_methods.get_class_by_names(target_name)
-        if len(cls_sigs)>0:
-            for c in cls_sigs:
-                fun_sig.append(c)
-
-        if len(fun_sig) == 0:
-            tpf = self.import_analyzer.get_function_by_name(target_name)
-            for i in tpf:
-                if type(i) == FunctionInfo:
-                    fun_sig.append(i.signature)
-        return fun_sig
+        # Cached compact statements carry only a name, not a call AST/scope.
+        # A name is insufficient evidence to insert any definition into a slice.
+        return []
 
     def reduced_target(self, function, parameters=(), returns=False):
         reduction = reduce_function(function, parameters, returns)
@@ -818,40 +805,31 @@ class Slicer:
     def function_use_data(
         self, function_name: str, excluded_signatures: Iterable[str] = ()
     ) -> list[str]:
-        base_key = (self.file_name, function_name)
-        events = None
-        if self.analysis_cache is not None:
-            events = self.analysis_cache.function_use_events(base_key)
-        if events is None:
-            built_events = []
-            for use in self.Funcion_methods.get_function_use_data(function_name):
-                data, signatures = self.parse_use_data(use)
-                built_events.extend(("signature", value) for value in signatures)
-                built_events.extend(("data", value) for value in data)
-            events = tuple(built_events)
-            if self.analysis_cache is not None:
-                self.analysis_cache.remember_function_use_events(base_key, events)
-
-        excluded = frozenset(excluded_signatures)
-        output_key = (base_key, excluded)
-        if self.analysis_cache is not None:
-            cached = self.analysis_cache.function_output(output_key)
-            if cached is not None:
-                return cached
-
+        catalog = getattr(self.Funcion_methods, 'context_catalog', None)
+        if catalog is None:
+            return []
         values = []
-        seen = set()
-        definition_marker = re.compile(
-            r'\b(?:def|function)\s+' + re.escape(function_name.rsplit('.', 1)[-1]) + r'\s*\('
-        )
-        for kind, value in events:
-            if kind == "signature" and (
-                value in excluded or definition_marker.search(value)
-            ):
-                continue
-            _append_unique(values, seen, value)
-        if self.analysis_cache is not None:
-            self.analysis_cache.remember_function_output(output_key, values)
+        clean = getattr(self.Funcion_methods, 'context_masker', lambda text: text)
+        for path, caller, call in catalog.callers(function_name):
+            relevant = set().union(*(body_names(arg) for arg in [*call.args, *(kw.value for kw in call.keywords)]))
+            selected = []
+            # Caller evidence is scope-local. Never search a whole file for
+            # every variable with the same spelling or expand caller callees.
+            changed = True
+            while changed:
+                changed = False
+                for statement in caller.body:
+                    if statement in selected:
+                        continue
+                    written = {n.id for n in ast.walk(statement) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)}
+                    mutated = {n.value.id for n in ast.walk(statement) if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name)}
+                    if (written | mutated) & relevant or any(n is call for n in ast.walk(statement)):
+                        selected.append(statement)
+                        relevant.update(body_names(statement))
+                        changed = True
+            code = '\n'.join(clean(ast.unparse(s)) for s in caller.body if s in selected)
+            if code and code not in values:
+                values.append(code)
         return values
 
     def find_variable_nodes(self,file_path: str, var_name: str) -> List[ast.Name]:
@@ -991,8 +969,7 @@ class Slicer:
 
         may_cls_data = self.Funcion_methods.find_file_class_name(file_path, target_var_name)
         if may_cls_data!="":
-            total_code_list.append(may_cls_data)
-            total_code_seen.add(may_cls_data)
+            self.add_type_recommendations([may_cls_data])
         res, sigs = self.find_statements_for_var(file_path, target_var_name, is_for_defined=True,
                                             Domain=(root1, source))
 
@@ -1020,6 +997,7 @@ class Slicer:
             import_infos = self.get_import_info(file_path, source)
             for i_f in import_infos:
                 total_code = total_code + ast.get_source_segment(source, i_f) + "\n"
+            total_code += self.enclosing_class_header(root, func_node)
 
             func_slicing = self.collect_func_slicing(
                 func_node, file_path,
@@ -1031,6 +1009,19 @@ class Slicer:
             return total_code
 
         return ""
+
+    def enclosing_class_header(self, root, target):
+        parents = self.build_parent_map(root)
+        current = parents.get(target)
+        while current is not None:
+            if isinstance(current, ast.ClassDef):
+                # Known lexical context, not a guessed class retrieved by
+                # target-name similarity. Never duplicate all class methods.
+                header = ast.ClassDef(name=current.name, bases=current.bases,
+                    keywords=current.keywords, body=[ast.Pass()], decorator_list=[])
+                return ast.unparse(ast.fix_missing_locations(header)) + '\n'
+            current = parents.get(current)
+        return ''
 
     def slicing_params(
         self, func_node: ast.AST, root: ast.AST, param_name: str, file_path: str,
@@ -1050,13 +1041,16 @@ class Slicer:
                 import_source = ast.get_source_segment(source, i_f)
                 _append_unique(total_code_list, total_code_seen, import_source)
 
+            header = self.enclosing_class_header(root, func_node)
+            if header:
+                _append_unique(total_code_list, total_code_seen, header)
+
             # params_node = get_function_params_node(func_node, param_name)
             lines = source.splitlines()
             params_line = self.get_signature_line(func_node)
             may_class = self.Funcion_methods.find_file_class_name(file_path, param_name)
             if may_class!="":
-                total_code_list.append(may_class)
-                total_code_seen.add(may_class)
+                self.add_type_recommendations([may_class])
 
             function_code, sigs = self.reduced_target(func_node, [param_name])
             for fs in sigs:
