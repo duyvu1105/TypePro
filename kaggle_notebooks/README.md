@@ -67,15 +67,20 @@ before merge. Do not publish or train the final dataset automatically.
 ## Shared project KB and masked source
 
 The resolved-context rerun uses
-`context_policy_version=ast-context-v2-resolved-callees-bounded-candidates`
+`context_policy_version=ast-context-v3-recursive-signature-first`
 and masking stamp `typepro-shared-kb-masked-source-v7-resolved-bounded-context`.
-Target functions retain their statement dependency component; control blocks
-remain whole. Related definitions enter the slice only after resolving an
+Target and caller contexts reduce statements recursively inside control blocks,
+retaining relevant conditions, loop inputs/updates and control transfers.
+Unrelated blocks are removed. Related definitions enter the slice only after resolving an
 unshadowed module-level function or an explicit project import. Both caller
 contexts and callees are checked against the AST catalog; a short-name match
 never permits inserting a body. Unknown callees keep only the original call.
-Only a resolved callee can fall back to its whole function when parameter
-binding or reduction is uncertain. Expansion stops at one hop.
+Resolved callees prefer signatures when relevant annotations are informative.
+Missing/broad relevant annotations can supplement the signature with a reduced
+body containing additional evidence. Uncertain binding/reduction keeps only
+the signature, never the whole callee. Expansion stops at one hop. Target
+functions with opaque dynamic/scope effects can still retain their whole body;
+opaque callers retain the call instead of inserting the whole caller.
 
 Receiver methods, nested callable scopes and opaque mutation remain unresolved
 in this conservative implementation. Class name similarity supplies retrieval
@@ -87,7 +92,7 @@ statement; it is a Unicode character limit per candidate, not a token limit or
 a total prompt budget. Top-10 ranking is preserved through this cap. Shared KB
 definitions remain complete and class method return annotations remain excluded.
 
-Before publishing, each v2 shard audits every raw row for the policy stamps,
+Before publishing, each v3 shard audits every raw row for the policy stamps,
 top-10 count, 16,000-character cap and provenance of inserted related functions.
 Failure stops packaging/publication. `context_audit.json` records median, p95,
 p99, maximum input character lengths and the 20 largest contexts. Large genuine
@@ -101,7 +106,7 @@ the remaining jobs. This selects 15 of the 19 partitions, preserving the plan.
 The continuation uses `--skip-jobs-per-account 5` and a separate ledger only
 after the user requests it.
 
-Retrieval schema: `typepro-project-kb-top10-generative-v11-resolved-bounded-context`.
+Retrieval schema: `typepro-project-kb-top10-generative-v12-recursive-signature-first`.
 Build one KB per project and reuse it for every sample. The KB never reads a
 function return annotation: it creates neither a candidate nor `returned_by`
 metadata from one, and stored function signatures omit it. It retains candidates

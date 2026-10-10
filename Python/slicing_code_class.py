@@ -2,6 +2,7 @@ import ast
 from target_context import source_open as open
 import re
 import time
+from pathlib import Path
 from collections import OrderedDict, defaultdict
 from loguru import logger
 from type_defined import ProjectDefined, ProjectUseData, stmt_types, FunctionInfo, OTHER_PROMPTS,SIMPLE_BINOPS
@@ -10,7 +11,7 @@ from typing import List, Optional, Union, Dict, Iterable, Type, NamedTuple
 from import_analyzer import importAnalyzer
 from tool import split_unpack_in_code
 from type_signal_analyzer import visible_type_signals
-from ast_context_slicer import FunctionCatalog, reduce_function, bind_arguments, body_names
+from ast_context_slicer import FunctionCatalog, reduce_function, bind_arguments, body_names, data_names
 ScopeNode = Union[ast.FunctionDef, ast.ClassDef, ast.Module]
 
 FILE_PATH = ""
@@ -525,15 +526,77 @@ class Slicer:
             # Raw shared ASTs are never inspected by the binder/reducer before
             # the target annotation is masked in a private definition copy.
             function = ast.parse(clean(ast.unparse(original))).body[0]
+            relevant = getattr(self, 'context_names', set())
+            result_needed = id(node) in getattr(self, 'context_result_calls', set())
+            argument_names = set().union(*(data_names(v) for v in [*node.args, *(k.value for k in node.keywords)]))
+            if not argument_names & relevant and not result_needed:
+                self.context_diagnostics.append(dict(callee=qualified, mode='omitted', reason='unrelated_call',
+                    resolution='resolved', source_file=path, source_line=original.lineno))
+                continue
             bound, reason = bind_arguments(function, node) if certain and not function.decorator_list else (None, 'ambiguous_callee')
+            signature_node = ast.parse(ast.unparse(function)).body[0]
+            signature_node.body = [ast.Pass()]
+            signature_node.decorator_list = []
+            signature = ast.unparse(signature_node)
             if bound is None:
-                code = ast.unparse(function)
-                diagnostic = dict(mode='full_fallback', reason=reason)
+                code = signature
+                diagnostic = dict(mode='signature_only', reason=reason)
             else:
-                relevant = getattr(self, 'context_names', set())
-                parameters = [key for key, value in bound.items() if body_names(value) & relevant]
-                reduction = reduce_function(function, parameters, returns=True)
-                code, diagnostic = ast.unparse(reduction.node), reduction.diagnostics()
+                parameters = [key for key, value in bound.items() if data_names(value) & relevant]
+                if not parameters and not result_needed:
+                    self.context_diagnostics.append(dict(callee=qualified, mode='omitted', reason='unrelated_call',
+                        resolution='resolved', source_file=path, source_line=original.lineno))
+                    continue
+                def informative(annotation):
+                    if annotation is None:
+                        return False
+                    leaves = {n.id for n in ast.walk(annotation) if isinstance(n, ast.Name)}
+                    leaves.update(n.attr for n in ast.walk(annotation) if isinstance(n, ast.Attribute))
+                    if isinstance(annotation, ast.Constant) and isinstance(annotation.value, str):
+                        try:
+                            return informative(ast.parse(annotation.value, mode='eval').body)
+                        except SyntaxError:
+                            return False
+                    # Imported TypeVars cannot be proven concrete from this
+                    # signature alone. Recognize common type-variable spellings.
+                    broad = {'Any', 'object', 'TypeVar', 'Unknown', '__TYPEPRO_TARGET_MASK__'}
+                    module_tree = catalog.trees.get(str(Path(path).resolve()))
+                    if module_tree is not None:
+                        for declaration in module_tree.body:
+                            if isinstance(declaration, (ast.Assign, ast.AnnAssign)) and isinstance(declaration.value, ast.Call):
+                                constructor = declaration.value.func
+                                if (isinstance(constructor, ast.Name) and constructor.id in {'TypeVar', 'ParamSpec', 'TypeVarTuple'}) or (isinstance(constructor, ast.Attribute) and constructor.attr in {'TypeVar', 'ParamSpec', 'TypeVarTuple'}):
+                                    targets = declaration.targets if isinstance(declaration, ast.Assign) else [declaration.target]
+                                    broad.update(n.id for t in targets for n in ast.walk(t) if isinstance(n, ast.Name))
+                    return not bool(leaves & broad) and not any(n == 'T' or n.startswith('T_') for n in leaves)
+                args = [*function.args.posonlyargs, *function.args.args, *function.args.kwonlyargs]
+                missing = [p for p in parameters if not informative(next(a.annotation for a in args if a.arg == p))]
+                need_return = result_needed and not informative(function.returns)
+                if not missing and not need_return:
+                    code, diagnostic = signature, dict(mode='signature_only', reason='informative_annotation')
+                else:
+                    reduction = reduce_function(function, missing, returns=need_return, include_exits=need_return)
+                    if reduction.mode == 'full_fallback':
+                        code = signature
+                        diagnostic = dict(mode='signature_only', reason=reduction.reason)
+                    else:
+                        # A body consisting solely of pass/constant returns
+                        # supplies no additional evidence about a parameter.
+                        supplement_names = set(missing)
+                        changed = True
+                        while changed:
+                            previous = set(supplement_names)
+                            for s in ast.walk(reduction.node):
+                                if isinstance(s, (ast.Assign, ast.AnnAssign)) and s.value is not None and data_names(s.value) & supplement_names:
+                                    targets = s.targets if isinstance(s, ast.Assign) else [s.target]
+                                    for target in targets:
+                                        supplement_names.update(data_names(target))
+                            changed = previous != supplement_names
+                        evidence = need_return or any(
+                            isinstance(n, (ast.Attribute, ast.Subscript, ast.BinOp, ast.Compare, ast.Call))
+                            and data_names(n) & supplement_names for n in ast.walk(reduction.node))
+                        code = ast.unparse(reduction.node) if evidence else signature
+                        diagnostic = reduction.diagnostics() if evidence else dict(mode='signature_only', reason='no_additional_type_evidence')
             diagnostic['callee'] = qualified
             diagnostic['source_file'] = path
             diagnostic['source_line'] = original.lineno
@@ -550,7 +613,42 @@ class Slicer:
     def reduced_target(self, function, parameters=(), returns=False):
         reduction = reduce_function(function, parameters, returns)
         self.context_function = function
-        self.context_names = set().union(*(body_names(s) for s in reduction.node.body))
+        self.context_names = set(parameters)
+        # Track target aliases, without treating every name in its component
+        # (including unrelated call arguments) as another target.
+        changed = True
+        while changed:
+            previous = set(self.context_names)
+            for s in ast.walk(reduction.node):
+                if isinstance(s, (ast.Assign, ast.AnnAssign)) and s.value is not None and data_names(s.value) & self.context_names:
+                    targets = s.targets if isinstance(s, ast.Assign) else [s.target]
+                    for target in targets:
+                        self.context_names.update(data_names(target))
+            changed = previous != self.context_names
+        # Backward result dependencies decide which calls create a needed
+        # return value; calls used only as standalone effects do not qualify.
+        result_names = set()
+        result_calls = set()
+        if returns:
+            for s in ast.walk(reduction.node):
+                if isinstance(s, (ast.Return, ast.Yield, ast.YieldFrom)) and s.value is not None:
+                    result_names.update(data_names(s.value))
+                    result_calls.update(id(n) for n in ast.walk(s.value) if isinstance(n, ast.Call))
+            changed = True
+            while changed:
+                previous = len(result_names)
+                for s in ast.walk(reduction.node):
+                    if isinstance(s, (ast.Assign, ast.AnnAssign)) and s.value is not None:
+                        targets = s.targets if isinstance(s, ast.Assign) else [s.target]
+                        if any(data_names(t) & result_names for t in targets):
+                            result_names.update(data_names(s.value))
+                            result_calls.update(id(n) for n in ast.walk(s.value) if isinstance(n, ast.Call))
+                    elif isinstance(s, ast.Call) and isinstance(s.func, ast.Attribute) and data_names(s.func.value) & result_names:
+                        for value in [*s.args, *(k.value for k in s.keywords)]:
+                            result_names.update(data_names(value))
+                            result_calls.update(id(n) for n in ast.walk(value) if isinstance(n, ast.Call))
+                changed = previous != len(result_names)
+        self.context_result_calls = result_calls
         self.context_diagnostics.append(dict(component='target', **reduction.diagnostics()))
         related = []
         # One hop only. Called function bodies are not recursively expanded.
@@ -811,23 +909,11 @@ class Slicer:
         values = []
         clean = getattr(self.Funcion_methods, 'context_masker', lambda text: text)
         for path, caller, call in catalog.callers(function_name):
-            relevant = set().union(*(body_names(arg) for arg in [*call.args, *(kw.value for kw in call.keywords)]))
-            selected = []
-            # Caller evidence is scope-local. Never search a whole file for
-            # every variable with the same spelling or expand caller callees.
-            changed = True
-            while changed:
-                changed = False
-                for statement in caller.body:
-                    if statement in selected:
-                        continue
-                    written = {n.id for n in ast.walk(statement) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)}
-                    mutated = {n.value.id for n in ast.walk(statement) if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name)}
-                    if (written | mutated) & relevant or any(n is call for n in ast.walk(statement)):
-                        selected.append(statement)
-                        relevant.update(body_names(statement))
-                        changed = True
-            code = '\n'.join(clean(ast.unparse(s)) for s in caller.body if s in selected)
+            reduction = reduce_function(caller, seed_calls=[call])
+            self.context_diagnostics.append(dict(component='caller', source_file=path, **reduction.diagnostics()))
+            # An opaque caller must not cause its complete body to be inserted.
+            statements = reduction.node.body if reduction.mode == 'sliced' else [ast.Expr(value=call)]
+            code = '\n'.join(clean(ast.unparse(s)) for s in statements)
             if code and code not in values:
                 values.append(code)
         return values

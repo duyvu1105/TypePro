@@ -50,14 +50,14 @@ def main() -> None:
             runtime = json.loads((build / 'runtime_manifest.json').read_text(encoding='utf-8'))
             if runtime.get('retrieval_schema_version') != args.expected_retrieval_schema:
                 raise ValueError(f'Incompatible retrieval schema: {build}')
-            if runtime.get('context_policy_version') != 'ast-context-v2-resolved-callees-bounded-candidates':
+            if runtime.get('context_policy_version') != 'ast-context-v3-recursive-signature-first':
                 raise ValueError(f'Incompatible context policy: {build}')
             for raw_file in (build / 'raw_slices').glob('*.jsonl'):
                 with raw_file.open(encoding='utf-8') as handle:
                     for line in handle:
                         if line.strip():
                             row = json.loads(line)
-                            if row.get('target_masking_version') != 'typepro-shared-kb-masked-source-v7-resolved-bounded-context' or row.get('context_policy_version') != 'ast-context-v2-resolved-callees-bounded-candidates':
+                            if row.get('target_masking_version') != 'typepro-shared-kb-masked-source-v7-resolved-bounded-context' or row.get('context_policy_version') != 'ast-context-v3-recursive-signature-first':
                                 raise ValueError(f'Unmasked legacy record or incompatible context policy: {raw_file}')
                             if row.get('candidate_definition_max_chars') != 16000 or any(len(str(item.get('definition') or '')) > 16000 for item in row.get('recommendation_types', [])):
                                 raise ValueError(f'Unbounded candidate definition: {raw_file}')

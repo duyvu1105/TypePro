@@ -36,7 +36,7 @@ def test_control_flow_keeps_none_and_exception_paths():
     assert 'return None' in code and 'finally:' in code and 'return\n' in code
 
 
-@pytest.mark.parametrize('statement', ['logger.info("start")', 'exec(code)', 'other = obj.attribute', 'def nested():\n  return 1'])
+@pytest.mark.parametrize('statement', ['exec(code)', 'def nested():\n  return 1'])
 def test_opaque_effects_fall_back(statement):
     original = function('def f(value):\n ' + statement.replace('\n', '\n ') + '\n return value\n')
     reduced = reduce_function(original, ['value'])
@@ -162,9 +162,10 @@ def test_exporter_callee_binding_and_full_fallback(tmp_path, monkeypatch, call, 
     text = result['interprocedural_slice']
     assert 'HiddenGold' not in text
     assert 'unused_target' not in text
-    assert ('unused = 72' in text) == fallback
+    assert 'unused = 72' not in text
+    assert 'return item * count' not in text
     diagnostics = result['recommendation_diagnostics']['context_reduction']
-    assert any(d.get('callee') == 'app.helper' and (d['mode'] == 'full_fallback') == fallback for d in diagnostics)
+    assert any(d.get('callee') == 'app.helper' and d['mode'] == 'signature_only' for d in diagnostics)
 
 
 def test_exporter_unchanged_shared_kb_across_annotation_and_label_changes(tmp_path, monkeypatch):

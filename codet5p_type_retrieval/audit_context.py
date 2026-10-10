@@ -7,7 +7,7 @@ from pathlib import Path
 
 from preprocess_generative import format_input
 
-POLICY = 'ast-context-v2-resolved-callees-bounded-candidates'
+POLICY = 'ast-context-v3-recursive-signature-first'
 MASKING = 'typepro-shared-kb-masked-source-v7-resolved-bounded-context'
 MAX_DEFINITION_CHARS = 16000
 

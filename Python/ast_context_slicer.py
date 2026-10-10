@@ -1,7 +1,7 @@
 """Conservative, non-executing AST context reduction.
 
-Compound statements stay whole. Unknown binding/effects retain whole functions;
-this is evidence selection, not an executable program transformation.
+Blocks are reduced recursively. This selects type evidence, not an executable
+program transformation; unknown dynamic scope effects are reported explicitly.
 """
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 FUNCTIONS = (ast.FunctionDef, ast.AsyncFunctionDef)
-POLICY = 'ast-context-v2-resolved-callees-bounded-candidates'
+POLICY = 'ast-context-v3-recursive-signature-first'
 CANDIDATE_DEFINITION_MAX_CHARS = 16000
 
 
@@ -55,63 +55,176 @@ class Reduction:
         return dict(mode=self.mode, reason=self.reason, before=self.before, after=self.after)
 
 
-def reduce_function(function, parameters=(), returns=False):
-    """Keep a conservative connected dependency component at statement level.
+def reduce_function(function, parameters=(), returns=False, *, seed_calls=(), include_exits=True):
+    """Select evidence recursively, keeping enclosing control dependencies.
 
-    All possible writes are retained (including redefinitions). Calls touching
-    selected objects retain side effects. Blocks and control transfers remain
-    whole, including early returns that could affect an implicit None path.
+    Target exits are preserved by default. Parameter-only callee supplements
+    can disable exit seeds; callers seed the exact resolved call instead.
     """
+    return _reduce_recursive(function, parameters, returns, seed_calls, include_exits)
+
+
+def data_names(node):
+    """Value and callable dependencies, excluding annotation labels."""
+    found = set()
+    def visit(child):
+        if isinstance(child, ast.Name):
+            found.add(child.id)
+        for field, value in ast.iter_fields(child):
+            if field in {'annotation', 'returns'}:
+                continue
+            if isinstance(value, ast.AST):
+                visit(value)
+            elif isinstance(value, list):
+                for item in value:
+                    if isinstance(item, ast.AST):
+                        visit(item)
+    visit(node)
+    return found
+
+
+def _reduce_recursive(function, parameters, returns, seed_calls, include_exits):
     result = ast.parse(ast.unparse(function)).body[0]
-    before = len(function.body)
+    before = sum(isinstance(n, ast.stmt) for s in function.body for n in ast.walk(s))
     for statement in function.body:
         reason = effect_reason(statement)
         if reason:
             return Reduction(result, 'full_fallback', reason, before, before)
-    live = set(parameters)
-    selected = set()
-    # Returns/raises/control blocks must survive even when not mentioning a
-    # parameter: they govern whether its uses are reachable.
-    control = (ast.If, ast.For, ast.AsyncFor, ast.While, ast.Try, ast.With, ast.AsyncWith)
-    if hasattr(ast, 'Match'):
-        control += (ast.Match,)
-    if hasattr(ast, 'TryStar'):
-        control += (ast.TryStar,)
-    refs = [body_names(s) for s in function.body]
-    for i, statement in enumerate(function.body):
-        has_exit = any(isinstance(n, (ast.Return, ast.Raise, ast.Yield, ast.YieldFrom))
-                       for n in ast.walk(statement))
-        if isinstance(statement, control) or has_exit:
-            selected.add(i)
-            live.update(refs[i])
+    # Work with original identities, then copy only selected statements.
+    nodes, parents, headers = [], {}, {}
+    def collect(body, ancestors=()):
+        for statement in body:
+            nodes.append(statement)
+            parents[id(statement)] = ancestors
+            lists = []
+            header = copy.copy(statement)
+            for field, value in ast.iter_fields(statement):
+                if isinstance(value, list) and value and all(isinstance(x, ast.stmt) for x in value):
+                    lists.append(value)
+                    setattr(header, field, [])
+            if isinstance(statement, (ast.Try, getattr(ast, 'TryStar', ast.Try))):
+                header.handlers = []
+                for handler in statement.handlers:
+                    # Handler type/name are dependencies when its body survives.
+                    collect(handler.body, (*ancestors, statement))
+            if isinstance(statement, ast.Match):
+                header.cases = []
+                for case in statement.cases:
+                    collect(case.body, (*ancestors, statement))
+            headers[id(statement)] = header
+            for child_body in lists:
+                collect(child_body, (*ancestors, statement))
+    collect(function.body)
+    compound = {id(s) for ancestors in parents.values() for s in ancestors}
+    references = {id(s): data_names(headers[id(s)]) for s in nodes}
+    writes, receivers = {}, {}
+    flow = set(parameters)
+    for s in nodes:
+        header = headers[id(s)]
+        writes[id(s)] = {n.id for n in ast.walk(header) if isinstance(n, ast.Name) and isinstance(n.ctx, (ast.Store, ast.Del))}
+        receivers[id(s)] = set().union(*(data_names(n.value) for n in ast.walk(header)
+            if isinstance(n, (ast.Attribute, ast.Subscript))))
+    changed = True
+    while changed:
+        previous = set(flow)
+        for s in nodes:
+            if isinstance(s, (ast.Assign, ast.AnnAssign)) and s.value is not None and data_names(s.value) & flow:
+                flow.update(writes[id(s)])
+            elif isinstance(s, (ast.For, ast.AsyncFor)) and data_names(s.iter) & flow:
+                flow.update(data_names(s.target))
+            elif isinstance(s, (ast.With, ast.AsyncWith)):
+                for item in s.items:
+                    if data_names(item.context_expr) & flow and item.optional_vars is not None:
+                        flow.update(data_names(item.optional_vars))
+            elif isinstance(s, ast.Match) and data_names(s.subject) & flow:
+                flow.update(n.name for case in s.cases for n in ast.walk(case.pattern)
+                            if isinstance(n, (ast.MatchAs, ast.MatchStar)) and n.name)
+        changed = previous != flow
+    selected, live = set(), set(parameters)
+    seeds = {id(call) for call in seed_calls}
+    effect_objects = set(parameters)
+    for call in seed_calls:
+        for value in [*call.args, *(k.value for k in call.keywords)]:
+            effect_objects.update(data_names(value))
+    if returns or (include_exits and not seeds):
+        for s in nodes:
+            if isinstance(s, (ast.Return, ast.Yield, ast.YieldFrom)) and s.value is not None:
+                effect_objects.update(data_names(s.value))
+    changed = True
+    while changed:
+        previous = set(effect_objects)
+        for s in nodes:
+            if isinstance(s, (ast.Assign, ast.AnnAssign)) and isinstance(s.value, ast.Name) and s.value.id in effect_objects:
+                effect_objects.update(writes[id(s)])
+        changed = previous != effect_objects
+    def choose(statement):
+        selected.add(id(statement))
+        live.update(references[id(statement)])
+        for parent in parents[id(statement)]:
+            selected.add(id(parent))
+            live.update(references[id(parent)])
+            if isinstance(parent, ast.Try):
+                for handler in parent.handlers:
+                    if handler.type is not None:
+                        live.update(data_names(handler.type))
+            if isinstance(parent, ast.Match):
+                for case in parent.cases:
+                    live.update(data_names(case.pattern))
+                    if case.guard is not None:
+                        live.update(data_names(case.guard))
+    for statement in nodes:
+        if id(statement) in compound:
+            if references[id(statement)] & flow:
+                choose(statement)
+            continue
+        has_exit = any(isinstance(n, (ast.Return, ast.Raise, ast.Yield, ast.YieldFrom)) for n in ast.walk(statement))
+        early_exit = seeds and isinstance(statement, (ast.Return, ast.Raise)) and statement.lineno <= max(call.lineno for call in seed_calls)
+        if (not seeds and (include_exits or returns) and has_exit) or early_exit or any(id(n) in seeds for n in ast.walk(statement)):
+            choose(statement)
     if not live and not selected:
         return Reduction(result, 'full_fallback', 'no_dependency_seed', before, before)
     while True:
         previous = (len(selected), len(live))
-        for i, ref in enumerate(refs):
-            if ref & live:
-                selected.add(i)
-                live.update(ref)
+        for statement in nodes:
+            if id(statement) in compound:
+                continue
+            ref = references[id(statement)]
+            # Preserve loop exits and early function exits affecting selected
+            # evidence, but never retain an unrelated block just for its header.
+            transfer = isinstance(statement, (ast.Break, ast.Continue, ast.Return, ast.Raise))
+            affects_control = transfer and any(id(p) in selected for p in parents[id(statement)])
+            possible_mutation = any(isinstance(n, ast.Call) and any(data_names(v) & effect_objects
+                for v in [*n.args, *(k.value for k in n.keywords)]) for n in ast.walk(statement))
+            if ref & flow or writes[id(statement)] & live or receivers[id(statement)] & live or affects_control or possible_mutation:
+                choose(statement)
         if previous == (len(selected), len(live)):
             break
-    # Only discard inert local literal declarations in v1. An unrelated call,
-    # attribute access/operator, delete or external store may affect state or
-    # control flow. Unknown effects require whole-function fallback.
-    for i, statement in enumerate(function.body):
-        if i not in selected:
-            value = getattr(statement, 'value', None)
-            targets = statement.targets if isinstance(statement, ast.Assign) else (
-                [statement.target] if isinstance(statement, ast.AnnAssign) else [])
-            inert = bool(targets) and all(isinstance(t, ast.Name) for t in targets)
-            def literal(n):
-                return isinstance(n, ast.Constant) or isinstance(n, (ast.Tuple, ast.List, ast.Set)) and all(literal(e) for e in n.elts) or isinstance(n, ast.Dict) and all(k is not None and literal(k) and literal(v) for k, v in zip(n.keys, n.values))
-            inert = inert and (value is None or literal(value))
-            if not inert:
-                return Reduction(result, 'full_fallback', 'unresolved_side_effect', before, before)
-    result.body = [s for i, s in enumerate(result.body) if i in selected] or [ast.Pass()]
+    def render(body):
+        output = []
+        for statement in body:
+            if id(statement) not in selected:
+                continue
+            cloned = copy.copy(statement)
+            for field, value in ast.iter_fields(statement):
+                if isinstance(value, list) and value and all(isinstance(x, ast.stmt) for x in value):
+                    setattr(cloned, field, render(value) or ([ast.Pass()] if field == 'body' else []))
+            if isinstance(statement, (ast.Try, getattr(ast, 'TryStar', ast.Try))):
+                cloned.handlers = [copy.copy(h) for h in statement.handlers]
+                for original, handler in zip(statement.handlers, cloned.handlers):
+                    handler.body = render(original.body) or [ast.Pass()]
+                if not cloned.handlers and not cloned.finalbody:
+                    cloned.finalbody = [ast.Pass()]
+            if isinstance(statement, ast.Match):
+                cloned.cases = [copy.copy(c) for c in statement.cases]
+                for original, case in zip(statement.cases, cloned.cases):
+                    case.body = render(original.body) or [ast.Pass()]
+            output.append(cloned)
+        return output
+    result.body = render(function.body) or [ast.Pass()]
     ast.fix_missing_locations(result)
     ast.parse(ast.unparse(result))
-    return Reduction(result, 'sliced', '', before, len(result.body))
+    after = sum(isinstance(n, ast.stmt) for s in result.body for n in ast.walk(s))
+    return Reduction(result, 'sliced', '', before, after)
 
 
 def bind_arguments(function, call):

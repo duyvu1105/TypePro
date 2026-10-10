@@ -109,7 +109,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--retrieval-schema-version",
-        default="typepro-project-kb-top10-generative-v11-resolved-bounded-context",
+        default="typepro-project-kb-top10-generative-v12-recursive-signature-first",
         help="Invalidates restored raw slices when recommendation logic changes",
     )
     parser.add_argument(
@@ -818,7 +818,8 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
     previous_runtime_path = work_dir / 'runtime_manifest.json'
     previous_runtime = (json.loads(previous_runtime_path.read_text(encoding='utf-8'))
                         if previous_runtime_path.exists() else {})
-    if previous_runtime.get('retrieval_schema_version') != args.retrieval_schema_version:
+    if (previous_runtime.get('retrieval_schema_version') != args.retrieval_schema_version
+            or previous_runtime.get('context_policy_version') != 'ast-context-v3-recursive-signature-first'):
         # Keep source/download caches, but never skip old completed outputs.
         args.force_projects = True
     write_json(work_dir / "runtime_manifest.json", {
@@ -841,7 +842,7 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
         "only_project_list": str(args.only_project_list.resolve()) if args.only_project_list else None,
         "only_project_count": len(only_projects) if only_projects is not None else None,
         "retrieval_schema_version": args.retrieval_schema_version,
-        "context_policy_version": "ast-context-v2-resolved-callees-bounded-candidates",
+        "context_policy_version": "ast-context-v3-recursive-signature-first",
         "candidate_definition_max_chars": 16000,
         "project_revision_lock": str(args.project_revision_lock.resolve()) if args.project_revision_lock else None,
         "project_revision_lock_sha256": sha256_file(args.project_revision_lock) if args.project_revision_lock else None,
@@ -902,6 +903,7 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
             output_path.exists() and status_path.exists() and project_kb_path.exists()
             and not args.force_projects
             and existing_status.get('retrieval_schema_version') == args.retrieval_schema_version
+            and existing_status.get('context_policy_version') == 'ast-context-v3-recursive-signature-first'
             and (not expected_commit or existing_status.get('commit') == expected_commit)
         ):
             counters["skipped_complete"] += 1
@@ -1036,7 +1038,7 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
                 "project": project,
                 "commit": commit,
                 "retrieval_schema_version": args.retrieval_schema_version,
-                "context_policy_version": "ast-context-v2-resolved-callees-bounded-candidates",
+                "context_policy_version": "ast-context-v3-recursive-signature-first",
                 "candidate_definition_max_chars": 16000,
                 "annotations": len(project_rows),
                 "exported": exported,

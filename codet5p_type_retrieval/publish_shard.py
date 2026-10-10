@@ -68,9 +68,9 @@ def package_shard(work_dir: Path, payload_dir: Path) -> tuple[Path, dict[str, An
     manifest = read_manifest(work_dir)
     runtime_path = work_dir / 'runtime_manifest.json'
     runtime = json.loads(runtime_path.read_text(encoding='utf-8'))
-    if runtime.get('retrieval_schema_version') == 'typepro-project-kb-top10-generative-v11-resolved-bounded-context' and runtime.get('context_policy_version') != 'ast-context-v2-resolved-callees-bounded-candidates':
-        raise RuntimeError('Missing resolved context policy for v11 shard')
-    if runtime.get('context_policy_version') == 'ast-context-v2-resolved-callees-bounded-candidates':
+    if runtime.get('retrieval_schema_version') == 'typepro-project-kb-top10-generative-v12-recursive-signature-first' and runtime.get('context_policy_version') != 'ast-context-v3-recursive-signature-first':
+        raise RuntimeError('Missing recursive signature-first context policy for v12 shard')
+    if runtime.get('context_policy_version') == 'ast-context-v3-recursive-signature-first':
         from audit_context import audit
         report = audit(work_dir / 'raw_slices')
         (work_dir / 'context_audit.json').write_text(json.dumps(report, indent=2), encoding='utf-8')
