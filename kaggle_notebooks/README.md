@@ -37,6 +37,9 @@ Split parts now have separate kernel IDs ending in `-part-01`, etc. Each
 account starts at most five jobs, then submits remaining jobs when slots are free.
 Local credentials map to `kaggle.json`, `kaggle2.json`, `kaggle3.json` in that
 order. Never print keys or commit credentials.
+Automatic resume is optional: if a previous Dataset lists successfully but its
+archive cannot be downloaded, the notebook starts a fresh build. Downloaded
+archives still require matching coordinates and retrieval schema before reuse.
 
 ```powershell
 python kaggle_notebooks/generate_notebooks.py --shards 10 --runner-accounts duyvu1105 duymign vdduy1105 --dataset-owner duyvu1105

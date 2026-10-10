@@ -58,3 +58,7 @@ Không có tổng ngân sách candidate mới: 10 definition có thể cộng t�
 Chờ tiếp: **4/10, 5/10, 17/20, 89/90**. Kernel version/status thực tế sẽ ghi vào báo cáo triển khai sau khi push; nhận submission chưa chứng minh Dataset hoàn thành.
 
 Các thay đổi publisher final/republish đã có trong workspace từ lượt trước được kiểm tra cùng suite; đợt này không chạy final republish hoặc merge.
+
+## Phát hiện khi xác minh Kaggle
+
+Partition 2/20 v12 dừng trước slicing: Dataset cũ liệt kê được nhưng download trả HTTP 404. Sửa generator để bước resume tùy chọn khi download thất bại thì build mới; chỉ retry riêng 2/20. Không thay thuật toán context hoặc schema giữa đợt đầu và retry. Thêm test thực thi cell resume với listing thành công/download thất bại. Sau sửa: **204 passed, 2 skipped**; notebook sinh lại qua generator, dry-run riêng 2/20 trước push.

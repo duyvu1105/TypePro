@@ -26,6 +26,27 @@ def source_with_tag(notebook, tag):
     return cells[0]["source"]
 
 
+def test_optional_resume_download_failure_starts_fresh(tmp_path, monkeypatch, capsys):
+    from types import SimpleNamespace
+    notebook = generate_notebooks.shard_notebook(0, 10, 'https://github.com/duyvu1105/TypePro.git', 'main', assigned_shards=[0], expected_dataset_owner='duyvu1105')
+    source = next(c['source'] for c in notebook['cells'] if c['cell_type'] == 'code' and 'resume_dir = Path' in c['source'])
+    source = source.replace('Path(f"/kaggle/working/resume_shard_{SHARD_INDEX:02d}")', 'Path(resume_test_path)')
+    commands = []
+    def run(command, **kwargs):
+        commands.append(command)
+        return SimpleNamespace(returncode=0 if 'files' in command else 1)
+    monkeypatch.setattr(subprocess, 'run', run)
+    work = tmp_path / 'work'
+    exec(compile(source, '<resume-cell>', 'exec'), {
+        'Path': Path, 'subprocess': subprocess, 'publish_username': 'duyvu1105',
+        'SHARD_INDEX': 2, 'SHARD_COUNT': 20, 'WORK_DIR': work,
+        'resume_test_path': str(tmp_path / 'resume'),
+    })
+    assert len(commands) == 2
+    assert not work.exists()
+    assert 'starting fresh' in capsys.readouterr().out
+
+
 def test_standalone_notebook_locks_publish_owner_and_single_shard():
     notebook = generate_notebooks.shard_notebook(
         0,

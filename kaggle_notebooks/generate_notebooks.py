@@ -645,45 +645,50 @@ def shard_notebook(
             or any((WORK_DIR / "project_status").glob("*.json"))
         )
         if probe.returncode == 0 and not has_work:
-            run(["kaggle", "datasets", "download", "-d", dataset_id, "-p", resume_dir, "--unzip"])
-            markers = list(resume_dir.rglob("shard_manifest.json"))
-            if not markers:
-                archives = list(resume_dir.rglob("typepro_build_shard_*.zip"))
-                if len(archives) != 1:
-                    raise RuntimeError(
-                        f"Expected one shard directory or archive, found markers={markers}, archives={archives}"
-                    )
-                with zipfile.ZipFile(archives[0]) as bundle:
-                    bundle.extractall(resume_dir)
-                markers = list(resume_dir.rglob("shard_manifest.json"))
-            if len(markers) != 1:
-                raise RuntimeError(f"Cannot uniquely locate restored shard: {markers}")
-            source_build = markers[0].parent
-            restored_manifest = json.loads(markers[0].read_text(encoding="utf-8"))
-            restored_runtime_path = source_build / "runtime_manifest.json"
-            restored_runtime = (
-                json.loads(restored_runtime_path.read_text(encoding="utf-8"))
-                if restored_runtime_path.exists() else {}
-            )
-            if (
-                restored_manifest.get("shard_index") != SHARD_INDEX
-                or restored_manifest.get("shard_count") != SHARD_COUNT
-                or restored_runtime.get("retrieval_schema_version")
-                != RETRIEVAL_SCHEMA_VERSION
-            ):
-                print(
-                    "Ignoring an incompatible previous shard Dataset; starting fresh:",
-                    {
-                        "manifest": restored_manifest,
-                        "retrieval_schema_version": restored_runtime.get(
-                            "retrieval_schema_version"
-                        ),
-                        "expected_retrieval_schema_version": RETRIEVAL_SCHEMA_VERSION,
-                    },
-                )
+            download = subprocess.run(["kaggle", "datasets", "download", "-d", dataset_id, "-p", str(resume_dir), "--unzip"])
+            if download.returncode != 0:
+                # Resume is optional. An existing listing may still have no
+                # downloadable archive (404); rebuild instead of aborting.
+                print("Previous shard download unavailable; starting fresh", dataset_id)
             else:
-                shutil.copytree(source_build, WORK_DIR, dirs_exist_ok=True)
-                print("Restored previous shard state:", WORK_DIR)
+                markers = list(resume_dir.rglob("shard_manifest.json"))
+                if not markers:
+                    archives = list(resume_dir.rglob("typepro_build_shard_*.zip"))
+                    if len(archives) != 1:
+                        raise RuntimeError(
+                            f"Expected one shard directory or archive, found markers={markers}, archives={archives}"
+                        )
+                    with zipfile.ZipFile(archives[0]) as bundle:
+                        bundle.extractall(resume_dir)
+                    markers = list(resume_dir.rglob("shard_manifest.json"))
+                if len(markers) != 1:
+                    raise RuntimeError(f"Cannot uniquely locate restored shard: {markers}")
+                source_build = markers[0].parent
+                restored_manifest = json.loads(markers[0].read_text(encoding="utf-8"))
+                restored_runtime_path = source_build / "runtime_manifest.json"
+                restored_runtime = (
+                    json.loads(restored_runtime_path.read_text(encoding="utf-8"))
+                    if restored_runtime_path.exists() else {}
+                )
+                if (
+                    restored_manifest.get("shard_index") != SHARD_INDEX
+                    or restored_manifest.get("shard_count") != SHARD_COUNT
+                    or restored_runtime.get("retrieval_schema_version")
+                    != RETRIEVAL_SCHEMA_VERSION
+                ):
+                    print(
+                        "Ignoring an incompatible previous shard Dataset; starting fresh:",
+                        {
+                            "manifest": restored_manifest,
+                            "retrieval_schema_version": restored_runtime.get(
+                                "retrieval_schema_version"
+                            ),
+                            "expected_retrieval_schema_version": RETRIEVAL_SCHEMA_VERSION,
+                        },
+                    )
+                else:
+                    shutil.copytree(source_build, WORK_DIR, dirs_exist_ok=True)
+                    print("Restored previous shard state:", WORK_DIR)
         else:
             print("Starting new shard or using current working state")
         """),
