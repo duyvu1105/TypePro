@@ -13,6 +13,14 @@ the historical two-account workflow documented later in this file.
 Final merge remains under `duyvu1105`. The authoritative inputs are the 19
 entries in `shard_merge_plan.json`. Shard 2 retains 2/20, while 12/20 is replaced
 by 12/40 and 32/40. All other physical coordinates are preserved.
+
+Final publication packages KBs with explicit full paths. Projects whose names
+collide case-insensitively receive distinct hash suffixes in the archive; all
+original KB contents are preserved. `project_kb_index.json` maps each original
+`owner__repo` spelling to its published KB path. Consumers should use this index
+when present, falling back to `project_kb/<owner>__<repo>/knowledge_base.json`
+for older Datasets. The publisher waits for the published version number to
+advance; `ready` from an older version does not establish publication success.
 The two new kernels end in `-part-02-subpart-01` and `-part-02-subpart-02`;
 their private Dataset slugs end in `-12-of-40` and `-32-of-40`, avoiding writes
 from the retired 12/20 kernel. Render/push these with `--shard 2 --part 2`

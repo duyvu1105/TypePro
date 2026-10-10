@@ -25,6 +25,8 @@ def main() -> None:
     split_projects = {split: set() for split in ("train", "validation", "test")}
     kb_key_cache: dict[Path, set[str]] = {}
     kb_root = root / "project_kb"
+    index_path = root / "project_kb_index.json"
+    kb_index = json.loads(index_path.read_text(encoding="utf-8")) if index_path.exists() else {}
     kb_available = kb_root.is_dir()
     if not kb_available:
         print("project_kb is absent; skipping project KB cross-checks", flush=True)
@@ -76,11 +78,11 @@ def main() -> None:
                     errors.append(f"{split}:{line_number}: tagged input is incomplete")
                     break
                 if kb_available:
-                    kb_path = (
-                        kb_root /
-                        str(row["project"]).replace("/", "__") /
-                        "knowledge_base.json"
-                    )
+                    slug = str(row["project"]).replace("/", "__")
+                    kb_path = root / kb_index.get(slug, f"project_kb/{slug}/knowledge_base.json")
+                    if not kb_path.resolve().is_relative_to(kb_root.resolve()):
+                        errors.append(f"{split}:{line_number}: KB path escapes project_kb")
+                        break
                     if not kb_path.exists():
                         errors.append(f"{split}:{line_number}: missing project KB {kb_path}")
                         break
@@ -132,3 +134,7 @@ def main() -> None:
     if errors:
         raise SystemExit("Dataset verification failed:\n- " + "\n- ".join(errors))
     print(json.dumps({"verified": True, "schema": manifest["schema_version"], "output": manifest["output"]}, indent=2))
+
+
+if __name__ == "__main__":
+    main()

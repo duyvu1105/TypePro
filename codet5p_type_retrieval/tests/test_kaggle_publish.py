@@ -32,7 +32,7 @@ def test_final_publisher_archives_project_kbs(tmp_path, monkeypatch):
     calls = []
     monkeypatch.setattr(publish_kaggle, "publish_dataset", lambda *a, **kw: calls.append(kw))
     publish_kaggle.main()
-    assert calls == [{"public": False, "directory_mode": "zip"}]
+    assert calls == [{"public": False}]
 
 
 @pytest.mark.parametrize('index', [12, 32])
@@ -147,6 +147,7 @@ def test_publish_selects_create_or_repair_version(
         stdout = "accepted"
 
     monkeypatch.setattr(kaggle_dataset_utils.shutil, "which", lambda _: "kaggle")
+    monkeypatch.setattr(kaggle_dataset_utils, "_current_version", lambda _: 15)
     monkeypatch.setattr(
         kaggle_dataset_utils,
         "_owned_dataset_exists",
@@ -300,3 +301,77 @@ def test_package_rejects_case_insensitive_merge_collision(tmp_path):
     (work / "raw_slices" / "OWNER__REPO.jsonl").write_text("{}\n", encoding="utf-8")
     with pytest.raises(RuntimeError, match="Case-insensitive path collision"):
         package_shard(work, tmp_path / "payload")
+
+def test_final_packaging_preserves_case_colliding_kbs(tmp_path):
+    from publish_kaggle import package_final
+    source = tmp_path / 'source'
+    payload = tmp_path / 'payload'
+    for slug, text in [('Stra\u00dfe__Repo', 'first'), ('strasse__repo', 'second'), ('other__repo', 'third')]:
+        kb = source / 'project_kb' / slug
+        kb.mkdir(parents=True)
+        (kb / 'knowledge_base.json').write_text(text)
+    (source / 'train.jsonl').write_text('rows')
+    index = package_final(source, payload)
+    with zipfile.ZipFile(payload / 'project_kb.zip') as bundle:
+        names = bundle.namelist()
+        assert len(names) == len({name.casefold() for name in names}) == 3
+        assert bundle.read(index['Stra\u00dfe__Repo']) == b'first'
+        assert bundle.read(index['strasse__repo']) == b'second'
+    assert index['other__repo'] == 'project_kb/other__repo/knowledge_base.json'
+    assert json.loads((payload / 'project_kb_index.json').read_text(encoding='utf-8')) == index
+    assert (payload / 'train.jsonl').read_text() == 'rows'
+
+
+def test_ready_old_version_is_not_publish_success(monkeypatch):
+    monkeypatch.setattr(kaggle_dataset_utils, '_status', lambda _: ('ready', 'old version ready'))
+    versions = iter([15, 15, 16])
+    monkeypatch.setattr(kaggle_dataset_utils, '_current_version', lambda _: next(versions))
+    sleeps = []
+    monkeypatch.setattr(kaggle_dataset_utils.time, 'sleep', lambda _: sleeps.append(True))
+    assert kaggle_dataset_utils.wait_for_status('owner/dataset', newer_than=15) == 'ready'
+    assert len(sleeps) == 2
+
+
+def test_ready_old_version_times_out(monkeypatch):
+    monkeypatch.setattr(kaggle_dataset_utils, '_status', lambda _: ('ready', 'old ready'))
+    monkeypatch.setattr(kaggle_dataset_utils, '_current_version', lambda _: 15)
+    ticks = iter([0, 0, 0, 2])
+    monkeypatch.setattr(kaggle_dataset_utils.time, 'monotonic', lambda: next(ticks))
+    monkeypatch.setattr(kaggle_dataset_utils.time, 'sleep', lambda _: None)
+    with pytest.raises(TimeoutError):
+        kaggle_dataset_utils.wait_for_status('owner/dataset', newer_than=15, timeout_seconds=1)
+
+
+def test_verify_cli_resolves_published_kb_index(tmp_path):
+    import hashlib
+    import subprocess
+    project = 'AleNriG/Sims'
+    row = {
+        'project': project, 'split': 'train', 'target_name': 'x',
+        'target_function': 'f', 'target_scope': 'arg', 'interprocedural_slice': 'x',
+        'recommendation_types': [{'type': 'Item', 'definition': 'class Item: pass'}],
+        'label': 'Item',
+        'input': '[TARGET_NAME][TARGET_FUNCTION][TARGET_SCOPE][INTERPROCEDURAL_SLICE]'
+                 '[RECOMMENDATION_TYPES][TYPE][DEFINITION]',
+    }
+    manifest = {'schema_version': 'typepro-codet5p-generative-project-kb-v2',
+                'projects': {'knowledge_bases': 1}, 'output': {}}
+    for split in ('train', 'validation', 'test'):
+        path = tmp_path / f'{split}.jsonl'
+        path.write_text(json.dumps(row) + '\n' if split == 'train' else '', encoding='utf-8')
+        manifest['output'][split] = {'file': path.name, 'rows': int(split == 'train'),
+                                    'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
+    (tmp_path / 'manifest.json').write_text(json.dumps(manifest))
+    relative = 'project_kb/AleNriG__Sims--unique/knowledge_base.json'
+    kb = tmp_path / relative
+    kb.parent.mkdir(parents=True)
+    kb.write_text(json.dumps({'records': [{'name': 'Item'}]}))
+    (tmp_path / 'project_kb_index.json').write_text(json.dumps({'AleNriG__Sims': relative}))
+    command = [sys.executable, str(PIPELINE_DIR / 'verify_dataset.py'), '--data-dir', str(tmp_path)]
+    result = subprocess.run(command, capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert '"verified": true' in result.stdout
+    kb.unlink()
+    result = subprocess.run(command, capture_output=True, text=True)
+    assert result.returncode != 0
+    assert 'missing project KB' in result.stderr

@@ -20,6 +20,7 @@ FORBIDDEN_MARKERS = ("403", "forbidden")
 PUBLISH_ERROR_MARKERS = (
     "dataset creation error:",
     "dataset version creation error:",
+    "error during creation:",
 )
 
 
@@ -200,12 +201,25 @@ def _status(dataset_id: str) -> tuple[str, str]:
     return "exists", output
 
 
+def _current_version(dataset_id: str) -> int:
+    from kaggle.api.kaggle_api_extended import KaggleApi
+
+    api = KaggleApi()
+    api.authenticate()
+    owner, slug = dataset_id.split("/", 1)
+    for item in api.dataset_list(user=owner, search=slug):
+        if item.ref.casefold() == dataset_id.casefold():
+            return int(item.current_version_number or 0)
+    return 0
+
+
 def wait_for_status(
     dataset_id: str,
     *,
     timeout_seconds: int = 900,
     poll_seconds: int = 10,
     allow_initial_stale_failure: bool = False,
+    newer_than: int | None = None,
 ) -> str:
     started = time.monotonic()
     deadline = time.monotonic() + timeout_seconds
@@ -214,7 +228,9 @@ def wait_for_status(
         state, detail = _status(dataset_id)
         last_state = state
         if state in {"ready", "exists"}:
-            return state
+            if newer_than is None or _current_version(dataset_id) > newer_than:
+                return state
+            print(f"Published version has not advanced beyond {newer_than}; waiting", flush=True)
         if (
             state == "failed"
             and allow_initial_stale_failure
@@ -272,6 +288,7 @@ def publish_dataset(
             wait_for_status(dataset_id)
             state, _ = _status(dataset_id)
 
+    previous_version = _current_version(dataset_id) if dataset_exists else 0
     common = ["-p", str(data_dir), "--dir-mode", directory_mode]
     if state == "missing":
         command = ["kaggle", "datasets", "create", *common]
@@ -287,7 +304,9 @@ def publish_dataset(
     # Kaggle CLI 2.2.4 can print a server-side creation error while returning
     # exit code 0, so checking only returncode would incorrectly report success.
     _raise_for_publish_error(result, dataset_id, operation)
-    wait_for_status(dataset_id, allow_initial_stale_failure=True)
+    wait_for_status(
+        dataset_id, allow_initial_stale_failure=True, newer_than=previous_version
+    )
     url = f"https://www.kaggle.com/datasets/{dataset_id}"
     print(f"Dataset {operation} successfully: {url}", flush=True)
     return url
