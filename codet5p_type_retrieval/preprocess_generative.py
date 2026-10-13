@@ -5,6 +5,7 @@ import argparse
 import hashlib
 import json
 import os
+import sys
 from collections import Counter
 from pathlib import Path
 from typing import Any, Iterable
@@ -12,7 +13,8 @@ from type_labels import normalize_type_label
 
 
 SPLITS = ("train", "validation", "test")
-CANDIDATE_DEFINITION_MAX_CHARS = 16000
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'Python'))
+from ast_context_slicer import CANDIDATE_DEFINITION_MAX_CHARS, limit_candidate_definition
 
 
 def iter_records(path: Path) -> Iterable[dict[str, Any]]:
@@ -61,7 +63,7 @@ def normalized_recommendations(row: dict[str, Any], limit: int) -> list[dict[str
         seen.add(key)
         result.append({
             "type": name,
-            "definition": definition[:CANDIDATE_DEFINITION_MAX_CHARS],
+            "definition": limit_candidate_definition(definition)[0],
             **({"qualified_name": qualified} if qualified else {}),
         })
         if len(result) >= limit:

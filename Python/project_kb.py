@@ -11,15 +11,18 @@ import copy
 import json
 import math
 import re
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any, Iterable
 
 from project_index import module_name, python_files
 from target_context import MASK, mask_definition
-from ast_context_slicer import reduce_class, CANDIDATE_DEFINITION_MAX_CHARS
+from ast_context_slicer import reduce_class, CANDIDATE_DEFINITION_MAX_CHARS, limit_candidate_definition, static_body
+from type_aliases import declared_aliases
+from source_notes import class_notes, append_notes
 
 
-SCHEMA_VERSION = "typepro-project-kb-v5-full-class-source"
+SCHEMA_VERSION = "typepro-project-kb-v7-source-evidence"
 TYPE_WRAPPERS = {
     "Annotated", "Callable", "ClassVar", "Final", "Generic", "Literal",
     "Optional", "Protocol", "Type", "Union",
@@ -178,7 +181,15 @@ def build_project_kb(project_root: Path, imports_dir: Path | None = None, *, par
     else:
         parsed = parsed_files
     for path, module, source, tree in parsed:
-        for node in tree.body:
+        for alias_name, alias_value, declaration, constructor in declared_aliases(tree):
+            add_record(records, seen, {
+                'type': 'alias', 'kind': 'type_alias', 'name': alias_name,
+                'qualified_name': '.'.join(filter(None, (module, alias_name))),
+                'module': module, 'source': 'project', 'target': ast.unparse(alias_value),
+                'definition': ast.unparse(declaration), 'source_file': str(path),
+                'source_line': declaration.lineno, 'alias_constructor': constructor,
+            })
+        for node in static_body(tree.body):
             if isinstance(node, ast.ClassDef):
                 qualified = ".".join(filter(None, (module, node.name)))
                 stored_class = copy.deepcopy(node)
@@ -187,7 +198,8 @@ def build_project_kb(project_root: Path, imports_dir: Path | None = None, *, par
                 for method in ast.walk(stored_class):
                     if isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef)):
                         method.returns = None
-                definition = ast.unparse(stored_class)
+                notes = class_notes(source, node)
+                definition = append_notes(ast.unparse(stored_class), notes)
                 add_record(records, seen, {
                     "type": "class", "kind": "class", "name": node.name,
                     "qualified_name": qualified, "module": module,
@@ -195,6 +207,7 @@ def build_project_kb(project_root: Path, imports_dir: Path | None = None, *, par
                     # especially members beyond the old 16k cutoff. Stored
                     # once/project, not repeated as an extra field per row.
                     "source": "project", "definition": definition,
+                    'member_notes': notes,
                     **class_member_metadata(node),
                 })
             elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -219,16 +232,6 @@ def build_project_kb(project_root: Path, imports_dir: Path | None = None, *, par
                     "source": "project", "definition": signature,
                     "return_types": sorted(returns),
                 })
-            elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
-                if dotted_name(node.annotation).rsplit(".", 1)[-1] == "TypeAlias":
-                    target = ast.unparse(node.value) if node.value else ""
-                    qualified = ".".join(filter(None, (module, node.target.id)))
-                    add_record(records, seen, {
-                        "type": "alias", "kind": "type_alias", "name": node.target.id,
-                        "qualified_name": qualified, "module": module,
-                        "source": "project", "target": target,
-                        "definition": f"{node.target.id}: TypeAlias = {target}",
-                    })
             if isinstance(node, ast.ImportFrom) and node.module:
                 for alias in node.names:
                     if alias.name == "*":
@@ -332,6 +335,14 @@ def top_project_types(
         score += min(25, len(slice_tokens & words))
         if name.casefold() in slice_tokens:
             score += 100
+        if item.get('kind') == 'type_alias':
+            # Similarity is retrieval evidence only; it never inserts an alias
+            # into the slice or reads the masked target annotation.
+            compact_target = re.sub(r'[^a-z0-9]', '', target_name.casefold())
+            compact_alias = re.sub(r'[^a-z0-9]', '', name.casefold())
+            similarity = SequenceMatcher(None, compact_target, compact_alias).ratio()
+            if similarity >= .6:
+                score += 60 * similarity
         ranked.append((-score, qualified.casefold(), item, definition))
         matched = member_query & set(item.get("members", ()))
         method_matches = set((target_members or {}).get("methods", ())) & matched
@@ -373,9 +384,11 @@ def top_project_types(
                     constructed = False
                 query = {'methods': ['__init__'], 'attributes': []} if constructed else {}
             definition, reduction = reduce_class(definition, query)
+            if reduction.get('mode') == 'sliced':
+                definition = append_notes(definition, item.get('member_notes', {}), reduction.get('kept_members', ()))
         original_chars = len(str(item.get('definition') or item['name']))
         rendered_chars = len(definition)
-        definition = definition[:CANDIDATE_DEFINITION_MAX_CHARS]
+        definition, length_reduction = limit_candidate_definition(definition)
         result.append({
             "name": str(item["name"]),
             "qualified_name": str(item.get("qualified_name") or item["name"]),
@@ -386,6 +399,7 @@ def top_project_types(
                 "kb_chars": original_chars, "rendered_chars": rendered_chars,
                 "output_chars": len(definition), "truncated": rendered_chars > len(definition),
                 "max_chars": CANDIDATE_DEFINITION_MAX_CHARS,
+                **length_reduction,
             },
             **({'context_reduction': reduction} if reduction is not None else {}),
         })

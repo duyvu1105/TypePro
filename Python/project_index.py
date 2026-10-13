@@ -5,6 +5,7 @@ import ast
 import json
 import os
 import sys
+import subprocess
 from collections import defaultdict
 from pathlib import Path
 from typing import Iterable
@@ -40,6 +41,60 @@ def module_name(root: Path, path: Path) -> str:
     if parts and parts[-1] == "__init__":
         parts.pop()
     return ".".join(parts)
+
+
+def project_module_aliases(root: Path):
+    """Map repository symlinks to in-project modules, including Git link stubs.
+
+    Windows checkouts may store a Git symlink as a text file. Only Git mode
+    120000 proves such a file is a link; arbitrary text files are never guessed.
+    """
+    root = root.resolve()
+    links = set()
+    for directory, dirs, files in os.walk(root):
+        dirs[:] = [d for d in dirs if d not in SKIP_DIRECTORIES and not d.startswith('.')]
+        for name in [*dirs, *files]:
+            path = Path(directory) / name
+            if path.is_symlink():
+                links.add(path)
+    if (root / '.git').exists():
+        try:
+            result = subprocess.run(['git', '-C', str(root), 'ls-files', '--stage', '-z'],
+                                    capture_output=True, timeout=30)
+        except (OSError, subprocess.TimeoutExpired):
+            result = None
+        if result is not None and result.returncode == 0:
+            for entry in result.stdout.decode('utf-8', errors='replace').split('\0'):
+                if entry.startswith('120000 ') and '\t' in entry:
+                    links.add(root / entry.split('\t', 1)[1])
+    def logical_module(path):
+        relative = path.relative_to(root)
+        if relative.suffix in {'.py', '.pyi'}:
+            relative = relative.with_suffix('')
+        parts = list(relative.parts)
+        if parts and parts[0] == 'src':
+            parts.pop(0)
+        if parts and parts[-1] == '__init__':
+            parts.pop()
+        return '.'.join(parts)
+    result = {}
+    for link in sorted(links):
+        try:
+            if link.is_symlink():
+                target = link.resolve(strict=True)
+            elif link.is_file() and link.stat().st_size <= 4096:
+                destination = link.read_text(encoding='utf-8').strip()
+                target = (link.parent / destination).resolve(strict=True)
+            else:
+                continue
+            if not target.is_relative_to(root):
+                continue
+            alias, canonical = logical_module(link), logical_module(target)
+            if alias and canonical and alias != canonical:
+                result[alias] = canonical
+        except (OSError, UnicodeError, ValueError, RuntimeError):
+            continue
+    return result
 
 
 def qualified(module: str, scopes: Iterable[str], name: str) -> str:

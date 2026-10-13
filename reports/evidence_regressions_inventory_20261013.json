@@ -1,0 +1,1294 @@
+{
+  "scope": "supplied-pattern regression fixtures; no model inference",
+  "implementation_sha256": {
+    "ast_context_slicer.py": "0324917656888c26227dd9a3d87cde6aec3e94cac113c7e0182ed1e2eaa6158f",
+    "type_aliases.py": "581d62c9c7ddb524922c0ab1d5b2b3e305f171f2790b70f6d48ffcf329e4894d",
+    "slicing_code_class.py": "3c5737fd1fe1e8a4ca205b8c108c0de9e137ae4318a2b05413ef96dbaa33a31e",
+    "project_kb.py": "8d56a91f00abbbe052a5031d6aacb4c5122589c344fb6f444728582ae76f7141",
+    "project_index.py": "6245709669d8ce6e06d7319d04e1562588ced5330e4e3f453202cbb11d6ec009",
+    "function_methods.py": "dca89956f3b2cedaed8a1caa2f51f544b75844ffa2a713e9bce22af19eb444f3",
+    "export_slices.py": "f8d2cb17ac821f2b974b0bfc0dbd65dcc918cde40519bc0d7a39f87fd46c5bb9",
+    "target_context.py": "e882225eea1e103e6e56037855dde569a6e93eb1e4c65cfe94b7067f7445e52d",
+    "signature_contracts.py": "e9029a9814548825a586e0b39cec30434c8a11c5af2fb395d6fd0bdae5682c85",
+    "source_notes.py": "0eff16607ef0c6ea4847f9fa0c1c0ad0d079f8c153e9d43aacaeb5753033fa8c",
+    "import_analyzer.py": "4d62eccfd42eb57ea597ac50c328d495a5e5e18a945d831f9125338a39c3ce50",
+    "type_defined.py": "e67fb61acadc67f99046f726f08d59d2f00c193bafab3e9fb1e4f4965637ab14"
+  },
+  "passed": 9,
+  "total": 9,
+  "cases": [
+    {
+      "id": "superset_collection",
+      "project": "apache/incubator-superset",
+      "file": "superset/databases/utils.py",
+      "passed": true,
+      "checks": [
+        {
+          "where": "slice",
+          "evidence": "for fk in foreign_keys:",
+          "passed": true
+        },
+        {
+          "where": "slice",
+          "evidence": "fk['column_names'] = fk.pop('constrained_columns')",
+          "passed": true
+        },
+        {
+          "where": "slice",
+          "evidence": "fk['type'] = 'fk'",
+          "passed": true
+        },
+        {
+          "where": "slice",
+          "evidence": "target annotation masked",
+          "passed": true
+        },
+        {
+          "where": "source",
+          "evidence": "KB, shared AST and checkout unchanged",
+          "passed": true
+        },
+        {
+          "where": "candidates",
+          "evidence": "top-10 and 8k cap",
+          "passed": true
+        }
+      ],
+      "slice": "def get_foreign_keys_metadata(database: Any, table: Table) -> <mask>:\n    foreign_keys = database.get_foreign_keys(table)\n    for fk in foreign_keys:\n        fk['column_names'] = fk.pop('constrained_columns')\n        fk['type'] = 'fk'\n    return foreign_keys",
+      "candidates": [],
+      "diagnostics": {
+        "context_reduction": [
+          {
+            "component": "target",
+            "mode": "sliced",
+            "reason": "",
+            "before": 5,
+            "after": 5,
+            "retained_evidence": [
+              {
+                "kind": "collection_operation",
+                "source_line": 4,
+                "reason": "operation_on_relevant_collection_or_element"
+              },
+              {
+                "kind": "collection_operation",
+                "source_line": 5,
+                "reason": "operation_on_relevant_collection_or_element"
+              }
+            ]
+          },
+          {
+            "mode": "unresolved",
+            "reason": "shadowed_name_or_receiver",
+            "call": "database.get_foreign_keys"
+          },
+          {
+            "mode": "unresolved",
+            "reason": "shadowed_name_or_receiver",
+            "call": "fk.pop"
+          }
+        ],
+        "count": 0,
+        "target_members": {
+          "methods": [],
+          "attributes": []
+        },
+        "by_source": {},
+        "by_kind": {},
+        "timings_seconds": {
+          "read_parse_target": 0.0,
+          "file_import_analyzer": 0.0,
+          "slice_and_retrieval": 0.0,
+          "export_total": 0.0
+        },
+        "retrieval_counts": {}
+      }
+    },
+    {
+      "id": "workshop_range",
+      "project": "RacingTadpole/python-workshop",
+      "file": "t03_ducktypes.py",
+      "passed": true,
+      "checks": [
+        {
+          "where": "slice",
+          "evidence": "as_strings(range(1, 3))",
+          "passed": true
+        },
+        {
+          "where": "slice",
+          "evidence": "target annotation masked",
+          "passed": true
+        },
+        {
+          "where": "source",
+          "evidence": "KB, shared AST and checkout unchanged",
+          "passed": true
+        },
+        {
+          "where": "candidates",
+          "evidence": "top-10 and 8k cap",
+          "passed": true
+        }
+      ],
+      "slice": "from typing import Sequence\ndef as_strings(ints: <mask>) -> Sequence[str]:\n    return [str(x) for x in ints]\nas_strings(range(1, 3))",
+      "candidates": [],
+      "diagnostics": {
+        "context_reduction": [
+          {
+            "component": "target",
+            "mode": "sliced",
+            "reason": "",
+            "before": 1,
+            "after": 1,
+            "retained_evidence": [
+              {
+                "kind": "collection_operation",
+                "source_line": 3,
+                "reason": "operation_on_relevant_collection_or_element"
+              }
+            ]
+          },
+          {
+            "mode": "unresolved",
+            "reason": "ambiguous_or_missing_binding",
+            "call": "str"
+          },
+          {
+            "component": "caller",
+            "source_file": "<fixture_root>\\t03_ducktypes.py",
+            "source_line": 4,
+            "resolution": "resolved",
+            "scope": "module",
+            "reason_evidence": "resolved_argument_expression",
+            "mode": "sliced",
+            "reason": "",
+            "before": 1,
+            "after": 1,
+            "retained_evidence": [
+              {
+                "kind": "collection_operation",
+                "source_line": 4,
+                "reason": "operation_on_relevant_collection_or_element"
+              }
+            ]
+          }
+        ],
+        "count": 0,
+        "target_members": {
+          "methods": [],
+          "attributes": []
+        },
+        "by_source": {},
+        "by_kind": {},
+        "timings_seconds": {
+          "read_parse_target": 0.0,
+          "file_import_analyzer": 0.0,
+          "slice_and_retrieval": 0.016,
+          "exact_imports": 0.0,
+          "slice_classes": 0.0,
+          "visible_type_signals": 0.0,
+          "project_exact_imports": 0.0,
+          "project_semantic": 0.0,
+          "module_inventory": 0.0,
+          "project_name_similarity": 0.0,
+          "package_name_similarity": 0.0,
+          "structural_bm25": 0.0,
+          "deduplicate_and_prepend": 0.0,
+          "export_total": 0.016
+        },
+        "retrieval_counts": {
+          "exact_imports": 1,
+          "slice_classes": 0,
+          "visible_type_signals": 1,
+          "project_exact_imports": 0,
+          "project_semantic": 1,
+          "module_inventory": 0,
+          "project_name_similarity": 0,
+          "package_name_similarity": 0,
+          "structural_bm25": 0
+        }
+      }
+    },
+    {
+      "id": "workshop_newtype",
+      "project": "RacingTadpole/python-workshop",
+      "file": "t07_newtype.py",
+      "passed": true,
+      "checks": [
+        {
+          "where": "slice",
+          "evidence": "NewType('UserId', int)",
+          "passed": true
+        },
+        {
+          "where": "slice",
+          "evidence": "get_username(UserId(4606))",
+          "passed": true
+        },
+        {
+          "where": "slice",
+          "evidence": "target annotation masked",
+          "passed": true
+        },
+        {
+          "where": "source",
+          "evidence": "KB, shared AST and checkout unchanged",
+          "passed": true
+        },
+        {
+          "where": "candidates",
+          "evidence": "top-10 and 8k cap",
+          "passed": true
+        }
+      ],
+      "slice": "from typing import NewType\ndef get_username(user_id: <mask>) -> str:\n    return f'user{user_id}'\nUserId = NewType('UserId', int)\nget_username(UserId(4606))",
+      "candidates": [
+        {
+          "name": "UserId",
+          "qualified_name": "t07_newtype.UserId",
+          "source": "project",
+          "kind": "type_alias",
+          "definition": "UserId = NewType('UserId', int)",
+          "definition_reduction": {
+            "kb_chars": 31,
+            "rendered_chars": 31,
+            "output_chars": 31,
+            "truncated": false,
+            "max_chars": 8000,
+            "mode": "full",
+            "docstrings_shortened": false,
+            "omitted_declarations": 0
+          }
+        }
+      ],
+      "diagnostics": {
+        "context_reduction": [
+          {
+            "component": "target",
+            "mode": "sliced",
+            "reason": "",
+            "before": 1,
+            "after": 1,
+            "retained_evidence": []
+          },
+          {
+            "component": "caller",
+            "source_file": "<fixture_root>\\t07_newtype.py",
+            "source_line": 5,
+            "resolution": "resolved",
+            "scope": "module",
+            "reason_evidence": "resolved_argument_expression",
+            "mode": "sliced",
+            "reason": "",
+            "before": 2,
+            "after": 2,
+            "retained_evidence": [
+              {
+                "kind": "collection_operation",
+                "source_line": 5,
+                "reason": "operation_on_relevant_collection_or_element"
+              }
+            ]
+          },
+          {
+            "component": "alias",
+            "alias": "UserId",
+            "source_file": "<fixture_root>\\t07_newtype.py",
+            "source_line": 2,
+            "resolution": "resolved",
+            "reason": "retained_value_dependency"
+          }
+        ],
+        "count": 1,
+        "target_members": {
+          "methods": [],
+          "attributes": []
+        },
+        "by_source": {
+          "project": 1
+        },
+        "by_kind": {
+          "type_alias": 1
+        },
+        "timings_seconds": {
+          "read_parse_target": 0.0,
+          "file_import_analyzer": 0.0,
+          "slice_and_retrieval": 0.0,
+          "exact_imports": 0.0,
+          "slice_classes": 0.0,
+          "visible_type_signals": 0.0,
+          "project_exact_imports": 0.0,
+          "project_semantic": 0.0,
+          "module_inventory": 0.0,
+          "project_name_similarity": 0.0,
+          "package_name_similarity": 0.0,
+          "structural_bm25": 0.0,
+          "deduplicate_and_prepend": 0.0,
+          "export_total": 0.0
+        },
+        "retrieval_counts": {
+          "exact_imports": 1,
+          "slice_classes": 0,
+          "visible_type_signals": 2,
+          "project_exact_imports": 0,
+          "project_semantic": 2,
+          "module_inventory": 0,
+          "project_name_similarity": 1,
+          "package_name_similarity": 0,
+          "structural_bm25": 0
+        }
+      }
+    },
+    {
+      "id": "foolbox_tuple_alias",
+      "project": "jonasrauber/foolbox",
+      "file": "tests/test_models.py",
+      "passed": true,
+      "checks": [
+        {
+          "where": "slice_or_candidates",
+          "evidence": "ModelAndData",
+          "passed": true
+        },
+        {
+          "where": "slice_or_candidates",
+          "evidence": "Tuple[fbn.Model, ep.Tensor, ep.Tensor]",
+          "passed": true
+        },
+        {
+          "where": "slice",
+          "evidence": "target annotation masked",
+          "passed": true
+        },
+        {
+          "where": "source",
+          "evidence": "KB, shared AST and checkout unchanged",
+          "passed": true
+        },
+        {
+          "where": "candidates",
+          "evidence": "top-10 and 8k cap",
+          "passed": true
+        }
+      ],
+      "slice": "from typing import Tuple\nimport foolbox as fbn\nimport eagerpy as ep\ndef test_preprocessing(fmodel_and_data: <mask>) -> None:\n    fmodel, x, y = fmodel_and_data\n    return fmodel(x)",
+      "candidates": [
+        {
+          "name": "ModelAndData",
+          "qualified_name": "tests.test_models.ModelAndData",
+          "source": "project",
+          "kind": "type_alias",
+          "definition": "ModelAndData = Tuple[fbn.Model, ep.Tensor, ep.Tensor]",
+          "definition_reduction": {
+            "kb_chars": 53,
+            "rendered_chars": 53,
+            "output_chars": 53,
+            "truncated": false,
+            "max_chars": 8000,
+            "mode": "full",
+            "docstrings_shortened": false,
+            "omitted_declarations": 0
+          }
+        },
+        {
+          "name": "Noise0",
+          "qualified_name": "tests.test_models.Noise0",
+          "source": "project",
+          "kind": "class",
+          "definition": "class Noise0:\n    pass",
+          "definition_reduction": {
+            "kb_chars": 22,
+            "rendered_chars": 22,
+            "output_chars": 22,
+            "truncated": false,
+            "max_chars": 8000,
+            "mode": "full",
+            "docstrings_shortened": false,
+            "omitted_declarations": 0
+          },
+          "context_reduction": {
+            "mode": "full_fallback",
+            "reason": "no_relevant_members"
+          }
+        },
+        {
+          "name": "Noise1",
+          "qualified_name": "tests.test_models.Noise1",
+          "source": "project",
+          "kind": "class",
+          "definition": "class Noise1:\n    pass",
+          "definition_reduction": {
+            "kb_chars": 22,
+            "rendered_chars": 22,
+            "output_chars": 22,
+            "truncated": false,
+            "max_chars": 8000,
+            "mode": "full",
+            "docstrings_shortened": false,
+            "omitted_declarations": 0
+          },
+          "context_reduction": {
+            "mode": "full_fallback",
+            "reason": "no_relevant_members"
+          }
+        },
+        {
+          "name": "Noise10",
+          "qualified_name": "tests.test_models.Noise10",
+          "source": "project",
+          "kind": "class",
+          "definition": "class Noise10:\n    pass",
+          "definition_reduction": {
+            "kb_chars": 23,
+            "rendered_chars": 23,
+            "output_chars": 23,
+            "truncated": false,
+            "max_chars": 8000,
+            "mode": "full",
+            "docstrings_shortened": false,
+            "omitted_declarations": 0
+          },
+          "context_reduction": {
+            "mode": "full_fallback",
+            "reason": "no_relevant_members"
+          }
+        },
+        {
+          "name": "Noise11",
+          "qualified_name": "tests.test_models.Noise11",
+          "source": "project",
+          "kind": "class",
+          "definition": "class Noise11:\n    pass",
+          "definition_reduction": {
+            "kb_chars": 23,
+            "rendered_chars": 23,
+            "output_chars": 23,
+            "truncated": false,
+            "max_chars": 8000,
+            "mode": "full",
+            "docstrings_shortened": false,
+            "omitted_declarations": 0
+          },
+          "context_reduction": {
+            "mode": "full_fallback",
+            "reason": "no_relevant_members"
+          }
+        },
+        {
+          "name": "Noise12",
+          "qualified_name": "tests.test_models.Noise12",
+          "source": "project",
+          "kind": "class",
+          "definition": "class Noise12:\n    pass",
+          "definition_reduction": {
+            "kb_chars": 23,
+            "rendered_chars": 23,
+            "output_chars": 23,
+            "truncated": false,
+            "max_chars": 8000,
+            "mode": "full",
+            "docstrings_shortened": false,
+            "omitted_declarations": 0
+          },
+          "context_reduction": {
+            "mode": "full_fallback",
+            "reason": "no_relevant_members"
+          }
+        },
+        {
+          "name": "Noise13",
+          "qualified_name": "tests.test_models.Noise13",
+          "source": "project",
+          "kind": "class",
+          "definition": "class Noise13:\n    pass",
+          "definition_reduction": {
+            "kb_chars": 23,
+            "rendered_chars": 23,
+            "output_chars": 23,
+            "truncated": false,
+            "max_chars": 8000,
+            "mode": "full",
+            "docstrings_shortened": false,
+            "omitted_declarations": 0
+          },
+          "context_reduction": {
+            "mode": "full_fallback",
+            "reason": "no_relevant_members"
+          }
+        },
+        {
+          "name": "Noise14",
+          "qualified_name": "tests.test_models.Noise14",
+          "source": "project",
+          "kind": "class",
+          "definition": "class Noise14:\n    pass",
+          "definition_reduction": {
+            "kb_chars": 23,
+            "rendered_chars": 23,
+            "output_chars": 23,
+            "truncated": false,
+            "max_chars": 8000,
+            "mode": "full",
+            "docstrings_shortened": false,
+            "omitted_declarations": 0
+          },
+          "context_reduction": {
+            "mode": "full_fallback",
+            "reason": "no_relevant_members"
+          }
+        },
+        {
+          "name": "Noise2",
+          "qualified_name": "tests.test_models.Noise2",
+          "source": "project",
+          "kind": "class",
+          "definition": "class Noise2:\n    pass",
+          "definition_reduction": {
+            "kb_chars": 22,
+            "rendered_chars": 22,
+            "output_chars": 22,
+            "truncated": false,
+            "max_chars": 8000,
+            "mode": "full",
+            "docstrings_shortened": false,
+            "omitted_declarations": 0
+          },
+          "context_reduction": {
+            "mode": "full_fallback",
+            "reason": "no_relevant_members"
+          }
+        },
+        {
+          "name": "Noise3",
+          "qualified_name": "tests.test_models.Noise3",
+          "source": "project",
+          "kind": "class",
+          "definition": "class Noise3:\n    pass",
+          "definition_reduction": {
+            "kb_chars": 22,
+            "rendered_chars": 22,
+            "output_chars": 22,
+            "truncated": false,
+            "max_chars": 8000,
+            "mode": "full",
+            "docstrings_shortened": false,
+            "omitted_declarations": 0
+          },
+          "context_reduction": {
+            "mode": "full_fallback",
+            "reason": "no_relevant_members"
+          }
+        }
+      ],
+      "diagnostics": {
+        "context_reduction": [
+          {
+            "component": "target",
+            "mode": "sliced",
+            "reason": "",
+            "before": 2,
+            "after": 2,
+            "retained_evidence": [
+              {
+                "kind": "collection_operation",
+                "source_line": 7,
+                "reason": "operation_on_relevant_collection_or_element"
+              }
+            ]
+          },
+          {
+            "mode": "unresolved",
+            "reason": "shadowed_name_or_receiver",
+            "call": "fmodel"
+          }
+        ],
+        "count": 10,
+        "target_members": {
+          "methods": [],
+          "attributes": []
+        },
+        "by_source": {
+          "project": 10
+        },
+        "by_kind": {
+          "type_alias": 1,
+          "class": 9
+        },
+        "timings_seconds": {
+          "read_parse_target": 0.0,
+          "file_import_analyzer": 0.0,
+          "slice_and_retrieval": 0.0,
+          "exact_imports": 0.0,
+          "slice_classes": 0.0,
+          "visible_type_signals": 0.0,
+          "project_exact_imports": 0.0,
+          "project_semantic": 0.0,
+          "module_inventory": 0.0,
+          "project_name_similarity": 0.0,
+          "package_name_similarity": 0.0,
+          "structural_bm25": 0.0,
+          "deduplicate_and_prepend": 0.0,
+          "export_total": 0.0
+        },
+        "retrieval_counts": {
+          "exact_imports": 1,
+          "slice_classes": 0,
+          "visible_type_signals": 1,
+          "project_exact_imports": 0,
+          "project_semantic": 1,
+          "module_inventory": 0,
+          "project_name_similarity": 1,
+          "package_name_similarity": 0,
+          "structural_bm25": 0
+        }
+      }
+    },
+    {
+      "id": "subhub_symlink",
+      "project": "mozilla/subhub",
+      "file": "src/hub/vendor/customer.py",
+      "passed": true,
+      "checks": [
+        {
+          "where": "slice",
+          "evidence": "retrieve_stripe_plan(plan_id: str)",
+          "passed": true
+        },
+        {
+          "where": "slice",
+          "evidence": "target annotation masked",
+          "passed": true
+        },
+        {
+          "where": "source",
+          "evidence": "KB, shared AST and checkout unchanged",
+          "passed": true
+        },
+        {
+          "where": "candidates",
+          "evidence": "top-10 and 8k cap",
+          "passed": true
+        }
+      ],
+      "slice": "from hub.shared import vendor\nclass Customer:\n    pass\n\ndef retrieve_stripe_plan(plan_id: str) -> Plan:\n    pass\ndef get_previous_plan_amount(self, previous_plan: <mask>) -> int:\n    plan = vendor.retrieve_stripe_plan(previous_plan)\n    return plan.get('amount', 0)",
+      "candidates": [
+        {
+          "name": "Customer",
+          "qualified_name": "hub.vendor.customer.Customer",
+          "source": "project",
+          "kind": "class",
+          "definition": "class Customer:\n\n    def get_previous_plan_amount(self, previous_plan: ((<mask>))):\n        plan = vendor.retrieve_stripe_plan(previous_plan)\n        return plan.get('amount', 0)",
+          "definition_reduction": {
+            "kb_chars": 178,
+            "rendered_chars": 193,
+            "output_chars": 193,
+            "truncated": false,
+            "max_chars": 8000,
+            "mode": "full",
+            "docstrings_shortened": false,
+            "omitted_declarations": 0
+          },
+          "context_reduction": {
+            "mode": "full_fallback",
+            "reason": "no_relevant_members"
+          }
+        }
+      ],
+      "diagnostics": {
+        "context_reduction": [
+          {
+            "component": "target",
+            "mode": "sliced",
+            "reason": "",
+            "before": 2,
+            "after": 2,
+            "retained_evidence": [
+              {
+                "kind": "collection_operation",
+                "source_line": 4,
+                "reason": "operation_on_relevant_collection_or_element"
+              },
+              {
+                "kind": "collection_operation",
+                "source_line": 5,
+                "reason": "operation_on_relevant_collection_or_element"
+              }
+            ]
+          },
+          {
+            "mode": "signature_only",
+            "reason": "informative_annotation",
+            "callee": "shared.vendor.retrieve_stripe_plan",
+            "source_file": "<fixture_root>\\src\\shared\\vendor.py",
+            "source_line": 1,
+            "resolution": "resolved"
+          },
+          {
+            "mode": "unresolved",
+            "reason": "shadowed_name_or_receiver",
+            "call": "plan.get"
+          }
+        ],
+        "count": 1,
+        "target_members": {
+          "methods": [],
+          "attributes": []
+        },
+        "by_source": {
+          "project": 1
+        },
+        "by_kind": {
+          "class": 1
+        },
+        "timings_seconds": {
+          "read_parse_target": 0.0,
+          "file_import_analyzer": 0.0,
+          "slice_and_retrieval": 0.0,
+          "exact_imports": 0.0,
+          "slice_classes": 0.0,
+          "visible_type_signals": 0.0,
+          "project_exact_imports": 0.0,
+          "project_semantic": 0.0,
+          "module_inventory": 0.0,
+          "project_name_similarity": 0.0,
+          "package_name_similarity": 0.0,
+          "structural_bm25": 0.0,
+          "deduplicate_and_prepend": 0.0,
+          "export_total": 0.0
+        },
+        "retrieval_counts": {
+          "exact_imports": 2,
+          "slice_classes": 1,
+          "visible_type_signals": 2,
+          "project_exact_imports": 0,
+          "project_semantic": 0,
+          "module_inventory": 0,
+          "project_name_similarity": 0,
+          "package_name_similarity": 0,
+          "structural_bm25": 0
+        }
+      }
+    },
+    {
+      "id": "mapping_constructor",
+      "project": "jwnwilson/python_types",
+      "file": "main.py",
+      "passed": true,
+      "checks": [
+        {
+          "where": "slice",
+          "evidence": "expect_user_mapping({'test': User()})",
+          "passed": true
+        },
+        {
+          "where": "slice",
+          "evidence": "target annotation masked",
+          "passed": true
+        },
+        {
+          "where": "source",
+          "evidence": "KB, shared AST and checkout unchanged",
+          "passed": true
+        },
+        {
+          "where": "candidates",
+          "evidence": "top-10 and 8k cap",
+          "passed": true
+        }
+      ],
+      "slice": "def expect_user_mapping(user_mapping: <mask>) -> None:\n    for key in user_mapping:\n        print(f'User: {user_mapping[key]}')\nexpect_user_mapping({'test': User()})",
+      "candidates": [
+        {
+          "name": "User",
+          "qualified_name": "main.User",
+          "source": "project",
+          "kind": "class",
+          "definition": "class User:\n    pass",
+          "definition_reduction": {
+            "kb_chars": 20,
+            "rendered_chars": 20,
+            "output_chars": 20,
+            "truncated": false,
+            "max_chars": 8000,
+            "mode": "full",
+            "docstrings_shortened": false,
+            "omitted_declarations": 0
+          },
+          "context_reduction": {
+            "mode": "full_fallback",
+            "reason": "no_relevant_members"
+          }
+        }
+      ],
+      "diagnostics": {
+        "context_reduction": [
+          {
+            "component": "target",
+            "mode": "sliced",
+            "reason": "",
+            "before": 2,
+            "after": 2,
+            "retained_evidence": [
+              {
+                "kind": "collection_operation",
+                "source_line": 4,
+                "reason": "operation_on_relevant_collection_or_element"
+              }
+            ]
+          },
+          {
+            "mode": "unresolved",
+            "reason": "ambiguous_or_missing_binding",
+            "call": "print"
+          },
+          {
+            "component": "caller",
+            "source_file": "<fixture_root>\\main.py",
+            "source_line": 5,
+            "resolution": "resolved",
+            "scope": "module",
+            "reason_evidence": "resolved_argument_expression",
+            "mode": "sliced",
+            "reason": "",
+            "before": 1,
+            "after": 1,
+            "retained_evidence": [
+              {
+                "kind": "collection_operation",
+                "source_line": 5,
+                "reason": "operation_on_relevant_collection_or_element"
+              }
+            ]
+          }
+        ],
+        "count": 1,
+        "target_members": {
+          "methods": [],
+          "attributes": []
+        },
+        "by_source": {
+          "project": 1
+        },
+        "by_kind": {
+          "class": 1
+        },
+        "timings_seconds": {
+          "read_parse_target": 0.0,
+          "file_import_analyzer": 0.0,
+          "slice_and_retrieval": 0.0,
+          "exact_imports": 0.0,
+          "slice_classes": 0.0,
+          "visible_type_signals": 0.0,
+          "project_exact_imports": 0.0,
+          "project_semantic": 0.0,
+          "module_inventory": 0.0,
+          "project_name_similarity": 0.0,
+          "package_name_similarity": 0.0,
+          "structural_bm25": 0.0,
+          "deduplicate_and_prepend": 0.0,
+          "export_total": 0.0
+        },
+        "retrieval_counts": {
+          "exact_imports": 0,
+          "slice_classes": 0,
+          "visible_type_signals": 1,
+          "project_exact_imports": 0,
+          "project_semantic": 0,
+          "module_inventory": 0,
+          "project_name_similarity": 1,
+          "package_name_similarity": 0,
+          "structural_bm25": 0
+        }
+      }
+    },
+    {
+      "id": "adventofcode_lambda",
+      "project": "dmeleshko/adventofcode",
+      "file": "y2018/day03/day03.py",
+      "passed": true,
+      "checks": [
+        {
+          "where": "slice",
+          "evidence": "make_grid(claims: typing.List[Claim])",
+          "passed": true
+        },
+        {
+          "where": "slice",
+          "evidence": "target annotation masked",
+          "passed": true
+        },
+        {
+          "where": "source",
+          "evidence": "KB, shared AST and checkout unchanged",
+          "passed": true
+        },
+        {
+          "where": "candidates",
+          "evidence": "top-10 and 8k cap",
+          "passed": true
+        }
+      ],
+      "slice": "import typing\nfrom itertools import chain\ndef make_grid(claims: typing.List[Claim]) -> typing.List[typing.List[int]]:\n    pass\ndef part1(claims: <mask>) -> int:\n    grid = make_grid(claims)\n    count = len(list(filter(lambda x: x == -1, chain.from_iterable(grid))))\n    return count",
+      "candidates": [
+        {
+          "name": "Claim",
+          "qualified_name": "y2018.day03.day03.Claim",
+          "source": "project",
+          "kind": "class",
+          "definition": "class Claim:\n    pass",
+          "definition_reduction": {
+            "kb_chars": 21,
+            "rendered_chars": 21,
+            "output_chars": 21,
+            "truncated": false,
+            "max_chars": 8000,
+            "mode": "full",
+            "docstrings_shortened": false,
+            "omitted_declarations": 0
+          },
+          "context_reduction": {
+            "mode": "full_fallback",
+            "reason": "no_relevant_members"
+          }
+        }
+      ],
+      "diagnostics": {
+        "context_reduction": [
+          {
+            "component": "target",
+            "mode": "sliced",
+            "reason": "",
+            "before": 3,
+            "after": 3,
+            "retained_evidence": [
+              {
+                "kind": "collection_operation",
+                "source_line": 7,
+                "reason": "operation_on_relevant_collection_or_element"
+              }
+            ]
+          },
+          {
+            "mode": "signature_only",
+            "reason": "informative_annotation",
+            "callee": "y2018.day03.day03.make_grid",
+            "source_file": "<fixture_root>\\y2018\\day03\\day03.py",
+            "source_line": 4,
+            "resolution": "resolved"
+          },
+          {
+            "mode": "unresolved",
+            "reason": "ambiguous_or_missing_binding",
+            "call": "len"
+          },
+          {
+            "mode": "unresolved",
+            "reason": "ambiguous_or_missing_binding",
+            "call": "list"
+          },
+          {
+            "mode": "unresolved",
+            "reason": "ambiguous_or_missing_binding",
+            "call": "filter"
+          },
+          {
+            "mode": "unresolved",
+            "reason": "ambiguous_import_module",
+            "call": "chain.from_iterable"
+          }
+        ],
+        "count": 1,
+        "target_members": {
+          "methods": [],
+          "attributes": []
+        },
+        "by_source": {
+          "project": 1
+        },
+        "by_kind": {
+          "class": 1
+        },
+        "timings_seconds": {
+          "read_parse_target": 0.0,
+          "file_import_analyzer": 0.0,
+          "slice_and_retrieval": 0.015,
+          "exact_imports": 0.0,
+          "slice_classes": 0.0,
+          "visible_type_signals": 0.0,
+          "project_exact_imports": 0.0,
+          "project_semantic": 0.0,
+          "module_inventory": 0.0,
+          "project_name_similarity": 0.0,
+          "package_name_similarity": 0.0,
+          "structural_bm25": 0.0,
+          "deduplicate_and_prepend": 0.0,
+          "export_total": 0.015
+        },
+        "retrieval_counts": {
+          "exact_imports": 3,
+          "slice_classes": 0,
+          "visible_type_signals": 2,
+          "project_exact_imports": 0,
+          "project_semantic": 0,
+          "module_inventory": 0,
+          "project_name_similarity": 1,
+          "package_name_similarity": 0,
+          "structural_bm25": 0
+        }
+      }
+    },
+    {
+      "id": "nicecream_wildcards",
+      "project": "altcatalin/nicecream-history",
+      "file": "api/database.py",
+      "passed": true,
+      "checks": [
+        {
+          "where": "slice",
+          "evidence": "fetch_bookmark(database, bookmark_id)",
+          "passed": true
+        },
+        {
+          "where": "slice",
+          "evidence": "fetch_bookmark(database, request['path']['bookmark_id'])",
+          "passed": true
+        },
+        {
+          "where": "slice",
+          "evidence": "target annotation masked",
+          "passed": true
+        },
+        {
+          "where": "source",
+          "evidence": "KB, shared AST and checkout unchanged",
+          "passed": true
+        },
+        {
+          "where": "candidates",
+          "evidence": "top-10 and 8k cap",
+          "passed": true
+        }
+      ],
+      "slice": "from api.schemas import *\nasync def fetch_bookmark(database, bookmark_id: int) -> <mask>:\n    return await database.fetch_one(bookmark_id)\nasync def post_user_bookmarks_handler(request):\n    database = request.app['database']\n    bookmark_id = 7\n    return await fetch_bookmark(database, bookmark_id)\nasync def delete_user_bookmarks_handler(request):\n    database = request.app['database']\n    return await fetch_bookmark(database, request['path']['bookmark_id'])",
+      "candidates": [
+        {
+          "name": "BookmarkSchema",
+          "qualified_name": "api.schemas.BookmarkSchema",
+          "source": "project",
+          "kind": "class",
+          "definition": "class BookmarkSchema:\n    pass",
+          "definition_reduction": {
+            "kb_chars": 30,
+            "rendered_chars": 30,
+            "output_chars": 30,
+            "truncated": false,
+            "max_chars": 8000,
+            "mode": "full",
+            "docstrings_shortened": false,
+            "omitted_declarations": 0
+          },
+          "context_reduction": {
+            "mode": "full_fallback",
+            "reason": "no_relevant_members"
+          }
+        }
+      ],
+      "diagnostics": {
+        "context_reduction": [
+          {
+            "component": "target",
+            "mode": "sliced",
+            "reason": "",
+            "before": 1,
+            "after": 1,
+            "retained_evidence": [
+              {
+                "kind": "collection_operation",
+                "source_line": 3,
+                "reason": "operation_on_relevant_collection_or_element"
+              }
+            ]
+          },
+          {
+            "mode": "unresolved",
+            "reason": "shadowed_name_or_receiver",
+            "call": "database.fetch_one"
+          },
+          {
+            "component": "caller",
+            "source_file": "<fixture_root>\\api\\views.py",
+            "source_line": 7,
+            "resolution": "resolved",
+            "scope": "function",
+            "reason_evidence": "resolved_argument_expression",
+            "mode": "sliced",
+            "reason": "",
+            "before": 3,
+            "after": 3,
+            "retained_evidence": [
+              {
+                "kind": "collection_operation",
+                "source_line": 7,
+                "reason": "operation_on_relevant_collection_or_element"
+              }
+            ]
+          },
+          {
+            "component": "caller",
+            "source_file": "<fixture_root>\\api\\views.py",
+            "source_line": 10,
+            "resolution": "resolved",
+            "scope": "function",
+            "reason_evidence": "resolved_argument_expression",
+            "mode": "sliced",
+            "reason": "",
+            "before": 2,
+            "after": 2,
+            "retained_evidence": [
+              {
+                "kind": "collection_operation",
+                "source_line": 9,
+                "reason": "operation_on_relevant_collection_or_element"
+              },
+              {
+                "kind": "collection_operation",
+                "source_line": 10,
+                "reason": "operation_on_relevant_collection_or_element"
+              }
+            ]
+          }
+        ],
+        "count": 1,
+        "target_members": {
+          "methods": [],
+          "attributes": []
+        },
+        "by_source": {
+          "project": 1
+        },
+        "by_kind": {
+          "class": 1
+        },
+        "timings_seconds": {
+          "read_parse_target": 0.0,
+          "file_import_analyzer": 0.0,
+          "slice_and_retrieval": 0.0,
+          "export_total": 0.0
+        },
+        "retrieval_counts": {}
+      }
+    },
+    {
+      "id": "mort_documented_caller",
+      "project": "alexdong/mort",
+      "file": "mort/driver.py",
+      "passed": true,
+      "checks": [
+        {
+          "where": "slice",
+          "evidence": "[{'os': 'Windows'}]",
+          "passed": true
+        },
+        {
+          "where": "slice",
+          "evidence": "load_screenshots(path: str, targets: List[Dict])",
+          "passed": true
+        },
+        {
+          "where": "slice",
+          "evidence": "target annotation masked",
+          "passed": true
+        },
+        {
+          "where": "source",
+          "evidence": "KB, shared AST and checkout unchanged",
+          "passed": true
+        },
+        {
+          "where": "candidates",
+          "evidence": "top-10 and 8k cap",
+          "passed": true
+        }
+      ],
+      "slice": "from typing import List, Dict\ndef submit_request(path: str, targets: <mask>) -> str:\n    \"\"\"Browser descriptors, for example [{'os': 'Windows'}].\"\"\"\n    request_payload = {'url': path, 'browsers': targets}\n    return send(request_payload)\ndef load_screenshots(path: str, targets: List[Dict]) -> None:\n    submit_request(path, targets)",
+      "candidates": [],
+      "diagnostics": {
+        "context_reduction": [
+          {
+            "component": "target",
+            "mode": "sliced",
+            "reason": "",
+            "before": 3,
+            "after": 3,
+            "retained_evidence": [
+              {
+                "kind": "collection_operation",
+                "source_line": 5,
+                "reason": "operation_on_relevant_collection_or_element"
+              }
+            ]
+          },
+          {
+            "mode": "unresolved",
+            "reason": "ambiguous_or_missing_binding",
+            "call": "send"
+          },
+          {
+            "component": "caller",
+            "source_file": "<fixture_root>\\mort\\driver.py",
+            "source_line": 7,
+            "resolution": "resolved",
+            "scope": "function",
+            "reason_evidence": "resolved_argument_expression",
+            "mode": "sliced",
+            "reason": "",
+            "before": 1,
+            "after": 1,
+            "retained_evidence": [
+              {
+                "kind": "collection_operation",
+                "source_line": 7,
+                "reason": "operation_on_relevant_collection_or_element"
+              }
+            ]
+          }
+        ],
+        "count": 0,
+        "target_members": {
+          "methods": [],
+          "attributes": []
+        },
+        "by_source": {},
+        "by_kind": {},
+        "timings_seconds": {
+          "read_parse_target": 0.0,
+          "file_import_analyzer": 0.0,
+          "slice_and_retrieval": 0.0,
+          "exact_imports": 0.0,
+          "slice_classes": 0.0,
+          "visible_type_signals": 0.0,
+          "project_exact_imports": 0.0,
+          "project_semantic": 0.0,
+          "module_inventory": 0.0,
+          "project_name_similarity": 0.0,
+          "package_name_similarity": 0.0,
+          "structural_bm25": 0.0,
+          "deduplicate_and_prepend": 0.0,
+          "export_total": 0.0
+        },
+        "retrieval_counts": {
+          "exact_imports": 2,
+          "slice_classes": 0,
+          "visible_type_signals": 2,
+          "project_exact_imports": 0,
+          "project_semantic": 2,
+          "module_inventory": 0,
+          "project_name_similarity": 0,
+          "package_name_similarity": 0,
+          "structural_bm25": 0
+        }
+      }
+    }
+  ]
+}

@@ -35,7 +35,7 @@ class Function_methods:
         self.parsed_files = parsed_files
         if parsed_files is not None:
             from ast_context_slicer import FunctionCatalog
-            self.context_catalog = FunctionCatalog(parsed_files)
+            self.context_catalog = FunctionCatalog(parsed_files, project_root)
         self.total_function_data = self.read_projects_from_json(self.project_data_path)
         self.total_function_use_data = self.read_projects_from_json2(self.project_use_path)
         self.total_class_data = self.read_project_class_from_json(self.project_class_path)
@@ -51,7 +51,7 @@ class Function_methods:
         instance.project_root = str(project_root)
         instance.parsed_files = parsed_files
         from ast_context_slicer import FunctionCatalog
-        instance.context_catalog = FunctionCatalog(parsed_files)
+        instance.context_catalog = FunctionCatalog(parsed_files, project_root)
         instance.total_function_data = records['function_records']
         instance.total_function_use_data = records['use_records']
         instance.total_class_data = records['class_records']

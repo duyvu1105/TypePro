@@ -7,9 +7,9 @@ from pathlib import Path
 
 from preprocess_generative import format_input
 
-POLICY = 'ast-context-v3-recursive-signature-first'
+POLICY = 'ast-context-v7-verified-signature-evidence'
 MASKING = 'typepro-shared-kb-masked-source-v7-resolved-bounded-context'
-MAX_DEFINITION_CHARS = 16000
+MAX_DEFINITION_CHARS = 8000
 
 
 def audit(raw_dir: Path) -> dict:
@@ -33,6 +33,9 @@ def audit(raw_dir: Path) -> dict:
                 if len(candidates) > 10 or any(len(item['definition']) > MAX_DEFINITION_CHARS for item in candidates):
                     raise ValueError(f'Unbounded candidates: {where}')
                 for item in row.get('recommendation_diagnostics', {}).get('context_reduction', []):
+                    if item.get('component') in {'caller', 'alias'} and item.get('mode') != 'unresolved':
+                        if item.get('resolution') != 'resolved' or not item.get('source_file') or not item.get('source_line'):
+                            raise ValueError(f'Unproven caller or alias: {where}')
                     if item.get('callee'):
                         if item.get('resolution') != 'resolved' or not item.get('source_file') or not item.get('source_line'):
                             raise ValueError(f'Unproven related function: {where}')

@@ -27,6 +27,10 @@ class ProjectClassDefine(NamedTuple):
 class FunctionInfo:
     name: str
     signature: str
+    module: str = ''
+    qualified_name: str = ''
+    source_file: str = ''
+    source_line: int = 0
 
 @dataclass
 class ClassInfo:

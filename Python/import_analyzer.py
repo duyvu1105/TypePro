@@ -81,9 +81,11 @@ class importAnalyzer:
             data = json.load(f)
 
         result: List[DefinitionInfo] = []
-        for item in data:
+        for index, item in enumerate(data, 1):
             if item["type"] == "function":
-                result.append(FunctionInfo(name=item["name"], signature=item["signature"]))
+                result.append(FunctionInfo(name=item["name"], signature=item["signature"],
+                    module=item.get('module', ''), qualified_name=item.get('qualified_name', ''),
+                    source_file=file_name, source_line=index))
             elif item["type"] == "class":
                 result.append(ClassInfo(
                     name=item["name"],

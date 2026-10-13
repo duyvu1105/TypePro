@@ -1,4 +1,5 @@
 import ast
+import copy
 from target_context import source_open as open
 import re
 import time
@@ -11,7 +12,8 @@ from typing import List, Optional, Union, Dict, Iterable, Type, NamedTuple
 from import_analyzer import importAnalyzer
 from tool import split_unpack_in_code
 from type_signal_analyzer import visible_type_signals
-from ast_context_slicer import FunctionCatalog, reduce_function, bind_arguments, body_names, data_names
+from ast_context_slicer import FunctionCatalog, reduce_function, bind_arguments, body_names, data_names, docstring_statement, lexical_nodes
+from signature_contracts import external_contract, receiver_contract
 ScopeNode = Union[ast.FunctionDef, ast.ClassDef, ast.Module]
 
 FILE_PATH = ""
@@ -517,6 +519,26 @@ class Slicer:
             return []
         record, reason = catalog.resolve(node, self.file_name, getattr(self, 'context_function', None))
         if record is None:
+            scope = getattr(self, 'context_function', None)
+            path = str(Path(self.file_name).resolve())
+            contract = None
+            if scope is not None:
+                if reason in {'shadowed_name_or_receiver', 'unresolved_receiver'}:
+                    contract = receiver_contract(catalog, path, scope, node)
+                elif reason in {'ambiguous_import_module', 'ambiguous_or_missing_definition'}:
+                    contract = external_contract(catalog, self.import_analyzer, path, scope, node)
+            if contract is not None:
+                original, diagnostic = contract
+                relevant = getattr(self, 'context_names', set())
+                needed = id(node) in getattr(self, 'context_result_calls', set())
+                arguments = set().union(*(data_names(v) for v in [*node.args, *(k.value for k in node.keywords)]))
+                if arguments & relevant or needed:
+                    clean = getattr(self.Funcion_methods, 'context_masker', lambda text: text)
+                    function = ast.parse(clean(ast.unparse(original))).body[0]
+                    function.body = [*docstring_statement(function), ast.Pass()]
+                    function.decorator_list = []
+                    self.context_diagnostics.append(diagnostic)
+                    return [ast.unparse(function)]
             self.context_diagnostics.append(dict(mode='unresolved', reason=reason, call=ast.unparse(node.func)))
             return []
         matches, certain = [record], True
@@ -535,7 +557,7 @@ class Slicer:
                 continue
             bound, reason = bind_arguments(function, node) if certain and not function.decorator_list else (None, 'ambiguous_callee')
             signature_node = ast.parse(ast.unparse(function)).body[0]
-            signature_node.body = [ast.Pass()]
+            signature_node.body = [*docstring_statement(function), ast.Pass()]
             signature_node.decorator_list = []
             signature = ast.unparse(signature_node)
             if bound is None:
@@ -652,10 +674,15 @@ class Slicer:
         self.context_diagnostics.append(dict(component='target', **reduction.diagnostics()))
         related = []
         # One hop only. Called function bodies are not recursively expanded.
-        for statement in reduction.node.body:
-            for node in ast.walk(statement):
-                if isinstance(node, ast.Call):
-                    related.extend(self.get_call_func_names(node))
+        for node in lexical_nodes(reduction.node):
+            if isinstance(node, ast.Call):
+                related.extend(self.get_call_func_names(node))
+        catalog = getattr(self.Funcion_methods, 'context_catalog', None)
+        if catalog is not None:
+            aliases, diagnostics = catalog.alias_context(self.file_name, function, reduction.node)
+            clean = getattr(self.Funcion_methods, 'context_masker', lambda text: text)
+            related.extend(clean(value) for value in aliases)
+            self.context_diagnostics.extend(diagnostics)
         code = ast.unparse(reduction.node)
         return code, list(dict.fromkeys(related))
 
@@ -909,13 +936,34 @@ class Slicer:
         values = []
         clean = getattr(self.Funcion_methods, 'context_masker', lambda text: text)
         for path, caller, call in catalog.callers(function_name):
-            reduction = reduce_function(caller, seed_calls=[call])
-            self.context_diagnostics.append(dict(component='caller', source_file=path, **reduction.diagnostics()))
+            module_caller = isinstance(caller, ast.Module)
+            scope = caller
+            if module_caller:
+                scope = ast.parse('def __module_context__(): pass').body[0]
+                scope.body = [s for s in caller.body if not isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Import, ast.ImportFrom))]
+            reduction = reduce_function(scope, seed_calls=[call])
+            self.context_diagnostics.append(dict(component='caller', source_file=path,
+                source_line=call.lineno, resolution='resolved', scope='module' if module_caller else 'function',
+                reason_evidence='resolved_argument_expression', **reduction.diagnostics()))
             # An opaque caller must not cause its complete body to be inserted.
-            statements = reduction.node.body if reduction.mode == 'sliced' else [ast.Expr(value=call)]
-            code = '\n'.join(clean(ast.unparse(s)) for s in statements)
+            context = copy.deepcopy(reduction.node)
+            context.decorator_list = []
+            if reduction.mode != 'sliced':
+                context.body = [*copy.deepcopy(docstring_statement(caller)), ast.Expr(value=copy.deepcopy(call))]
+            # Keep the caller's argument contracts alongside its reduced body.
+            # Target signatures in recursive/self-call copies still get masked.
+            ast.fix_missing_locations(context)
+            code = clean('\n'.join(ast.unparse(s) for s in context.body) if module_caller else ast.unparse(context))
+            aliases, diagnostics = catalog.alias_context(path, caller, context)
+            self.context_diagnostics.extend(diagnostics)
+            code = '\n'.join([*(clean(value) for value in aliases if clean(value) not in code), code])
             if code and code not in values:
                 values.append(code)
+        rejections = catalog.caller_rejections.get(function_name.rsplit('.', 1)[-1], ())
+        self.context_diagnostics.extend(rejections[:20])
+        if len(rejections) > 20:
+            self.context_diagnostics.append(dict(component='caller_rejection_summary',
+                unresolved_count=len(rejections), omitted_examples=len(rejections) - 20))
         return values
 
     def find_variable_nodes(self,file_path: str, var_name: str) -> List[ast.Name]:

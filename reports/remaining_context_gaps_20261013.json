@@ -1,0 +1,180 @@
+{
+  "scope": "additional minimal examples; no original dataset or model inference",
+  "baseline_revision": "83fc6619175a52f9f59e00a238e1e821563abf75",
+  "results": {
+    "83fc661": [
+      {
+        "id": "receiver_return",
+        "evidence": "-> str",
+        "in_slice": true,
+        "in_prompt": true,
+        "slice": "function normalize(self, value) -> str\ndef target(obj, value) -> <mask>:\n    return obj.normalize(value)",
+        "candidates": [
+          {
+            "name": "Formatter",
+            "definition": "class Formatter:\n def normalize(self, value) -> str:\n  return service(value)"
+          }
+        ],
+        "unresolved": []
+      },
+      {
+        "id": "lambda_callee",
+        "evidence": "item: int",
+        "in_slice": false,
+        "in_prompt": false,
+        "slice": "def target(items: <mask>):\n    return map(lambda item: convert(item), items)",
+        "candidates": [],
+        "unresolved": []
+      },
+      {
+        "id": "custom_union_alias",
+        "evidence": "Trivia",
+        "in_slice": true,
+        "in_prompt": true,
+        "slice": "class Trivia:\n    # type alias: Space | Comment\ndef target(trivia: <mask>):\n    return trivia",
+        "candidates": [
+          {
+            "name": "Comment",
+            "definition": "class Comment: pass"
+          },
+          {
+            "name": "Space",
+            "definition": "class Space: pass"
+          }
+        ],
+        "unresolved": []
+      },
+      {
+        "id": "awaitable_alias",
+        "evidence": "Job",
+        "in_slice": true,
+        "in_prompt": true,
+        "slice": "from typing import Awaitable\nclass Job:\n    # type alias: Awaitable[str]\ndef target(job: <mask>):\n    return job",
+        "candidates": [],
+        "unresolved": []
+      },
+      {
+        "id": "conditional_function",
+        "evidence": "value: str",
+        "in_slice": true,
+        "in_prompt": true,
+        "slice": "function normalize(value: str)\ndef target(value: <mask>):\n    return normalize(value)",
+        "candidates": [],
+        "unresolved": []
+      },
+      {
+        "id": "external_stub",
+        "evidence": "value: bytes",
+        "in_slice": true,
+        "in_prompt": true,
+        "slice": "from extlib import decode\nfunction decode(value: bytes) -> str\ndef target(value: <mask>):\n    return decode(value)",
+        "candidates": [],
+        "unresolved": []
+      },
+      {
+        "id": "class_source_comment",
+        "evidence": "token holds a text identifier",
+        "in_slice": false,
+        "in_prompt": true,
+        "slice": "class Config:\n    # fields\n    token = None\ndef target(config: <mask>):\n    return config.token",
+        "candidates": [
+          {
+            "name": "Config",
+            "definition": "class Config:\n    # token holds a text identifier\n    token = None"
+          }
+        ]
+      }
+    ],
+    "current": [
+      {
+        "id": "receiver_return",
+        "evidence": "-> str",
+        "in_slice": false,
+        "in_prompt": false,
+        "slice": "def target(obj, value) -> <mask>:\n    return obj.normalize(value)",
+        "candidates": [
+          {
+            "name": "Formatter",
+            "definition": "class Formatter:\n\n    def normalize(self, value):\n        return service(value)"
+          }
+        ],
+        "unresolved": [
+          "shadowed_name_or_receiver"
+        ]
+      },
+      {
+        "id": "lambda_callee",
+        "evidence": "item: int",
+        "in_slice": false,
+        "in_prompt": false,
+        "slice": "def target(items: <mask>):\n    return map(lambda item: convert(item), items)",
+        "candidates": [],
+        "unresolved": [
+          "ambiguous_or_missing_binding"
+        ]
+      },
+      {
+        "id": "custom_union_alias",
+        "evidence": "Trivia",
+        "in_slice": false,
+        "in_prompt": false,
+        "slice": "def target(trivia: <mask>):\n    return trivia",
+        "candidates": [
+          {
+            "name": "Comment",
+            "definition": "class Comment:\n    pass"
+          },
+          {
+            "name": "Space",
+            "definition": "class Space:\n    pass"
+          }
+        ],
+        "unresolved": []
+      },
+      {
+        "id": "awaitable_alias",
+        "evidence": "Job",
+        "in_slice": false,
+        "in_prompt": false,
+        "slice": "from typing import Awaitable\ndef target(job: <mask>):\n    return job",
+        "candidates": [],
+        "unresolved": []
+      },
+      {
+        "id": "conditional_function",
+        "evidence": "value: str",
+        "in_slice": false,
+        "in_prompt": false,
+        "slice": "def target(value: <mask>):\n    return normalize(value)",
+        "candidates": [],
+        "unresolved": [
+          "conditional_definition"
+        ]
+      },
+      {
+        "id": "external_stub",
+        "evidence": "value: bytes",
+        "in_slice": false,
+        "in_prompt": false,
+        "slice": "from extlib import decode\ndef target(value: <mask>):\n    return decode(value)",
+        "candidates": [],
+        "unresolved": [
+          "ambiguous_import_module"
+        ]
+      },
+      {
+        "id": "class_source_comment",
+        "evidence": "token holds a text identifier",
+        "in_slice": false,
+        "in_prompt": false,
+        "slice": "def target(config: <mask>):\n    return config.token",
+        "candidates": [
+          {
+            "name": "Config",
+            "definition": "class Config:\n    token = None"
+          }
+        ]
+      }
+    ]
+  }
+}

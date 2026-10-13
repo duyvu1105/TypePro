@@ -85,7 +85,7 @@ def test_thousands_of_same_name_methods_do_not_enter_slice(tmp_path, monkeypatch
     assert 'HiddenGold' not in text
 
 
-@pytest.mark.parametrize('size', [15999, 16000, 16001, 430474])
+@pytest.mark.parametrize('size', [7999, 8000, 8001, 430474])
 def test_definition_boundaries_and_unicode_preserve_kb(size):
     prefix, suffix = 'class Parser:\n    text = "', '"\n'
     definition = prefix + '\u03bb' * (size - len(prefix) - len(suffix)) + suffix
@@ -93,16 +93,20 @@ def test_definition_boundaries_and_unicode_preserve_kb(size):
                        'source': 'project', 'definition': definition, 'members': []}]}
     before = copy.deepcopy(kb)
     candidate = top_project_types(kb, 'parser', 'parser')[0]
-    assert candidate['definition'] == definition[:16000]
+    if size <= 8000:
+        assert candidate['definition'] == definition
+    else:
+        assert candidate['definition'] == 'class Parser:\n    text = ...'
+        assert candidate['definition_reduction']['mode'] == 'signature_docstring'
     assert kb == before
-    assert candidate['definition_reduction']['output_chars'] == min(len(definition), 16000)
+    assert candidate['definition_reduction']['output_chars'] == len(candidate['definition']) <= 8000
 
 
 def test_preprocessing_caps_all_ten_definitions_without_changing_ranking():
     rows = [{'name': f'Type{i}', 'qualified_name': f'app.Type{i}', 'definition': 'x' * 17000} for i in range(12)]
     result = normalized_recommendations({'recommendation_types': rows}, 10)
     assert [r['type'] for r in result] == [f'Type{i}' for i in range(10)]
-    assert all(len(r['definition']) == CANDIDATE_DEFINITION_MAX_CHARS for r in result)
+    assert all(len(r['definition']) <= CANDIDATE_DEFINITION_MAX_CHARS for r in result)
     assert all(len(r['definition']) == 17000 for r in rows)
 
 
@@ -145,8 +149,8 @@ def test_audit_rejects_unbounded_or_unproven_output(tmp_path):
     from preprocess_generative import CANDIDATE_DEFINITION_MAX_CHARS as PREPROCESS_MAX
     assert MAX_DEFINITION_CHARS == PREPROCESS_MAX == CANDIDATE_DEFINITION_MAX_CHARS
     row = {'context_policy_version': POLICY, 'target_masking_version': MASKING,
-           'candidate_definition_max_chars': 16000,
-           'recommendation_types': [{'name': 'C', 'definition': 'x' * 16000}],
+           'candidate_definition_max_chars': 8000,
+           'recommendation_types': [{'name': 'C', 'definition': 'x' * 8000}],
            'recommendation_diagnostics': {'context_reduction': []},
            'interprocedural_slice': 'def f(value): return value', 'name': 'value',
            'target_function': 'f', 'scope': 'arg'}

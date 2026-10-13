@@ -67,12 +67,37 @@ before merge. Do not publish or train the final dataset automatically.
 ## Shared project KB and masked source
 
 The resolved-context rerun uses
-`context_policy_version=ast-context-v3-recursive-signature-first`
+`context_policy_version=ast-context-v7-verified-signature-evidence`
 and masking stamp `typepro-shared-kb-masked-source-v7-resolved-bounded-context`.
+Schema v16 and project-KB v7 invalidate prior raw slices/resume outputs. Target and resolved
+function contexts preserve their leading docstrings. Caller contexts retain
+their signatures (including parameter annotations) and docstrings alongside
+the reduced body; target annotations remain masked in all copies. Opaque
+callers retain their signature, docstring and exact call only. Project wildcard
+imports resolve only when AST export analysis proves the binding. Literal
+`__all__` and default public names are supported; unavailable modules, dynamic
+exports, cycles, shadowing and competing definitions remain unresolved.
+The retained-evidence policy also tracks operations on aliases and loop elements
+of returned collections, collects verified module callers, and resolves calls in
+their own lexical scope. A sibling lambda no longer suppresses a callee signature.
+Project alias declarations (`NewType`, explicit `TypeAlias`, and verified implicit
+typing expressions) enter the shared KB; only aliases used by retained value
+dependencies enter slices. Name similarity influences candidate ranking only.
+Explicit re-exports and in-project native/Git-mode-120000 symlinks map imports to
+canonical source without guessing module names or following links outside the project.
+Verified library imports can contribute signatures from a unique qualified KB
+record (legacy records without module metadata apply only to root-package imports).
+Known class receivers contribute signatures only; unknown receivers never use
+short-name lookup. Literal boolean module branches are resolved statically;
+runtime branches stay unresolved. Alias recognition includes project-class unions
+and async typing forms. Candidate definitions retain comments belonging to selected
+class members within the existing 8k budget. Larger definitions still use only
+signatures and docstrings. `check_evidence_inventory.py` audits evidence in both
+slices and candidates, including justified removals and explicit coverage limits.
 Target and caller contexts reduce statements recursively inside control blocks,
 retaining relevant conditions, loop inputs/updates and control transfers.
 Unrelated blocks are removed. Related definitions enter the slice only after resolving an
-unshadowed module-level function or an explicit project import. Both caller
+unshadowed module-level function or a proven project import. Both caller
 contexts and callees are checked against the AST catalog; a short-name match
 never permits inserting a body. Unknown callees keep only the original call.
 Resolved callees prefer signatures when relevant annotations are informative.
@@ -86,18 +111,28 @@ Receiver methods, nested callable scopes and opaque mutation remain unresolved
 in this conservative implementation. Class name similarity supplies retrieval
 evidence rather than adding a guessed class to the slice. Project class
 recommendations select complete methods and their attribute/helper dependencies.
-After target masking and member selection, every candidate definition is capped
-with `definition[:16000]`, including whole-class fallback. This cap can cut a
-statement; it is a Unicode character limit per candidate, not a token limit or
-a total prompt budget. Top-10 ranking is preserved through this cap. Shared KB
+After target masking and member selection, candidate definitions of at most
+8,000 Unicode characters remain unchanged. Larger definitions retain signatures
+and docstrings; classes also retain bases and attribute declarations. If the
+summary still exceeds 8,000 characters, signatures take priority and docstrings
+retain only complete paragraphs that fit. If signatures alone exceed the budget,
+whole trailing declarations are omitted; an oversized header or unparseable
+source receives an omission comment. No code statement is cut in half. This is
+a per-candidate character limit, not a token limit or total prompt budget.
+Top-10 ranking is preserved. Shared KB
 definitions remain complete and class method return annotations remain excluded.
 
-Before publishing, each v3 shard audits every raw row for the policy stamps,
-top-10 count, 16,000-character cap and provenance of inserted related functions.
+Before publishing, each v6 shard audits every raw row for the policy stamps,
+top-10 count, 8,000-character cap and provenance of inserted related functions.
 Failure stops packaging/publication. `context_audit.json` records median, p95,
 p99, maximum input character lengths and the 20 largest contexts. Large genuine
 target/resolved functions are reported rather than silently truncated. No
 tokenizer is run during shard creation.
+
+Run `python codet5p_type_retrieval/check_evidence_regressions.py --output reports/evidence_regressions_20261013.json`
+to replay all nine supplied loss patterns. The JSON includes each check, rendered
+slice, top-10 candidates and provenance. These are regression fixtures, not model
+accuracy measurements or a verification of every row in an existing Dataset.
 
 For a first batch of exactly five physical jobs per account, use a fresh
 ledger and pass `--jobs-per-account 5` to both scheduler dry-run and push.
@@ -106,7 +141,7 @@ the remaining jobs. This selects 15 of the 19 partitions, preserving the plan.
 The continuation uses `--skip-jobs-per-account 5` and a separate ledger only
 after the user requests it.
 
-Retrieval schema: `typepro-project-kb-top10-generative-v12-recursive-signature-first`.
+Retrieval schema: `typepro-project-kb-top10-generative-v16-verified-signature-evidence`.
 Build one KB per project and reuse it for every sample. The KB never reads a
 function return annotation: it creates neither a candidate nor `returned_by`
 metadata from one, and stored function signatures omit it. It retains candidates

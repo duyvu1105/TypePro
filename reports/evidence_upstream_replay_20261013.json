@@ -1,0 +1,1840 @@
+{
+  "scope": "pinned upstream target/dependency files only; no historical Dataset or model inference",
+  "implementation_sha256": {
+    "ast_context_slicer.py": "b1b5033d26da454c6e04e7a85fdd09d01522c84f8c32641bfc5b60b7336b1e70",
+    "type_aliases.py": "9f6c18677bf8988acc0a88db8fa9ae6777f7639ebc8df4bd2e5fc5e02316848f",
+    "slicing_code_class.py": "5b9a447c1a9596f1f762d38d941feda84e9d21f6ba17bfbb89c655ef4acf93cc",
+    "project_kb.py": "05ea2023549da24154aabc0b703e2d2f0f3245a4577684f6a1bd81acfdb027c5",
+    "project_index.py": "6245709669d8ce6e06d7319d04e1562588ced5330e4e3f453202cbb11d6ec009",
+    "function_methods.py": "dca89956f3b2cedaed8a1caa2f51f544b75844ffa2a713e9bce22af19eb444f3",
+    "export_slices.py": "f8d2cb17ac821f2b974b0bfc0dbd65dcc918cde40519bc0d7a39f87fd46c5bb9",
+    "target_context.py": "e882225eea1e103e6e56037855dde569a6e93eb1e4c65cfe94b7067f7445e52d"
+  },
+  "passed": 9,
+  "total": 9,
+  "cases": [
+    {
+      "id": "superset_collection",
+      "repository": "apache/incubator-superset",
+      "project": "apache/incubator-superset",
+      "file": "superset/databases/utils.py",
+      "passed": true,
+      "checks": [
+        {
+          "where": "slice",
+          "evidence": "for fk in foreign_keys:",
+          "passed": true
+        },
+        {
+          "where": "slice",
+          "evidence": "fk['column_names'] = fk.pop('constrained_columns')",
+          "passed": true
+        },
+        {
+          "where": "slice",
+          "evidence": "fk['type'] = 'fk'",
+          "passed": true
+        },
+        {
+          "where": "slice",
+          "evidence": "target annotation masked",
+          "passed": true
+        },
+        {
+          "where": "source",
+          "evidence": "KB, shared AST and checkout unchanged",
+          "passed": true
+        },
+        {
+          "where": "candidates",
+          "evidence": "top-10 and 8k cap",
+          "passed": true
+        }
+      ],
+      "slice": "from __future__ import annotations\nfrom typing import Any, TYPE_CHECKING\nfrom sqlalchemy.engine.url import make_url, URL\nfrom sqlalchemy.exc import NoSuchTableError\nfrom superset.commands.database.exceptions import DatabaseInvalidError\nfrom superset.sql.parse import Table\nfrom superset.databases.schemas import (\n        TableMetadataColumnsResponse,\n        TableMetadataForeignKeysIndexesResponse,\n        TableMetadataResponse,\n    )\ndef get_foreign_keys_metadata(database: Any, table: Table) -> <mask>:\n    foreign_keys = database.get_foreign_keys(table)\n    for fk in foreign_keys:\n        fk['column_names'] = fk.pop('constrained_columns')\n        fk['type'] = 'fk'\n    return foreign_keys\ndef get_table_metadata(database: Any, table: Table) -> TableMetadataResponse:\n    \"\"\"\n    Get table metadata information, including type, pk, fks.\n    This function raises SQLAlchemyError when a schema is not found.\n\n    :param database: The database model\n    :param table: Table instance\n    :return: Dict table metadata ready for API response\n    \"\"\"\n    keys = []\n    table_missing = False\n    try:\n        columns = database.get_columns(table)\n    except NoSuchTableError:\n        if database.backend != 'sqlite':\n            raise\n        table_missing = True\n        columns = []\n    if not table_missing:\n        primary_key = database.get_pk_constraint(table)\n        foreign_keys = get_foreign_keys_metadata(database, table)\n        indexes = get_indexes_metadata(database, table)\n        table_comment = database.get_table_comment(table)\n    else:\n        primary_key = {'constrained_columns': None, 'name': None}\n        foreign_keys = []\n        indexes = []\n        table_comment = None\n    if primary_key and primary_key.get('constrained_columns'):\n        primary_key['column_names'] = primary_key.pop('constrained_columns')\n        primary_key['type'] = 'pk'\n        keys += [primary_key]\n    keys += foreign_keys + indexes\n    payload_columns: list[TableMetadataColumnsResponse] = []\n    for col in columns:\n        dtype = get_col_type(col)\n        payload_columns.append({'name': col['column_name'], 'type': dtype.split('(')[0] if '(' in dtype else dtype, 'longType': dtype, 'keys': [k for k in keys if col['column_name'] in k['column_names']], 'comment': col.get('comment')})\n    return {'name': table.table, 'columns': payload_columns, 'selectStar': database.select_star(table, show_cols=True if columns else False, indent=True, cols=columns, latest_partition=not table_missing), 'primaryKey': primary_key, 'foreignKeys': foreign_keys, 'indexes': keys, 'comment': table_comment}",
+      "candidates": [],
+      "diagnostics": {
+        "context_reduction": [
+          {
+            "component": "target",
+            "mode": "sliced",
+            "reason": "",
+            "before": 5,
+            "after": 5,
+            "retained_evidence": [
+              {
+                "kind": "collection_operation",
+                "source_line": 42,
+                "reason": "operation_on_relevant_collection_or_element"
+              },
+              {
+                "kind": "collection_operation",
+                "source_line": 43,
+                "reason": "operation_on_relevant_collection_or_element"
+              }
+            ]
+          },
+          {
+            "mode": "unresolved",
+            "reason": "shadowed_name_or_receiver",
+            "call": "database.get_foreign_keys"
+          },
+          {
+            "mode": "unresolved",
+            "reason": "shadowed_name_or_receiver",
+            "call": "fk.pop"
+          },
+          {
+            "component": "caller",
+            "source_file": "<fixture_root>\\superset\\databases\\utils.py",
+            "source_line": 98,
+            "resolution": "resolved",
+            "scope": "function",
+            "reason_evidence": "resolved_argument_expression",
+            "mode": "sliced",
+            "reason": "",
+            "before": 28,
+            "after": 28,
+            "retained_evidence": [
+              {
+                "kind": "collection_operation",
+                "source_line": 90,
+                "reason": "operation_on_relevant_collection_or_element"
+              },
+              {
+                "kind": "collection_operation",
+                "source_line": 97,
+                "reason": "operation_on_relevant_collection_or_element"
+              },
+              {
+                "kind": "collection_operation",
+                "source_line": 98,
+                "reason": "operation_on_relevant_collection_or_element"
+              },
+              {
+                "kind": "collection_operation",
+                "source_line": 99,
+                "reason": "operation_on_relevant_collection_or_element"
+              },
+              {
+                "kind": "collection_operation",
+                "source_line": 100,
+                "reason": "operation_on_relevant_collection_or_element"
+              },
+              {
+                "kind": "collection_operation",
+                "source_line": 123,
+                "reason": "operation_on_relevant_collection_or_element"
+              }
+            ]
+          }
+        ],
+        "count": 0,
+        "target_members": {
+          "methods": [],
+          "attributes": []
+        },
+        "by_source": {},
+        "by_kind": {},
+        "timings_seconds": {
+          "read_parse_target": 0.0,
+          "file_import_analyzer": 0.0,
+          "slice_and_retrieval": 0.047,
+          "export_total": 0.047
+        },
+        "retrieval_counts": {}
+      },
+      "revision": "1578b8cbc1117bdf0f828a74ad80371138f1c717",
+      "source_url": "https://github.com/apache/incubator-superset/blob/1578b8cbc1117bdf0f828a74ad80371138f1c717/superset/databases/utils.py",
+      "source_sha256": {
+        "superset/databases/utils.py": "940a1ca406881c42c4d7ffa18a147163ab10feb2bfd21fa8d1cf8c50f990bfca"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "workshop_range",
+      "repository": "RacingTadpole/python-workshop",
+      "project": "RacingTadpole/python-workshop",
+      "file": "python_workshop/types/t03_ducktypes.py",
+      "passed": true,
+      "checks": [
+        {
+          "where": "slice",
+          "evidence": "as_strings(range(1, 3))",
+          "passed": true
+        },
+        {
+          "where": "slice",
+          "evidence": "target annotation masked",
+          "passed": true
+        },
+        {
+          "where": "source",
+          "evidence": "KB, shared AST and checkout unchanged",
+          "passed": true
+        },
+        {
+          "where": "candidates",
+          "evidence": "top-10 and 8k cap",
+          "passed": true
+        }
+      ],
+      "slice": "from typing import Mapping, Sequence, Iterable, Iterator, Collection\ndef as_strings(ints: <mask>) -> Sequence[str]:\n    return [str(x) for x in ints]\nresult = as_strings(range(1, 3))\nprint('result: {0}, first: {1}, length: {2}'.format(result, result[0], len(result)))",
+      "candidates": [],
+      "diagnostics": {
+        "context_reduction": [
+          {
+            "component": "target",
+            "mode": "sliced",
+            "reason": "",
+            "before": 1,
+            "after": 1,
+            "retained_evidence": [
+              {
+                "kind": "collection_operation",
+                "source_line": 16,
+                "reason": "operation_on_relevant_collection_or_element"
+              }
+            ]
+          },
+          {
+            "mode": "unresolved",
+            "reason": "ambiguous_or_missing_binding",
+            "call": "str"
+          },
+          {
+            "component": "caller",
+            "source_file": "<fixture_root>\\python_workshop\\types\\t03_ducktypes.py",
+            "source_line": 19,
+            "resolution": "resolved",
+            "scope": "module",
+            "reason_evidence": "resolved_argument_expression",
+            "mode": "sliced",
+            "reason": "",
+            "before": 5,
+            "after": 2,
+            "retained_evidence": [
+              {
+                "kind": "collection_operation",
+                "source_line": 19,
+                "reason": "operation_on_relevant_collection_or_element"
+              }
+            ]
+          }
+        ],
+        "count": 0,
+        "target_members": {
+          "methods": [],
+          "attributes": []
+        },
+        "by_source": {},
+        "by_kind": {},
+        "timings_seconds": {
+          "read_parse_target": 0.0,
+          "file_import_analyzer": 0.0,
+          "slice_and_retrieval": 0.016,
+          "exact_imports": 0.0,
+          "slice_classes": 0.0,
+          "visible_type_signals": 0.0,
+          "project_exact_imports": 0.0,
+          "project_semantic": 0.0,
+          "module_inventory": 0.0,
+          "project_name_similarity": 0.0,
+          "package_name_similarity": 0.0,
+          "structural_bm25": 0.0,
+          "deduplicate_and_prepend": 0.0,
+          "export_total": 0.016
+        },
+        "retrieval_counts": {
+          "exact_imports": 5,
+          "slice_classes": 0,
+          "visible_type_signals": 5,
+          "project_exact_imports": 0,
+          "project_semantic": 5,
+          "module_inventory": 0,
+          "project_name_similarity": 0,
+          "package_name_similarity": 0,
+          "structural_bm25": 0
+        }
+      },
+      "revision": "e37b4019c6668347b95369ae4d11700d82c4c494",
+      "source_url": "https://github.com/RacingTadpole/python-workshop/blob/e37b4019c6668347b95369ae4d11700d82c4c494/python_workshop/types/t03_ducktypes.py",
+      "source_sha256": {
+        "python_workshop/types/t03_ducktypes.py": "5906211dfeec54c55464da39156fded87464e16226533a5aeaa3c052da14c8d0"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "workshop_newtype",
+      "repository": "RacingTadpole/python-workshop",
+      "project": "RacingTadpole/python-workshop",
+      "file": "python_workshop/types/t07_newtype.py",
+      "passed": true,
+      "checks": [
+        {
+          "where": "slice",
+          "evidence": "NewType('UserId', int)",
+          "passed": true
+        },
+        {
+          "where": "slice",
+          "evidence": "get_username(UserId(4606))",
+          "passed": true
+        },
+        {
+          "where": "slice",
+          "evidence": "target annotation masked",
+          "passed": true
+        },
+        {
+          "where": "source",
+          "evidence": "KB, shared AST and checkout unchanged",
+          "passed": true
+        },
+        {
+          "where": "candidates",
+          "evidence": "top-10 and 8k cap",
+          "passed": true
+        }
+      ],
+      "slice": "from typing import NewType\ndef get_username(user_id: <mask>) -> str:\n    return f'user{user_id}'\nUserId = NewType('UserId', int)\nprint(get_username(UserId(4606)))",
+      "candidates": [
+        {
+          "name": "UserId",
+          "qualified_name": "python_workshop.types.t07_newtype.UserId",
+          "source": "project",
+          "kind": "type_alias",
+          "definition": "UserId = NewType('UserId', int)",
+          "definition_reduction": {
+            "kb_chars": 31,
+            "rendered_chars": 31,
+            "output_chars": 31,
+            "truncated": false,
+            "max_chars": 8000,
+            "mode": "full",
+            "docstrings_shortened": false,
+            "omitted_declarations": 0
+          }
+        }
+      ],
+      "diagnostics": {
+        "context_reduction": [
+          {
+            "component": "target",
+            "mode": "sliced",
+            "reason": "",
+            "before": 1,
+            "after": 1,
+            "retained_evidence": []
+          },
+          {
+            "component": "caller",
+            "source_file": "<fixture_root>\\python_workshop\\types\\t07_newtype.py",
+            "source_line": 16,
+            "resolution": "resolved",
+            "scope": "module",
+            "reason_evidence": "resolved_argument_expression",
+            "mode": "sliced",
+            "reason": "",
+            "before": 2,
+            "after": 2,
+            "retained_evidence": [
+              {
+                "kind": "collection_operation",
+                "source_line": 16,
+                "reason": "operation_on_relevant_collection_or_element"
+              }
+            ]
+          },
+          {
+            "component": "alias",
+            "alias": "UserId",
+            "source_file": "<fixture_root>\\python_workshop\\types\\t07_newtype.py",
+            "source_line": 5,
+            "resolution": "resolved",
+            "reason": "retained_value_dependency"
+          }
+        ],
+        "count": 1,
+        "target_members": {
+          "methods": [],
+          "attributes": []
+        },
+        "by_source": {
+          "project": 1
+        },
+        "by_kind": {
+          "type_alias": 1
+        },
+        "timings_seconds": {
+          "read_parse_target": 0.0,
+          "file_import_analyzer": 0.0,
+          "slice_and_retrieval": 0.0,
+          "exact_imports": 0.0,
+          "slice_classes": 0.0,
+          "visible_type_signals": 0.0,
+          "project_exact_imports": 0.0,
+          "project_semantic": 0.0,
+          "module_inventory": 0.0,
+          "project_name_similarity": 0.0,
+          "package_name_similarity": 0.0,
+          "structural_bm25": 0.0,
+          "deduplicate_and_prepend": 0.0,
+          "export_total": 0.0
+        },
+        "retrieval_counts": {
+          "exact_imports": 1,
+          "slice_classes": 0,
+          "visible_type_signals": 2,
+          "project_exact_imports": 0,
+          "project_semantic": 2,
+          "module_inventory": 0,
+          "project_name_similarity": 1,
+          "package_name_similarity": 0,
+          "structural_bm25": 0
+        }
+      },
+      "revision": "e37b4019c6668347b95369ae4d11700d82c4c494",
+      "source_url": "https://github.com/RacingTadpole/python-workshop/blob/e37b4019c6668347b95369ae4d11700d82c4c494/python_workshop/types/t07_newtype.py",
+      "source_sha256": {
+        "python_workshop/types/t07_newtype.py": "7b15db8d4038293b17b81c5b86639809390cfd113ae2761de2bda453b2c57d13"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "foolbox_tuple_alias",
+      "repository": "jonasrauber/foolbox",
+      "project": "jonasrauber/foolbox",
+      "file": "tests/test_models.py",
+      "passed": true,
+      "checks": [
+        {
+          "where": "slice_or_candidates",
+          "evidence": "ModelAndData",
+          "passed": true
+        },
+        {
+          "where": "slice_or_candidates",
+          "evidence": "Tuple[fbn.Model, ep.Tensor, ep.Tensor]",
+          "passed": true
+        },
+        {
+          "where": "slice",
+          "evidence": "target annotation masked",
+          "passed": true
+        },
+        {
+          "where": "source",
+          "evidence": "KB, shared AST and checkout unchanged",
+          "passed": true
+        },
+        {
+          "where": "candidates",
+          "evidence": "top-10 and 8k cap",
+          "passed": true
+        }
+      ],
+      "slice": "from typing import Tuple, Any\nimport pytest\nimport eagerpy as ep\nimport numpy as np\nimport copy\nimport foolbox as fbn\nimport torch\ndef test_preprocessing(fmodel_and_data: <mask>) -> None:\n    fmodel, x, y = fmodel_and_data\n    if not isinstance(fmodel, fbn.models.base.ModelWithPreprocessing):\n        pytest.skip()\n    preprocessing = dict(mean=[3, 3, 3], std=[5, 5, 5], axis=-3)\n    fmodel = fbn.models.base.ModelWithPreprocessing(fmodel._model, fmodel.bounds, fmodel.dummy, preprocessing)\n    preprocessing = dict(mean=[3, 3, 3], axis=-3)\n    fmodel = fbn.models.base.ModelWithPreprocessing(fmodel._model, fmodel.bounds, fmodel.dummy, preprocessing)\n    preprocessing = dict(mean=np.array([3, 3, 3]), axis=-3)\n    fmodel = fbn.models.base.ModelWithPreprocessing(fmodel._model, fmodel.bounds, fmodel.dummy, preprocessing)\n    preprocessing = dict(mean=[3, 3, 3], foo=[5, 5, 5], axis=-3)\n    with pytest.raises(ValueError):\n        fmodel = fbn.models.base.ModelWithPreprocessing(fmodel._model, fmodel.bounds, fmodel.dummy, preprocessing)\n    preprocessing = dict(mean=[3, 3, 3], std=[5, 5, 5], axis=1)\n    with pytest.raises(ValueError):\n        fmodel = fbn.models.base.ModelWithPreprocessing(fmodel._model, fmodel.bounds, fmodel.dummy, preprocessing)\n    preprocessing = dict(mean=3, std=5)\n    fmodel = fbn.models.base.ModelWithPreprocessing(fmodel._model, fmodel.bounds, fmodel.dummy, preprocessing)\n    preprocessing = dict(mean=3, std=[5, 5, 5], axis=-3)\n    with pytest.raises(ValueError):\n        fmodel = fbn.models.base.ModelWithPreprocessing(fmodel._model, fmodel.bounds, fmodel.dummy, preprocessing)\n    preprocessing = dict(mean=[3, 3, 3], std=5, axis=-3)\n    with pytest.raises(ValueError):\n        fmodel = fbn.models.base.ModelWithPreprocessing(fmodel._model, fmodel.bounds, fmodel.dummy, preprocessing)",
+      "candidates": [
+        {
+          "name": "ModelAndData",
+          "qualified_name": "tests.test_models.ModelAndData",
+          "source": "project",
+          "kind": "type_alias",
+          "definition": "ModelAndData = Tuple[fbn.Model, ep.Tensor, ep.Tensor]",
+          "definition_reduction": {
+            "kb_chars": 53,
+            "rendered_chars": 53,
+            "output_chars": 53,
+            "truncated": false,
+            "max_chars": 8000,
+            "mode": "full",
+            "docstrings_shortened": false,
+            "omitted_declarations": 0
+          }
+        }
+      ],
+      "diagnostics": {
+        "context_reduction": [
+          {
+            "component": "target",
+            "mode": "sliced",
+            "reason": "",
+            "before": 24,
+            "after": 23,
+            "retained_evidence": [
+              {
+                "kind": "collection_operation",
+                "source_line": 175,
+                "reason": "operation_on_relevant_collection_or_element"
+              },
+              {
+                "kind": "collection_operation",
+                "source_line": 180,
+                "reason": "operation_on_relevant_collection_or_element"
+              },
+              {
+                "kind": "collection_operation",
+                "source_line": 185,
+                "reason": "operation_on_relevant_collection_or_element"
+              },
+              {
+                "kind": "collection_operation",
+                "source_line": 192,
+                "reason": "operation_on_relevant_collection_or_element"
+              },
+              {
+                "kind": "collection_operation",
+                "source_line": 199,
+                "reason": "operation_on_relevant_collection_or_element"
+              },
+              {
+                "kind": "collection_operation",
+                "source_line": 204,
+                "reason": "operation_on_relevant_collection_or_element"
+              },
+              {
+                "kind": "collection_operation",
+                "source_line": 211,
+                "reason": "operation_on_relevant_collection_or_element"
+              },
+              {
+                "kind": "collection_operation",
+                "source_line": 218,
+                "reason": "operation_on_relevant_collection_or_element"
+              }
+            ]
+          },
+          {
+            "mode": "unresolved",
+            "reason": "ambiguous_or_missing_binding",
+            "call": "isinstance"
+          },
+          {
+            "mode": "unresolved",
+            "reason": "ambiguous_import_module",
+            "call": "pytest.skip"
+          },
+          {
+            "mode": "unresolved",
+            "reason": "ambiguous_or_missing_binding",
+            "call": "dict"
+          },
+          {
+            "mode": "unresolved",
+            "reason": "ambiguous_import_module",
+            "call": "fbn.models.base.ModelWithPreprocessing"
+          },
+          {
+            "mode": "unresolved",
+            "reason": "ambiguous_or_missing_binding",
+            "call": "dict"
+          },
+          {
+            "mode": "unresolved",
+            "reason": "ambiguous_import_module",
+            "call": "fbn.models.base.ModelWithPreprocessing"
+          },
+          {
+            "mode": "unresolved",
+            "reason": "ambiguous_or_missing_binding",
+            "call": "dict"
+          },
+          {
+            "mode": "unresolved",
+            "reason": "ambiguous_import_module",
+            "call": "np.array"
+          },
+          {
+            "mode": "unresolved",
+            "reason": "ambiguous_import_module",
+            "call": "fbn.models.base.ModelWithPreprocessing"
+          },
+          {
+            "mode": "unresolved",
+            "reason": "ambiguous_or_missing_binding",
+            "call": "dict"
+          },
+          {
+            "mode": "unresolved",
+            "reason": "ambiguous_import_module",
+            "call": "pytest.raises"
+          },
+          {
+            "mode": "unresolved",
+            "reason": "ambiguous_import_module",
+            "call": "fbn.models.base.ModelWithPreprocessing"
+          },
+          {
+            "mode": "unresolved",
+            "reason": "ambiguous_or_missing_binding",
+            "call": "dict"
+          },
+          {
+            "mode": "unresolved",
+            "reason": "ambiguous_import_module",
+            "call": "pytest.raises"
+          },
+          {
+            "mode": "unresolved",
+            "reason": "ambiguous_import_module",
+            "call": "fbn.models.base.ModelWithPreprocessing"
+          },
+          {
+            "mode": "unresolved",
+            "reason": "ambiguous_or_missing_binding",
+            "call": "dict"
+          },
+          {
+            "mode": "unresolved",
+            "reason": "ambiguous_import_module",
+            "call": "fbn.models.base.ModelWithPreprocessing"
+          },
+          {
+            "mode": "unresolved",
+            "reason": "ambiguous_or_missing_binding",
+            "call": "dict"
+          },
+          {
+            "mode": "unresolved",
+            "reason": "ambiguous_import_module",
+            "call": "pytest.raises"
+          },
+          {
+            "mode": "unresolved",
+            "reason": "ambiguous_import_module",
+            "call": "fbn.models.base.ModelWithPreprocessing"
+          },
+          {
+            "mode": "unresolved",
+            "reason": "ambiguous_or_missing_binding",
+            "call": "dict"
+          },
+          {
+            "mode": "unresolved",
+            "reason": "ambiguous_import_module",
+            "call": "pytest.raises"
+          },
+          {
+            "mode": "unresolved",
+            "reason": "ambiguous_import_module",
+            "call": "fbn.models.base.ModelWithPreprocessing"
+          }
+        ],
+        "count": 1,
+        "target_members": {
+          "methods": [],
+          "attributes": []
+        },
+        "by_source": {
+          "project": 1
+        },
+        "by_kind": {
+          "type_alias": 1
+        },
+        "timings_seconds": {
+          "read_parse_target": 0.0,
+          "file_import_analyzer": 0.016,
+          "slice_and_retrieval": 0.156,
+          "exact_imports": 0.0,
+          "slice_classes": 0.0,
+          "visible_type_signals": 0.0,
+          "project_exact_imports": 0.0,
+          "project_semantic": 0.0,
+          "module_inventory": 0.0,
+          "project_name_similarity": 0.0,
+          "package_name_similarity": 0.0,
+          "structural_bm25": 0.0,
+          "deduplicate_and_prepend": 0.0,
+          "export_total": 0.172
+        },
+        "retrieval_counts": {
+          "exact_imports": 8,
+          "slice_classes": 0,
+          "visible_type_signals": 3,
+          "project_exact_imports": 0,
+          "project_semantic": 2,
+          "module_inventory": 0,
+          "project_name_similarity": 3,
+          "package_name_similarity": 0,
+          "structural_bm25": 0
+        }
+      },
+      "revision": "74cf9051b56c0a7d31709b4127c6a2ce049f18bd",
+      "source_url": "https://github.com/jonasrauber/foolbox/blob/74cf9051b56c0a7d31709b4127c6a2ce049f18bd/tests/test_models.py",
+      "source_sha256": {
+        "tests/test_models.py": "c7b27081e6856c01c509b6f65bbc0b3cc075fc30f61e2f92d69b814a87580707"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "subhub_symlink",
+      "repository": "mozilla/subhub",
+      "project": "mozilla/subhub",
+      "file": "src/hub/vendor/customer.py",
+      "passed": true,
+      "checks": [
+        {
+          "where": "slice",
+          "evidence": "retrieve_stripe_plan(plan_id: str)",
+          "passed": true
+        },
+        {
+          "where": "slice",
+          "evidence": "target annotation masked",
+          "passed": true
+        },
+        {
+          "where": "source",
+          "evidence": "KB, shared AST and checkout unchanged",
+          "passed": true
+        },
+        {
+          "where": "candidates",
+          "evidence": "top-10 and 8k cap",
+          "passed": true
+        }
+      ],
+      "slice": "import json\nimport time\nimport os\nimport stripe\nfrom stripe.error import InvalidRequestError\nfrom stripe import Subscription\nfrom datetime import datetime\nfrom typing import Optional, Dict, Any, List\nfrom flask import g\nfrom hub.vendor.abstract import AbstractStripeHubEvent\nfrom hub.routes.static import StaticRoutes\nfrom hub.shared.exceptions import ClientError\nfrom hub.shared.vendor_utils import format_brand\nfrom shared.log import get_logger\nfrom hub.shared import vendor\nfrom hub.shared.db import SubHubDeletedAccountModel\nfrom hub.shared import utils\nclass StripeCustomerSubscriptionUpdated(AbstractStripeHubEvent):\n    pass\n\ndef retrieve_stripe_plan(plan_id: str) -> Plan:\n    \"\"\"\n    Retrieve Stripe Plan\n    :param plan_id:\n    :return:\n    \"\"\"\n    pass\ndef get_previous_plan_amount(self, previous_plan: <mask>) -> int:\n    \"\"\"\n        Get new plan amount for upgrade/downgrade\n        :param previous_plan:\n        :return:\n        \"\"\"\n    plan = vendor.retrieve_stripe_plan(previous_plan)\n    return plan.get('amount', 0)",
+      "candidates": [
+        {
+          "name": "StripeCustomerSubscriptionUpdated",
+          "qualified_name": "hub.vendor.customer.StripeCustomerSubscriptionUpdated",
+          "source": "project",
+          "kind": "class",
+          "definition": "class StripeCustomerSubscriptionUpdated(AbstractStripeHubEvent):\n\n    def run(self):\n        \"\"\"\n        Parse the event data sent by Stripe contained within self.payload\n        Evaluate the data to determine if it should be sent to external routes\n        if data should be sent:\n            Prepare data for source\n            Send to selected routes\n            :return True:\n        else\n            :return False:\n        \"\"\"\n        pass\n\n    def get_user_id(self, customer_id):\n        \"\"\"\n        Fetch the user_id associated with the Stripe customer_id\n        :param customer_id:\n        :return user_id:\n        :raises InvalidRequestError\n        :raises ClientError\n        \"\"\"\n        pass\n\n    def create_payload(self, event_type, user_id, previous_plan):\n        \"\"\"\n        Create payload to be sent to external sources based on event_type\n        :param event_type:\n        :param user_id:\n        :param previous_plan:\n        :return payload:\n        :raises InvalidRequestError:\n        \"\"\"\n        pass\n\n    def get_cancellation_data(self):\n        \"\"\"\n        Format data specific to subscription cancellation\n        :return dict:\n        \"\"\"\n        pass\n\n    def get_total_upcoming_invoice_amount(self, upcoming_invoice: Dict[str, Any]):\n        \"\"\"\n        Get the total amount of the upcoming invoice\n        :param upcoming_invoice:\n        :return:\n        \"\"\"\n        pass\n\n    def get_reactivation_data(self):\n        \"\"\"\n        Format data specific to recurring charge\n        :return dict:\n        \"\"\"\n        pass\n\n    def get_subscription_change(self, payload: Dict[str, Any], previous_plan: Dict[str, Any], new_product: Dict[str, Any]):\n        \"\"\"\n        Format data specific to a changed subscription\n        :param payload:\n        :param previous_plan:\n        :param new_product:\n        :return dict:\n        \"\"\"\n        pass\n\n    def get_subscription_type(self, new_product: Dict[str, Any], previous_product: Dict[str, Any]):\n        \"\"\"\n        Determine if new product is an upgrade or downgrade\n        :param new_product:\n        :param previous_product:\n        :return:\n        \"\"\"\n        pass\n\n    def get_previous_plan_amount(self, previous_plan: (<mask>)):\n        \"\"\"\n        Get new plan amount for upgrade/downgrade\n        :param previous_plan:\n        :return:\n        \"\"\"\n        pass",
+          "definition_reduction": {
+            "kb_chars": 9416,
+            "rendered_chars": 9438,
+            "output_chars": 2362,
+            "truncated": true,
+            "max_chars": 8000,
+            "mode": "signature_docstring",
+            "docstrings_shortened": false,
+            "omitted_declarations": 0
+          },
+          "context_reduction": {
+            "mode": "full_fallback",
+            "reason": "no_relevant_members"
+          }
+        },
+        {
+          "name": "StripeCustomerDeleted",
+          "qualified_name": "hub.vendor.customer.StripeCustomerDeleted",
+          "source": "project",
+          "kind": "class",
+          "definition": "class StripeCustomerDeleted(AbstractStripeHubEvent):\n\n    def run(self):\n        \"\"\"\n        Parse the event data sent by Stripe contained within self.payload\n        :return True to indicate successfully sent\n        \"\"\"\n        logger.info('customer deleted', payload=self.payload)\n        deleted_user = self.get_deleted_user()\n        data = self.create_payload(deleted_user)\n        logger.info('customer delete', data=data)\n        routes = [StaticRoutes.SALESFORCE_ROUTE]\n        self.send_to_routes(routes, json.dumps(data))\n        return True\n\n    def get_deleted_user(self):\n        \"\"\"\n        Fetch a deleted user based off of key data within payload\n        Raise error if user cannot be fetched or does not exist\n        :return:\n        :raises ClientError\n        \"\"\"\n        try:\n            customer_id = self.payload.data.object.id\n            uid = self.payload.data.object.metadata.userid\n        except AttributeError as e:\n            logger.error('customer deleted - unable to get lookup data from payload', error=e)\n            raise ClientError(f'subhub_deleted_user could not be fetched - missing keys')\n        deleted_user = g.subhub_deleted_users.get_user(uid, customer_id)\n        if deleted_user is None:\n            logger.error('customer deleted - subhub deleted user not found', customer_id=customer_id, user_id=uid)\n            raise ClientError(f'subhub_deleted_user is None for customer {customer_id} and user {uid}')\n        return deleted_user\n\n    def create_payload(self, deleted_user):\n        \"\"\"\n        Create payload to be sent to external sources\n        :param deleted_user:\n        :return:\n        \"\"\"\n        plan_amount = 0\n        current_period_end = None\n        current_period_start = None\n        nicknames = list()\n        for user_plan in deleted_user.subscription_info:\n            plan_amount = plan_amount + user_plan['plan_amount']\n            nicknames.append(user_plan['nickname'])\n            current_period_start = user_plan['current_period_start']\n            current_period_end = user_plan['current_period_end']\n        subs = ','.join([x.get('subscription_id') for x in deleted_user.subscription_info])\n        return self.create_data(CloseDate=self.payload.data.object.created, PMT_Cust_Id__c=self.payload.data.object.id, Amount=plan_amount, Name=str(nicknames), PMT_Subscription_ID__c=subs, Billing_Cycle_End__c=current_period_end, Billing_Cycle_Start__c=current_period_start)",
+          "definition_reduction": {
+            "kb_chars": 2450,
+            "rendered_chars": 2450,
+            "output_chars": 2450,
+            "truncated": false,
+            "max_chars": 8000,
+            "mode": "full",
+            "docstrings_shortened": false,
+            "omitted_declarations": 0
+          },
+          "context_reduction": {
+            "mode": "full_fallback",
+            "reason": "no_relevant_members"
+          }
+        },
+        {
+          "name": "StripeCustomerSubscriptionDeleted",
+          "qualified_name": "hub.vendor.customer.StripeCustomerSubscriptionDeleted",
+          "source": "project",
+          "kind": "class",
+          "definition": "class StripeCustomerSubscriptionDeleted(AbstractStripeHubEvent):\n\n    def run(self):\n        \"\"\"\n        Parse the event data sent by Stripe contained within self.payload\n        :return True to indicate successfully sent\n        \"\"\"\n        logger.debug('customer subscription deleted', payload=self.payload)\n        customer_id = self.payload.data.object.customer\n        customer = self.get_customer(customer_id=customer_id)\n        user_id = self.get_user_id(customer=customer)\n        mark_delete = self.check_mark_delete(customer=customer)\n        active_subs = self.check_all_subscriptions(customer=customer)\n        logger.debug('mark_delete', mark_delete=mark_delete, active_subs=active_subs)\n        origin_system = self.get_origin_system(customer=customer)\n        logger.info('current sub', current_sub=self.payload.data.object)\n        subscription_list = self.get_subscription_info(subscriptions=customer.get('subscriptions'), current_sub=self.payload.data.object)\n        logger.debug('sub list', subscription_list=subscription_list)\n        check_deleted_user = self.check_for_deleted_user(user_id=user_id, cust_id=customer_id)\n        logger.info('check deleted user', check_deleted_user=check_deleted_user)\n        if check_deleted_user is not None:\n            deleted_user = self.update_deleted_user(user_id=user_id, cust_id=customer_id, subscription_list=subscription_list)\n            logger.info('deleted user', deleted_user=deleted_user)\n        else:\n            deleted_user_added = self.add_user_to_deleted_users_record(user_id=user_id, cust_id=customer_id, origin_system=origin_system, subscription_info=subscription_list)\n        if mark_delete and (not active_subs):\n            if deleted_user or deleted_user_added:\n                deleted_customer = self.delete_customer(customer_id=customer_id)\n                logger.info('deleted customer', deleted_customer=deleted_customer)\n                return True\n            else:\n                return False\n        return True\n\n    def check_for_deleted_user(self, user_id: str, cust_id: str):\n        return g.subhub_deleted_users.get_user(uid=user_id, cust_id=cust_id)\n\n    def update_deleted_user(self, user_id: str, cust_id: str, subscription_list: List[Dict[str, Any]]):\n        logger.info('update deleted user', user_id=user_id, cust_id=cust_id, subscription_list=subscription_list)\n        return g.subhub_deleted_users.update_subscriptions(user_id, cust_id, subscription_list)\n\n    def add_user_to_deleted_users_record(self, user_id: str, cust_id: str, origin_system: str, subscription_info: List[Dict[str, Any]]):\n        deleted_user = g.subhub_deleted_users.new_user(uid=user_id, cust_id=cust_id, origin_system=origin_system, subscription_info=subscription_info)\n        new_deleted_user = g.subhub_deleted_users.save_user(deleted_user)\n        return new_deleted_user\n\n    def get_subscription_info(self, subscriptions: Dict[str, Any], current_sub: Dict[str, Any]):\n        \"\"\"\n        Format subscription info to insert into DeletedUsers record\n        :param subscriptions:\n        :return list of subscriptions subscription_info:\n        \"\"\"\n        subscription_info: List = []\n        plan = current_sub.get('plan')\n        logger.info('plan', plan=plan, current_sub=current_sub)\n        nickname = plan.get('nickname')\n        interval = plan.get('interval')\n        product = plan.get('product')\n        plan_amount = plan.get('amount')\n        sub = dict(plan_amount=plan_amount, nickname=nickname, productId=product, current_period_end=current_sub.get('current_period_end'), current_period_start=current_sub.get('current_period_start'), subscription_id=current_sub.get('id'))\n        subscription_info.append(sub)\n        for subs in subscriptions['data']:\n            plan = subs.get('plan')\n            nickname = plan.get('nickname')\n            interval = plan.get('interval')\n            plan_amount = plan.get('amount')\n            sub = dict(plan_amount=plan_amount, nickname=nickname, productId=subs.plan.product, current_period_end=subs.current_period_end, current_period_start=subs.current_period_start, subscription_id=subs.id)\n            subscription_info.append(sub)\n        return subscription_info\n\n    def get_origin_system(self, customer: Dict[str, Any]):\n        \"\"\"\n        Fetch origin system from Customer\n        :param customer:\n        :return origin_system:\n        \"\"\"\n        customer_metadata = customer.get('metadata')\n        origin_system = customer_metadata.get('origin_system', 'unknown')\n        return origin_system\n\n    def get_user_id(self, customer: Dict[str, Any]):\n        \"\"\"\n        Fetch the user_id associated with the Stripe customer_id\n        :param customer:\n        :return user_id:\n        :raises InvalidRequestError\n        :raises ClientError\n        \"\"\"\n        deleted = customer.get('deleted', False)\n        user_id = None\n        if not deleted:\n            user_metadata = customer.get('metadata')\n            logger.debug('metadata', user_metadata=user_metadata)\n            user_id = user_metadata.get('userid')\n        if user_id is None:\n            logger.error('customer subscription deleted - no userid', error=customer.get('id'), is_customer_deleted=deleted)\n            raise ClientError(f\"userid is None for customer {customer.get('id')}\")\n        return user_id\n\n    def get_customer(self, customer_id: str):\n        \"\"\"\n        Fetch Stripe customer\n        :param customer_id:\n        :return Customer:\n        :raises InvalidRequestError:\n        \"\"\"\n        try:\n            return vendor.retrieve_stripe_customer(customer_id=customer_id)\n        except InvalidRequestError as e:\n            logger.error('Unable to find customer', error=e)\n            raise e\n\n    def delete_customer(self, customer_id: str):\n        \"\"\"\n        Delete Stripe Customer if marked for deletion and no active subscriptions exist\n        :param customer_id:\n        :return\n        \"\"\"\n        return vendor.delete_stripe_customer(customer_id=customer_id)\n\n    def check_all_subscriptions(self, customer: Dict[str, Any]):\n        \"\"\"\n        Check if all subscriptions related to customer are cancelled\n        :param self:\n        :param customer:\n        :return bool:\n        \"\"\"\n        active_subscriptions = False\n        subs = customer.get('subscriptions')\n        sub_data = subs.get('data')\n        for sub in sub_data:\n            logger.debug('sub', sub=sub, active=sub.get('status'))\n            if sub.get('status') == 'active':\n                active_subscriptions = True\n            logger.debug('sub loop', active_subscriptions=active_subscriptions)\n        return active_subscriptions\n\n    def check_mark_delete(self, customer: Dict[str, Any]):\n        \"\"\"\n        Check if customer is marked for delete\n        :param customer:\n        :return bool:\n        \"\"\"\n        metadata = customer.get('metadata', None)\n        mark_delete = metadata.get('delete', False)\n        if mark_delete:\n            return True\n        return False",
+          "definition_reduction": {
+            "kb_chars": 7009,
+            "rendered_chars": 7009,
+            "output_chars": 7009,
+            "truncated": false,
+            "max_chars": 8000,
+            "mode": "full",
+            "docstrings_shortened": false,
+            "omitted_declarations": 0
+          },
+          "context_reduction": {
+            "mode": "full_fallback",
+            "reason": "no_relevant_members"
+          }
+        },
+        {
+          "name": "StripeCustomerSourceExpiring",
+          "qualified_name": "hub.vendor.customer.StripeCustomerSourceExpiring",
+          "source": "project",
+          "kind": "class",
+          "definition": "class StripeCustomerSourceExpiring(AbstractStripeHubEvent):\n\n    def run(self):\n        \"\"\"\n        Parse the event data sent by Stripe contained within self.payload\n        :return True to indicate successfully sent\n        \"\"\"\n        try:\n            logger.info('customer source expiring')\n            customer_id = self.payload.data.object.customer\n            customer = vendor.retrieve_stripe_customer(customer_id)\n            logger.info('customer', customer=customer)\n        except InvalidRequestError as e:\n            logger.error('Unable to find customer', error=e)\n            raise e\n        data = self.create_payload(customer)\n        routes = [StaticRoutes.SALESFORCE_ROUTE]\n        self.send_to_routes(routes, json.dumps(data))\n        return True\n\n    def create_payload(self, customer):\n        \"\"\"\n        Create payload to be sent to external sources\n        :param customer:\n        :return:\n        \"\"\"\n        email = customer.email\n        plan_nickname = self.first_plan_name(customer.subscriptions['data'])\n        return self.create_data(Email=email, Name=plan_nickname, PMT_Cust_Id__c=self.payload.data.object.customer, Last_4_Digits__c=self.payload.data.object.last4, Credit_Card_Type__c=self.payload.data.object.brand, Credit_Card_Exp_Month__c=self.payload.data.object.exp_month, Credit_Card_Exp_Year__c=self.payload.data.object.exp_year)\n\n    def first_plan_name(self, subscriptions):\n        \"\"\"\n        Get the plan name to return in the payload\n        :param subscriptions:\n        :return:\n        \"\"\"\n        name = ''\n        for subscription in subscriptions:\n            if subscription['status'] in ['active', 'trialing']:\n                product = vendor.retrieve_stripe_product(subscription['plan']['product'])\n                name = product['name']\n                break\n        return name",
+          "definition_reduction": {
+            "kb_chars": 1837,
+            "rendered_chars": 1837,
+            "output_chars": 1837,
+            "truncated": false,
+            "max_chars": 8000,
+            "mode": "full",
+            "docstrings_shortened": false,
+            "omitted_declarations": 0
+          },
+          "context_reduction": {
+            "mode": "full_fallback",
+            "reason": "no_relevant_members"
+          }
+        },
+        {
+          "name": "StripeCustomerUpdated",
+          "qualified_name": "hub.vendor.customer.StripeCustomerUpdated",
+          "source": "project",
+          "kind": "class",
+          "definition": "class StripeCustomerUpdated(AbstractStripeHubEvent):\n\n    def run(self):\n        \"\"\"\n        Parse the event data sent by Stripe contained within self.payload\n        :return True to indicate successfully sent\n        \"\"\"\n        logger.info('customer updated', payload=self.payload)\n        data = self.parse_payload()\n        logger.info('customer updated', data=data)\n        subscriptions = data.get('subscriptions')\n        deleted = data.get('deleted')\n        logger.info('updated deleted', deleted=deleted)\n        if deleted:\n            logger.info('updated subs ', subs=len(subscriptions))\n            if len(subscriptions) > 0:\n                for sub in subscriptions:\n                    logger.info('updated sub ', sub=sub.get('id'))\n                    self.cancel_subscription(subscription_id=sub.get('id'))\n                return True\n            else:\n                deleted_customer = vendor.delete_stripe_customer(customer_id=data.get('customer_id'))\n                logger.info('deleted customer', deleted_customer=deleted_customer)\n                return True\n        return True\n\n    def parse_payload(self):\n        \"\"\"\n        Create payload to be sent to external sources\n        :return:\n        \"\"\"\n        cust_name = self.payload.data.object.name\n        if not cust_name:\n            cust_name = ''\n        cust_name = cust_name.split(' ')\n        first_name = cust_name[0]\n        if len(cust_name) > 1:\n            if cust_name[1] == '':\n                last_name = '_'\n            else:\n                last_name = cust_name[1]\n        else:\n            last_name = '_'\n        return self.create_data(email=self.payload.data.object.email, customer_id=self.payload.data.object.id, FirstName=first_name, LastName=last_name, userid=self.payload.data.object.metadata.get('userid', None), deleted=self.payload.data.object.metadata.get('delete', False), subscriptions=self.payload.data.object.subscriptions.get('data'))\n\n    def cancel_subscription(self, subscription_id):\n        subscription = vendor.cancel_stripe_subscription_immediately(subscription_id=subscription_id, idempotency_key=utils.get_indempotency_key())\n        return subscription",
+          "definition_reduction": {
+            "kb_chars": 2179,
+            "rendered_chars": 2179,
+            "output_chars": 2179,
+            "truncated": false,
+            "max_chars": 8000,
+            "mode": "full",
+            "docstrings_shortened": false,
+            "omitted_declarations": 0
+          },
+          "context_reduction": {
+            "mode": "full_fallback",
+            "reason": "no_relevant_members"
+          }
+        },
+        {
+          "name": "StripeCustomerCreated",
+          "qualified_name": "hub.vendor.customer.StripeCustomerCreated",
+          "source": "project",
+          "kind": "class",
+          "definition": "class StripeCustomerCreated(AbstractStripeHubEvent):\n\n    def run(self):\n        \"\"\"\n        Parse the event data sent by Stripe contained within self.payload\n        :return True to indicate successfully sent\n        \"\"\"\n        logger.info('customer created', payload=self.payload)\n        data = self.create_payload()\n        logger.info('customer created', data=data)\n        routes = [StaticRoutes.SALESFORCE_ROUTE]\n        self.send_to_routes(routes, json.dumps(data))\n        return True\n\n    def create_payload(self):\n        \"\"\"\n        Create payload to be sent to external sources\n        :return:\n        \"\"\"\n        cust_name = self.payload.data.object.name\n        if not cust_name:\n            cust_name = ''\n        cust_name = cust_name.split(' ')\n        first_name = cust_name[0]\n        if len(cust_name) > 1:\n            last_name = cust_name[1]\n        else:\n            last_name = '_'\n        return self.create_data(Email=self.payload.data.object.email, PMT_Cust_Id__c=self.payload.data.object.id, FirstName=first_name, LastName=last_name, FxA_Id__c=self.payload.data.object.metadata.get('userid', utils.get_indempotency_key()))",
+          "definition_reduction": {
+            "kb_chars": 1153,
+            "rendered_chars": 1153,
+            "output_chars": 1153,
+            "truncated": false,
+            "max_chars": 8000,
+            "mode": "full",
+            "docstrings_shortened": false,
+            "omitted_declarations": 0
+          },
+          "context_reduction": {
+            "mode": "full_fallback",
+            "reason": "no_relevant_members"
+          }
+        }
+      ],
+      "diagnostics": {
+        "context_reduction": [
+          {
+            "component": "target",
+            "mode": "sliced",
+            "reason": "",
+            "before": 3,
+            "after": 3,
+            "retained_evidence": [
+              {
+                "kind": "collection_operation",
+                "source_line": 745,
+                "reason": "operation_on_relevant_collection_or_element"
+              },
+              {
+                "kind": "collection_operation",
+                "source_line": 746,
+                "reason": "operation_on_relevant_collection_or_element"
+              }
+            ]
+          },
+          {
+            "mode": "signature_only",
+            "reason": "ambiguous_callee",
+            "callee": "shared.vendor.retrieve_stripe_plan",
+            "source_file": "<fixture_root>\\src\\shared\\vendor.py",
+            "source_line": 564,
+            "resolution": "resolved"
+          },
+          {
+            "mode": "unresolved",
+            "reason": "shadowed_name_or_receiver",
+            "call": "plan.get"
+          },
+          {
+            "component": "caller",
+            "mode": "unresolved",
+            "reason": "shadowed_name_or_receiver",
+            "call": "self.get_previous_plan_amount",
+            "source_file": "<fixture_root>\\src\\hub\\vendor\\customer.py",
+            "source_line": 699
+          }
+        ],
+        "count": 6,
+        "target_members": {
+          "methods": [],
+          "attributes": []
+        },
+        "by_source": {
+          "project": 6
+        },
+        "by_kind": {
+          "class": 6
+        },
+        "timings_seconds": {
+          "read_parse_target": 0.015,
+          "file_import_analyzer": 0.016,
+          "slice_and_retrieval": 0.25,
+          "exact_imports": 0.0,
+          "slice_classes": 0.0,
+          "visible_type_signals": 0.016,
+          "project_exact_imports": 0.0,
+          "project_semantic": 0.0,
+          "module_inventory": 0.0,
+          "project_name_similarity": 0.0,
+          "package_name_similarity": 0.0,
+          "structural_bm25": 0.0,
+          "deduplicate_and_prepend": 0.0,
+          "export_total": 0.296
+        },
+        "retrieval_counts": {
+          "exact_imports": 17,
+          "slice_classes": 1,
+          "visible_type_signals": 13,
+          "project_exact_imports": 0,
+          "project_semantic": 12,
+          "module_inventory": 0,
+          "project_name_similarity": 6,
+          "package_name_similarity": 0,
+          "structural_bm25": 0
+        }
+      },
+      "revision": "036f0434218305be97ab477e9cf2e5f5a8ea6617",
+      "source_url": "https://github.com/mozilla/subhub/blob/036f0434218305be97ab477e9cf2e5f5a8ea6617/src/hub/vendor/customer.py",
+      "source_sha256": {
+        "src/hub/vendor/customer.py": "9b128bdef27d47f7dfdb095cb082f2745d9d6aac7b396ff38ac36af14183600c",
+        "src/shared/vendor.py": "68a24403684a2059b1a56026c2d59a76934610c0fdee672649e8ccc2a110c810"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "mapping_constructor",
+      "repository": "jwnwilson/python_types",
+      "project": "jwnwilson/python_types",
+      "file": "main.py",
+      "passed": true,
+      "checks": [
+        {
+          "where": "slice",
+          "evidence": "expect_user_mapping({'test': User()})",
+          "passed": true
+        },
+        {
+          "where": "slice",
+          "evidence": "target annotation masked",
+          "passed": true
+        },
+        {
+          "where": "source",
+          "evidence": "KB, shared AST and checkout unchanged",
+          "passed": true
+        },
+        {
+          "where": "candidates",
+          "evidence": "top-10 and 8k cap",
+          "passed": true
+        }
+      ],
+      "slice": "from typing import List\nfrom typing import Mapping\nfrom typing import Sequence\ndef expect_user_mapping(user_mapping: <mask>) -> None:\n    \"\"\"Take a mapping of string -> users\n\n    :param user_mapping: [description]\n    \"\"\"\n    for key in user_mapping:\n        print(f'User: {user_mapping[key]}')\n'\\nSimple type checking for a python script example\\n'\nif __name__ == '__main__':\n    expect_user_mapping({'test': User()})",
+      "candidates": [
+        {
+          "name": "User",
+          "qualified_name": "main.User",
+          "source": "project",
+          "kind": "class",
+          "definition": "class User:\n\n    def __str__(self):\n        return 'User instance!'",
+          "definition_reduction": {
+            "kb_chars": 67,
+            "rendered_chars": 67,
+            "output_chars": 67,
+            "truncated": false,
+            "max_chars": 8000,
+            "mode": "full",
+            "docstrings_shortened": false,
+            "omitted_declarations": 0
+          },
+          "context_reduction": {
+            "mode": "full_fallback",
+            "reason": "no_relevant_members"
+          }
+        },
+        {
+          "name": "Vector",
+          "qualified_name": "main.Vector",
+          "source": "project",
+          "kind": "type_alias",
+          "definition": "Vector = List[float]",
+          "definition_reduction": {
+            "kb_chars": 20,
+            "rendered_chars": 20,
+            "output_chars": 20,
+            "truncated": false,
+            "max_chars": 8000,
+            "mode": "full",
+            "docstrings_shortened": false,
+            "omitted_declarations": 0
+          }
+        }
+      ],
+      "diagnostics": {
+        "context_reduction": [
+          {
+            "component": "target",
+            "mode": "sliced",
+            "reason": "",
+            "before": 3,
+            "after": 3,
+            "retained_evidence": [
+              {
+                "kind": "collection_operation",
+                "source_line": 37,
+                "reason": "operation_on_relevant_collection_or_element"
+              }
+            ]
+          },
+          {
+            "mode": "unresolved",
+            "reason": "ambiguous_or_missing_binding",
+            "call": "print"
+          },
+          {
+            "component": "caller",
+            "source_file": "<fixture_root>\\main.py",
+            "source_line": 47,
+            "resolution": "resolved",
+            "scope": "module",
+            "reason_evidence": "resolved_argument_expression",
+            "mode": "sliced",
+            "reason": "",
+            "before": 7,
+            "after": 3,
+            "retained_evidence": [
+              {
+                "kind": "collection_operation",
+                "source_line": 47,
+                "reason": "operation_on_relevant_collection_or_element"
+              }
+            ]
+          }
+        ],
+        "count": 2,
+        "target_members": {
+          "methods": [],
+          "attributes": []
+        },
+        "by_source": {
+          "project": 2
+        },
+        "by_kind": {
+          "class": 1,
+          "type_alias": 1
+        },
+        "timings_seconds": {
+          "read_parse_target": 0.0,
+          "file_import_analyzer": 0.016,
+          "slice_and_retrieval": 0.0,
+          "exact_imports": 0.0,
+          "slice_classes": 0.0,
+          "visible_type_signals": 0.0,
+          "project_exact_imports": 0.0,
+          "project_semantic": 0.0,
+          "module_inventory": 0.0,
+          "project_name_similarity": 0.0,
+          "package_name_similarity": 0.0,
+          "structural_bm25": 0.0,
+          "deduplicate_and_prepend": 0.0,
+          "export_total": 0.016
+        },
+        "retrieval_counts": {
+          "exact_imports": 3,
+          "slice_classes": 0,
+          "visible_type_signals": 4,
+          "project_exact_imports": 0,
+          "project_semantic": 3,
+          "module_inventory": 0,
+          "project_name_similarity": 2,
+          "package_name_similarity": 0,
+          "structural_bm25": 0
+        }
+      },
+      "revision": "f73b86b70f0d04cda8a70b303ffcd5df0b9d18dd",
+      "source_url": "https://github.com/jwnwilson/python_types/blob/f73b86b70f0d04cda8a70b303ffcd5df0b9d18dd/main.py",
+      "source_sha256": {
+        "main.py": "0175ff60733b983e573ca829302aeba753e3ac49207787d422630377108b6500"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "adventofcode_lambda",
+      "repository": "dmeleshko/adventofcode",
+      "project": "dmeleshko/adventofcode",
+      "file": "y2018/day03/day03.py",
+      "passed": true,
+      "checks": [
+        {
+          "where": "slice",
+          "evidence": "make_grid(claims: typing.List[Claim])",
+          "passed": true
+        },
+        {
+          "where": "slice",
+          "evidence": "target annotation masked",
+          "passed": true
+        },
+        {
+          "where": "source",
+          "evidence": "KB, shared AST and checkout unchanged",
+          "passed": true
+        },
+        {
+          "where": "candidates",
+          "evidence": "top-10 and 8k cap",
+          "passed": true
+        }
+      ],
+      "slice": "import re\nimport typing\nfrom dataclasses import dataclass\nfrom itertools import chain\ndef make_grid(claims: typing.List[Claim]) -> typing.List[typing.List[int]]:\n    pass\ndef part1(claims: <mask>) -> int:\n    grid = make_grid(claims)\n    count = len(list(filter(lambda x: x == -1, chain.from_iterable(grid))))\n    return count",
+      "candidates": [
+        {
+          "name": "Claim",
+          "qualified_name": "y2018.day03.day03.Claim",
+          "source": "project",
+          "kind": "class",
+          "definition": "@dataclass\nclass Claim:\n    number: int\n    x: int\n    y: int\n    width: int\n    height: int",
+          "definition_reduction": {
+            "kb_chars": 92,
+            "rendered_chars": 92,
+            "output_chars": 92,
+            "truncated": false,
+            "max_chars": 8000,
+            "mode": "full",
+            "docstrings_shortened": false,
+            "omitted_declarations": 0
+          },
+          "context_reduction": {
+            "mode": "full_fallback",
+            "reason": "no_relevant_members"
+          }
+        },
+        {
+          "name": "Claim",
+          "qualified_name": "Claim",
+          "source": "project",
+          "kind": "function_return",
+          "definition": "class Claim:\n    # returned_by: y2018.day03.day03.parse_string",
+          "definition_reduction": {
+            "kb_chars": 62,
+            "rendered_chars": 62,
+            "output_chars": 62,
+            "truncated": false,
+            "max_chars": 8000,
+            "mode": "full",
+            "docstrings_shortened": false,
+            "omitted_declarations": 0
+          }
+        }
+      ],
+      "diagnostics": {
+        "context_reduction": [
+          {
+            "component": "target",
+            "mode": "sliced",
+            "reason": "",
+            "before": 3,
+            "after": 3,
+            "retained_evidence": [
+              {
+                "kind": "collection_operation",
+                "source_line": 40,
+                "reason": "operation_on_relevant_collection_or_element"
+              }
+            ]
+          },
+          {
+            "mode": "signature_only",
+            "reason": "informative_annotation",
+            "callee": "y2018.day03.day03.make_grid",
+            "source_file": "<fixture_root>\\y2018\\day03\\day03.py",
+            "source_line": 27,
+            "resolution": "resolved"
+          },
+          {
+            "mode": "unresolved",
+            "reason": "ambiguous_or_missing_binding",
+            "call": "len"
+          },
+          {
+            "mode": "unresolved",
+            "reason": "ambiguous_or_missing_binding",
+            "call": "list"
+          },
+          {
+            "mode": "unresolved",
+            "reason": "ambiguous_or_missing_binding",
+            "call": "filter"
+          },
+          {
+            "mode": "unresolved",
+            "reason": "ambiguous_import_module",
+            "call": "chain.from_iterable"
+          }
+        ],
+        "count": 2,
+        "target_members": {
+          "methods": [],
+          "attributes": []
+        },
+        "by_source": {
+          "project": 2
+        },
+        "by_kind": {
+          "class": 1,
+          "function_return": 1
+        },
+        "timings_seconds": {
+          "read_parse_target": 0.016,
+          "file_import_analyzer": 0.0,
+          "slice_and_retrieval": 0.031,
+          "exact_imports": 0.0,
+          "slice_classes": 0.0,
+          "visible_type_signals": 0.0,
+          "project_exact_imports": 0.0,
+          "project_semantic": 0.0,
+          "module_inventory": 0.0,
+          "project_name_similarity": 0.0,
+          "package_name_similarity": 0.0,
+          "structural_bm25": 0.0,
+          "deduplicate_and_prepend": 0.0,
+          "export_total": 0.047
+        },
+        "retrieval_counts": {
+          "exact_imports": 4,
+          "slice_classes": 0,
+          "visible_type_signals": 2,
+          "project_exact_imports": 0,
+          "project_semantic": 0,
+          "module_inventory": 0,
+          "project_name_similarity": 1,
+          "package_name_similarity": 0,
+          "structural_bm25": 0
+        }
+      },
+      "revision": "0349af36007aa17d4243f6ee06846f1824468f53",
+      "source_url": "https://github.com/dmeleshko/adventofcode/blob/0349af36007aa17d4243f6ee06846f1824468f53/y2018/day03/day03.py",
+      "source_sha256": {
+        "y2018/day03/day03.py": "d61a95bfc039df6cd67c52484106d66494bfadcce91bd28a9f3ed8b98f0e1636"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "nicecream_wildcards",
+      "repository": "altcatalin/nicecream-history",
+      "project": "altcatalin/nicecream-history",
+      "file": "api/database.py",
+      "passed": true,
+      "checks": [
+        {
+          "where": "slice",
+          "evidence": "fetch_bookmark(database, bookmark_id)",
+          "passed": true
+        },
+        {
+          "where": "slice",
+          "evidence": "fetch_bookmark(database, request['path']['bookmark_id'])",
+          "passed": true
+        },
+        {
+          "where": "slice",
+          "evidence": "target annotation masked",
+          "passed": true
+        },
+        {
+          "where": "source",
+          "evidence": "KB, shared AST and checkout unchanged",
+          "passed": true
+        },
+        {
+          "where": "candidates",
+          "evidence": "top-10 and 8k cap",
+          "passed": true
+        }
+      ],
+      "slice": "from typing import List, Dict, Mapping\nfrom aiohttp import web\nfrom databases import Database\nfrom sqlalchemy import desc, select, CHAR\nfrom api.schemas import *\nfrom api.settings import settings\nfrom sqlalchemy import MetaData, Table, Column, Integer, String, Index, DateTime, func, ForeignKey\nasync def fetch_bookmark(database: Database, bookmark_id: int) -> <mask>:\n    bookmark_schema = BookmarkSchema()\n    query = select([bookmarks_table, songs_table.c.title.label('song_title')]).select_from(bookmarks_table.outerjoin(songs_table)).where(bookmarks_table.c.id == bookmark_id)\n    row = await database.fetch_one(query)\n    data = bookmark_schema.dump(row)\n    return data\nasync def post_user_bookmarks_handler(request: web.Request) -> web.Response:\n    \"\"\"Add user bookmark\n    ---\n    post:\n        tags:\n            - user\n        summary: Add user bookmark\n        requestBody:\n            required: true\n            content:\n                application/json:\n                    schema: BookmarksRequestBodySchema\n        security:\n            - cookieAuth: []\n        responses:\n            200:\n                description: Successful\n                content:\n                    application/json:\n                        schema: BookmarkSchema\n            401:\n                description: Unauthorized\n                content:\n                    application/json:\n                        schema: HTTPClientErrorSchema\n            415:\n                description: Unsupported Media Type\n                content:\n                    application/json:\n                        schema: HTTPClientErrorSchema\n            422:\n                description: Validation Error\n                content:\n                    application/json:\n                        schema: HTTPValidationErrorSchema\n    \"\"\"\n    database = request.app['database']\n    session = await get_session(request)\n    song = await fetch_song(database, request['body']['song_id'])\n    if not song:\n        validation_error_schema = HTTPValidationErrorSchema()\n        data = validation_error_schema.dump({'detail': {'body': {'song_id': ['Not found.']}}})\n        raise web.HTTPUnprocessableEntity(text=json.dumps(data), content_type='application/json')\n    bookmark = await fetch_bookmark_by_user_and_song(database, session['user_id'], request['body']['song_id'])\n    if bookmark:\n        bookmark_id = bookmark['id']\n    else:\n        bookmark_id = await insert_bookmark(database, session['user_id'], request['body']['song_id'])\n    data = await fetch_bookmark(database, bookmark_id)\n    return web.json_response(data)\nasync def delete_user_bookmarks_handler(request: web.Request) -> web.Response:\n    \"\"\"Delete user bookmark\n    ---\n    delete:\n        tags:\n            - user\n        summary: Delete user bookmark\n        parameters:\n            -\n                name: bookmark_id\n                in: path\n                required: true\n                description: Bookmark ID\n                schema:\n                    type: integer\n        security:\n            - cookieAuth: []\n        responses:\n            200:\n                description: Successful\n                content:\n                    application/json:\n                        schema:\n                            type: object\n            401:\n                description: Unauthorized\n                content:\n                    application/json:\n                        schema: HTTPClientErrorSchema\n            404:\n                description: Not Found\n                content:\n                    application/json:\n                        schema: HTTPClientErrorSchema\n            422:\n                description: Validation Error\n                content:\n                    application/json:\n                        schema: HTTPValidationErrorSchema\n    \"\"\"\n    database = request.app['database']\n    session = await get_session(request)\n    data = await fetch_bookmark(database, request['path']['bookmark_id'])\n    await delete_bookmark(database, request['path']['bookmark_id'])",
+      "candidates": [
+        {
+          "name": "BookmarkSchema",
+          "qualified_name": "api.schemas.BookmarkSchema",
+          "source": "project",
+          "kind": "class",
+          "definition": "class BookmarkSchema(BaseSchema):\n    id = fields.Integer(required=True, dump_only=True)\n    created_at = fields.DateTime(required=True, dump_only=True)\n    song_id = fields.Integer(required=True)\n    song_title = fields.Str(required=True, dump_only=True)\n    user_id = fields.Integer(required=True)",
+          "definition_reduction": {
+            "kb_chars": 299,
+            "rendered_chars": 299,
+            "output_chars": 299,
+            "truncated": false,
+            "max_chars": 8000,
+            "mode": "full",
+            "docstrings_shortened": false,
+            "omitted_declarations": 0
+          },
+          "context_reduction": {
+            "mode": "full_fallback",
+            "reason": "no_relevant_members"
+          }
+        },
+        {
+          "name": "HTTPClientErrorSchema",
+          "qualified_name": "api.schemas.HTTPClientErrorSchema",
+          "source": "project",
+          "kind": "class",
+          "definition": "class HTTPClientErrorSchema(Schema):\n    detail = fields.Str(required=True)",
+          "definition_reduction": {
+            "kb_chars": 75,
+            "rendered_chars": 75,
+            "output_chars": 75,
+            "truncated": false,
+            "max_chars": 8000,
+            "mode": "full",
+            "docstrings_shortened": false,
+            "omitted_declarations": 0
+          },
+          "context_reduction": {
+            "mode": "full_fallback",
+            "reason": "no_relevant_members"
+          }
+        },
+        {
+          "name": "HTTPValidationErrorSchema",
+          "qualified_name": "api.schemas.HTTPValidationErrorSchema",
+          "source": "project",
+          "kind": "class",
+          "definition": "class HTTPValidationErrorSchema(Schema):\n    detail = fields.Dict(keys=fields.Str(), values=fields.List(fields.Dict(keys=fields.Str(), values=fields.List(fields.Str()))))",
+          "definition_reduction": {
+            "kb_chars": 170,
+            "rendered_chars": 170,
+            "output_chars": 170,
+            "truncated": false,
+            "max_chars": 8000,
+            "mode": "full",
+            "docstrings_shortened": false,
+            "omitted_declarations": 0
+          },
+          "context_reduction": {
+            "mode": "full_fallback",
+            "reason": "no_relevant_members"
+          }
+        },
+        {
+          "name": "BookmarksRequestBodySchema",
+          "qualified_name": "api.schemas.BookmarksRequestBodySchema",
+          "source": "project",
+          "kind": "class",
+          "definition": "class BookmarksRequestBodySchema(BookmarkSchema):\n\n    class Meta:\n        fields = ('song_id',)",
+          "definition_reduction": {
+            "kb_chars": 96,
+            "rendered_chars": 96,
+            "output_chars": 96,
+            "truncated": false,
+            "max_chars": 8000,
+            "mode": "full",
+            "docstrings_shortened": false,
+            "omitted_declarations": 0
+          },
+          "context_reduction": {
+            "mode": "full_fallback",
+            "reason": "no_relevant_members"
+          }
+        },
+        {
+          "name": "BaseSchema",
+          "qualified_name": "api.schemas.BaseSchema",
+          "source": "project",
+          "kind": "class",
+          "definition": "class BaseSchema(Schema):\n\n    @pre_dump(pass_many=True)\n    def pre_dump(self, data: Union[List, Dict], many: bool):\n        if many:\n            return [dict(element) for element in data]\n        return data",
+          "definition_reduction": {
+            "kb_chars": 209,
+            "rendered_chars": 209,
+            "output_chars": 209,
+            "truncated": false,
+            "max_chars": 8000,
+            "mode": "full",
+            "docstrings_shortened": false,
+            "omitted_declarations": 0
+          },
+          "context_reduction": {
+            "mode": "full_fallback",
+            "reason": "no_relevant_members"
+          }
+        },
+        {
+          "name": "HistorySchema",
+          "qualified_name": "api.schemas.HistorySchema",
+          "source": "project",
+          "kind": "class",
+          "definition": "class HistorySchema(BaseSchema):\n    id = fields.Integer(required=True)\n    created_at = fields.DateTime(required=True)\n    song_id = fields.Integer(required=True)\n    song_title = fields.Str(required=True)\n    channel_id = fields.Integer(required=True)\n    bookmark_id = fields.Integer(default=0)",
+          "definition_reduction": {
+            "kb_chars": 297,
+            "rendered_chars": 297,
+            "output_chars": 297,
+            "truncated": false,
+            "max_chars": 8000,
+            "mode": "full",
+            "docstrings_shortened": false,
+            "omitted_declarations": 0
+          },
+          "context_reduction": {
+            "mode": "full_fallback",
+            "reason": "no_relevant_members"
+          }
+        },
+        {
+          "name": "BookmarkRequestPathSchema",
+          "qualified_name": "api.schemas.BookmarkRequestPathSchema",
+          "source": "project",
+          "kind": "class",
+          "definition": "class BookmarkRequestPathSchema(Schema):\n    bookmark_id = fields.Integer(required=True, validate=validate.Range(min=1))",
+          "definition_reduction": {
+            "kb_chars": 120,
+            "rendered_chars": 120,
+            "output_chars": 120,
+            "truncated": false,
+            "max_chars": 8000,
+            "mode": "full",
+            "docstrings_shortened": false,
+            "omitted_declarations": 0
+          },
+          "context_reduction": {
+            "mode": "full_fallback",
+            "reason": "no_relevant_members"
+          }
+        },
+        {
+          "name": "ChannelExtraSchema",
+          "qualified_name": "api.schemas.ChannelExtraSchema",
+          "source": "project",
+          "kind": "class",
+          "definition": "class ChannelExtraSchema(ChannelSchema):\n    song_id = fields.Integer(required=True)\n    song_title = fields.Str(required=True)",
+          "definition_reduction": {
+            "kb_chars": 127,
+            "rendered_chars": 127,
+            "output_chars": 127,
+            "truncated": false,
+            "max_chars": 8000,
+            "mode": "full",
+            "docstrings_shortened": false,
+            "omitted_declarations": 0
+          },
+          "context_reduction": {
+            "mode": "full_fallback",
+            "reason": "no_relevant_members"
+          }
+        },
+        {
+          "name": "ChannelSchema",
+          "qualified_name": "api.schemas.ChannelSchema",
+          "source": "project",
+          "kind": "class",
+          "definition": "class ChannelSchema(BaseSchema):\n    id = fields.Integer(required=True, dump_only=True)\n    name = fields.Str(required=True)\n    url = fields.Str(required=True)",
+          "definition_reduction": {
+            "kb_chars": 160,
+            "rendered_chars": 160,
+            "output_chars": 160,
+            "truncated": false,
+            "max_chars": 8000,
+            "mode": "full",
+            "docstrings_shortened": false,
+            "omitted_declarations": 0
+          },
+          "context_reduction": {
+            "mode": "full_fallback",
+            "reason": "no_relevant_members"
+          }
+        },
+        {
+          "name": "SongSchema",
+          "qualified_name": "api.schemas.SongSchema",
+          "source": "project",
+          "kind": "class",
+          "definition": "class SongSchema(BaseSchema):\n    id = fields.Integer(required=True, dump_only=True)\n    title = fields.Str(required=True)",
+          "definition_reduction": {
+            "kb_chars": 122,
+            "rendered_chars": 122,
+            "output_chars": 122,
+            "truncated": false,
+            "max_chars": 8000,
+            "mode": "full",
+            "docstrings_shortened": false,
+            "omitted_declarations": 0
+          },
+          "context_reduction": {
+            "mode": "full_fallback",
+            "reason": "no_relevant_members"
+          }
+        }
+      ],
+      "diagnostics": {
+        "context_reduction": [
+          {
+            "component": "target",
+            "mode": "sliced",
+            "reason": "",
+            "before": 5,
+            "after": 5,
+            "retained_evidence": []
+          },
+          {
+            "mode": "unresolved",
+            "reason": "ambiguous_or_missing_definition",
+            "call": "BookmarkSchema"
+          },
+          {
+            "mode": "unresolved",
+            "reason": "dynamic_receiver",
+            "call": "select([bookmarks_table, songs_table.c.title.label('song_title')]).select_from(bookmarks_table.outerjoin(songs_table)).where"
+          },
+          {
+            "mode": "unresolved",
+            "reason": "dynamic_receiver",
+            "call": "select([bookmarks_table, songs_table.c.title.label('song_title')]).select_from"
+          },
+          {
+            "mode": "unresolved",
+            "reason": "ambiguous_import_module",
+            "call": "select"
+          },
+          {
+            "mode": "unresolved",
+            "reason": "unresolved_receiver",
+            "call": "songs_table.c.title.label"
+          },
+          {
+            "mode": "unresolved",
+            "reason": "unresolved_receiver",
+            "call": "bookmarks_table.outerjoin"
+          },
+          {
+            "mode": "unresolved",
+            "reason": "shadowed_name_or_receiver",
+            "call": "database.fetch_one"
+          },
+          {
+            "mode": "unresolved",
+            "reason": "shadowed_name_or_receiver",
+            "call": "bookmark_schema.dump"
+          },
+          {
+            "component": "caller",
+            "source_file": "<fixture_root>\\api\\views.py",
+            "source_line": 321,
+            "resolution": "resolved",
+            "scope": "function",
+            "reason_evidence": "resolved_argument_expression",
+            "mode": "sliced",
+            "reason": "",
+            "before": 14,
+            "after": 14,
+            "retained_evidence": [
+              {
+                "kind": "collection_operation",
+                "source_line": 307,
+                "reason": "operation_on_relevant_collection_or_element"
+              },
+              {
+                "kind": "collection_operation",
+                "source_line": 314,
+                "reason": "operation_on_relevant_collection_or_element"
+              },
+              {
+                "kind": "collection_operation",
+                "source_line": 319,
+                "reason": "operation_on_relevant_collection_or_element"
+              },
+              {
+                "kind": "collection_operation",
+                "source_line": 321,
+                "reason": "operation_on_relevant_collection_or_element"
+              }
+            ]
+          },
+          {
+            "component": "caller",
+            "source_file": "<fixture_root>\\api\\views.py",
+            "source_line": 370,
+            "resolution": "resolved",
+            "scope": "function",
+            "reason_evidence": "resolved_argument_expression",
+            "mode": "sliced",
+            "reason": "",
+            "before": 8,
+            "after": 5,
+            "retained_evidence": [
+              {
+                "kind": "collection_operation",
+                "source_line": 368,
+                "reason": "operation_on_relevant_collection_or_element"
+              },
+              {
+                "kind": "collection_operation",
+                "source_line": 369,
+                "reason": "operation_on_relevant_collection_or_element"
+              },
+              {
+                "kind": "collection_operation",
+                "source_line": 370,
+                "reason": "operation_on_relevant_collection_or_element"
+              },
+              {
+                "kind": "collection_operation",
+                "source_line": 375,
+                "reason": "operation_on_relevant_collection_or_element"
+              }
+            ]
+          }
+        ],
+        "count": 10,
+        "target_members": {
+          "methods": [],
+          "attributes": []
+        },
+        "by_source": {
+          "project": 10
+        },
+        "by_kind": {
+          "class": 10
+        },
+        "timings_seconds": {
+          "read_parse_target": 0.015,
+          "file_import_analyzer": 0.0,
+          "slice_and_retrieval": 0.344,
+          "export_total": 0.359
+        },
+        "retrieval_counts": {}
+      },
+      "revision": "b6f049fabf643a981901366bd4a73f889e4b67cf",
+      "source_url": "https://github.com/altcatalin/nicecream-history/blob/b6f049fabf643a981901366bd4a73f889e4b67cf/api/database.py",
+      "source_sha256": {
+        "api/database.py": "06750afa9657c5f43357db3f28390679003a567415eaae50399904aab5c80186",
+        "api/views.py": "90e95d907b64ec491ba22d4338004c9ee061bd0bb4d4a8192634e2d1238a059a",
+        "api/schemas.py": "c5a6a358b395e5968c4afb03c783e207a74002b5bff5652de3e44239d2911c45",
+        "api/auth.py": "b227c8b50d263c618059def8b50546839a17d6acea714dec51bcf0af6d92bb37"
+      },
+      "status": "passed"
+    },
+    {
+      "id": "mort_documented_caller",
+      "repository": "alexdong/mort",
+      "project": "alexdong/mort",
+      "file": "mort/driver.py",
+      "passed": true,
+      "checks": [
+        {
+          "where": "slice",
+          "evidence": "Windows",
+          "passed": true
+        },
+        {
+          "where": "slice",
+          "evidence": "targets: List[Dict]",
+          "passed": true
+        },
+        {
+          "where": "slice",
+          "evidence": "target annotation masked",
+          "passed": true
+        },
+        {
+          "where": "source",
+          "evidence": "KB, shared AST and checkout unchanged",
+          "passed": true
+        },
+        {
+          "where": "candidates",
+          "evidence": "top-10 and 8k cap",
+          "passed": true
+        },
+        {
+          "where": "slice",
+          "evidence": "complete target docstring preserved",
+          "passed": true
+        }
+      ],
+      "slice": "import logging\nfrom typing import List, Dict, Tuple\nimport requests\nfrom mort.list_utils import every\nfrom mort.local_conf import BROWSER_STACK_ACCESS_KEY, TEST_AGAINST_SERVER\ndef submit_request(path: str, targets: <mask>) -> str:\n    \"\"\"\n    Request a set of screenshots to be generated for the specified `url` on `targets` devices.\n\n    We first send a POST request to `POST /screenshots`, which will send back a `job_id`;\n\n    :param path: path to the web page we are testing. For example: `\"/products/collage-posters\"`\n    :param targets: a list of target OS and browser \"descriptors\". For example: [\n            {\n                \"os\": \"Windows\",\n                \"os_version\": \"XP\",\n                \"browser\": \"ie\",\n                \"browser_version\": \"7.0\"\n            },\n            {\n                \"os\": \"ios\",\n                \"os_version\": \"6.0\",\n                \"device\": \"iPhone 4S (6.0)\"\n            }\n        ]\n    :return: the job_id against which we can poll to download images when the\n        screen shots are ready.\n    \"\"\"\n    request_payload = {'url': TEST_AGAINST_SERVER + path, 'browsers': targets}\n    headers = {'content-type': 'application/json', 'Accept': 'application/json'}\n    logger.debug('Sending screen shot requests: %s', request_payload)\n    r = requests.post('https://www.browserstack.com/screenshots', json=request_payload, headers=headers, auth=BROWSER_STACK_ACCESS_KEY)\n    if r.status_code != 200:\n        logger.error('BrowserStack returns error code: %d', r.status_code)\n        if r.status_code == 422 and 'job_id' in r.json():\n            job_id = r.json()['job_id']\n            logger.info('BrowserStack returns an existing job id %s, switching to it', job_id)\n        else:\n            logger.error('invalid request: %s', r.content)\n            raise InvalidRequestError('BrowserStack returns status_code: %d', r.status_code)\n    job_id = r.json()['job_id']\n    logger.info('BrowserStack returns job id: %s', job_id)\n    return job_id\ndef capture(paths: List[str], targets: List[Dict], git_hash: str):\n    \"\"\"\n    Capture the screen shots for all the `paths` across all the OS and devices\n    defined in `targets`.\n\n    :param paths: List of all paths\n    :param targets: List of all the targets\n    :param git_hash: The hash of the current repo\n    :param per_request_timeout_in_seconds: max amount of time we'll wait for each screen shot event\n    \"\"\"\n    logger.debug('Start capturing screen shots')\n    logger.debug('- Paths: %s', paths)\n    logger.debug('- Targets: %s', targets)\n    for path in paths:\n        logger.debug('Requesting screen shot for %s ...', path)\n        job_id = submit_request(path, targets)\n        total_seconds_in_waiting = 0\n        while True:\n            job_is_completed, payload = get_job_state(job_id)\n            if job_is_completed:\n                logger.info('Job %s is completed. ', job_id)\n                break\n            done_count = len(list(filter(is_done, payload['screenshots'])))\n            total_seconds_in_waiting += 1\n            logger.debug('Waiting %d seconds, working done so far [%d / %d]', total_seconds_in_waiting, done_count, len(targets))\n    logger.info('All requests are completed. Saving everything to disk...')",
+      "candidates": [
+        {
+          "name": "InvalidRequestError",
+          "qualified_name": "mort.driver.InvalidRequestError",
+          "source": "project",
+          "kind": "class",
+          "definition": "class InvalidRequestError(Exception):\n    pass",
+          "definition_reduction": {
+            "kb_chars": 46,
+            "rendered_chars": 46,
+            "output_chars": 46,
+            "truncated": false,
+            "max_chars": 8000,
+            "mode": "full",
+            "docstrings_shortened": false,
+            "omitted_declarations": 0
+          },
+          "context_reduction": {
+            "mode": "full_fallback",
+            "reason": "no_relevant_members"
+          }
+        }
+      ],
+      "diagnostics": {
+        "context_reduction": [
+          {
+            "component": "target",
+            "mode": "sliced",
+            "reason": "",
+            "before": 15,
+            "after": 15,
+            "retained_evidence": [
+              {
+                "kind": "collection_operation",
+                "source_line": 51,
+                "reason": "operation_on_relevant_collection_or_element"
+              },
+              {
+                "kind": "collection_operation",
+                "source_line": 58,
+                "reason": "operation_on_relevant_collection_or_element"
+              }
+            ]
+          },
+          {
+            "mode": "unresolved",
+            "reason": "unresolved_receiver",
+            "call": "logger.debug"
+          },
+          {
+            "mode": "unresolved",
+            "reason": "ambiguous_import_module",
+            "call": "requests.post"
+          },
+          {
+            "mode": "unresolved",
+            "reason": "unresolved_receiver",
+            "call": "logger.error"
+          },
+          {
+            "mode": "unresolved",
+            "reason": "shadowed_name_or_receiver",
+            "call": "r.json"
+          },
+          {
+            "mode": "unresolved",
+            "reason": "shadowed_name_or_receiver",
+            "call": "r.json"
+          },
+          {
+            "mode": "unresolved",
+            "reason": "unresolved_receiver",
+            "call": "logger.info"
+          },
+          {
+            "mode": "unresolved",
+            "reason": "unresolved_receiver",
+            "call": "logger.error"
+          },
+          {
+            "mode": "unresolved",
+            "reason": "unresolved_receiver",
+            "call": "InvalidRequestError"
+          },
+          {
+            "mode": "unresolved",
+            "reason": "shadowed_name_or_receiver",
+            "call": "r.json"
+          },
+          {
+            "mode": "unresolved",
+            "reason": "unresolved_receiver",
+            "call": "logger.info"
+          },
+          {
+            "component": "caller",
+            "source_file": "<fixture_root>\\mort\\controller.py",
+            "source_line": 31,
+            "resolution": "resolved",
+            "scope": "function",
+            "reason_evidence": "resolved_argument_expression",
+            "mode": "sliced",
+            "reason": "",
+            "before": 22,
+            "after": 17,
+            "retained_evidence": [
+              {
+                "kind": "collection_operation",
+                "source_line": 26,
+                "reason": "operation_on_relevant_collection_or_element"
+              },
+              {
+                "kind": "collection_operation",
+                "source_line": 31,
+                "reason": "operation_on_relevant_collection_or_element"
+              },
+              {
+                "kind": "collection_operation",
+                "source_line": 41,
+                "reason": "operation_on_relevant_collection_or_element"
+              }
+            ]
+          }
+        ],
+        "count": 1,
+        "target_members": {
+          "methods": [],
+          "attributes": []
+        },
+        "by_source": {
+          "project": 1
+        },
+        "by_kind": {
+          "class": 1
+        },
+        "timings_seconds": {
+          "read_parse_target": 0.0,
+          "file_import_analyzer": 0.0,
+          "slice_and_retrieval": 0.078,
+          "exact_imports": 0.0,
+          "slice_classes": 0.0,
+          "visible_type_signals": 0.0,
+          "project_exact_imports": 0.0,
+          "project_semantic": 0.0,
+          "module_inventory": 0.0,
+          "project_name_similarity": 0.0,
+          "package_name_similarity": 0.0,
+          "structural_bm25": 0.0,
+          "deduplicate_and_prepend": 0.0,
+          "export_total": 0.078
+        },
+        "retrieval_counts": {
+          "exact_imports": 7,
+          "slice_classes": 0,
+          "visible_type_signals": 6,
+          "project_exact_imports": 0,
+          "project_semantic": 5,
+          "module_inventory": 0,
+          "project_name_similarity": 0,
+          "package_name_similarity": 0,
+          "structural_bm25": 0
+        }
+      },
+      "revision": "73413622d93edcd321c05910412d4a9a086eccb1",
+      "source_url": "https://github.com/alexdong/mort/blob/73413622d93edcd321c05910412d4a9a086eccb1/mort/driver.py",
+      "source_sha256": {
+        "mort/driver.py": "291bbe7bec1d7bea2d3d4f52d2e2f99d6b85a735ca5c40bfbbb7cfd0ecef6f59",
+        "mort/controller.py": "54768ad5e76a92e5b3e1b257f14deda887f4e1acdf533744bd955fe2d20b353f"
+      },
+      "status": "passed"
+    }
+  ]
+}

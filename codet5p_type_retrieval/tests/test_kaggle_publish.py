@@ -89,7 +89,7 @@ def test_v2_shard_publication_audits_before_packaging(tmp_path):
     work = make_shard(tmp_path)
     (work / 'runtime_manifest.json').write_text(json.dumps({'context_policy_version': POLICY}), encoding='utf-8')
     row = {'context_policy_version': POLICY, 'target_masking_version': MASKING,
-           'candidate_definition_max_chars': 16000,
+           'candidate_definition_max_chars': 8000,
            'recommendation_types': [{'name': 'C', 'definition': 'class C: pass'}]}
     raw = work / 'raw_slices' / 'owner__repo.jsonl'
     raw.write_text(json.dumps(row) + '\n', encoding='utf-8')
