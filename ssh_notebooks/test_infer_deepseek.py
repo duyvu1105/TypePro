@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -122,6 +123,7 @@ def test_key_from_env_file_without_shell_execution(tmp_path, monkeypatch):
     path.write_text("# comment\nDEEPSEEK_API_KEY='placeholder'\n", encoding="utf-8")
     path.chmod(0o600)
     assert infer_deepseek.load_api_key(path) == "placeholder"
-    path.chmod(0o644)
-    with pytest.raises(PermissionError, match="mode 600"):
-        infer_deepseek.load_api_key(path)
+    if os.name != 'nt':
+        path.chmod(0o644)
+        with pytest.raises(PermissionError, match="mode 600"):
+            infer_deepseek.load_api_key(path)

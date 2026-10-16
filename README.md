@@ -1,104 +1,82 @@
-# TypePro
+# TypePro workflows
 
-This is the tool released in the paper *TypePro: Boosting LLM-Based Type Inference via Inter-Procedural Slicing*
+Process data bằng interprocedural slicing, finetune model sinh type annotation
+và chạy inference/evaluation. Code GPU và DeepSeek từ `SSH_Server` đã merge vào `main`.
 
-## Requirements
-- Python:
-    Python >= 3.9
-    Required packages: hityper, Openai, textdistance, loguru
+## Kiến trúc
 
-- TypeScript:
-    Node.js >= 16.0.0
-    Required packages: ts-morph, stringSimilarity, ts-node
+| Thư mục | Trách nhiệm |
+| --- | --- |
+| `typepro/data/` | prepare, preprocess, split, merge, verify |
+| `typepro/training/` | generative QLoRA và contrastive ranker |
+| `typepro/inference/` | model local, ranker và DeepSeek có resume |
+| `typepro/publishing/` | publish shard và final Kaggle Dataset |
+| `typepro/runtime.py` | log và audit mỗi lần chạy |
+| `Python/` | AST, slicing, masking, project KB và evidence |
+| `codet5p_type_retrieval/` | utilities, tests và entry point tương thích |
+| `kaggle_notebooks/`, `ssh_notebooks/`, `vastai_notebooks/` | môi trường chạy |
+| `reports/`, `docs/` | bằng chứng kiểm chứng và tài liệu hiện hành |
 
-## Usage
-1. Download the processed datasets based on TypeGen from the released [resources](https://) for python and Manytypes4Typescript [resources](https://huggingface.co/datasets/kevinjesse/ManyTypes4TypeScript).
+## Cài đặt
 
-2. slicing
-- TypeScript: 
-    It requires TSSlicer from Slicing/SlicingClass.ts and calls the `Slicing` method. Slicing requires the contents of a `CodeData` data structure. The `node` and `dataType` fields in this data structure must be correct; the rest of the content can be empty. An example is as follows:
-
-```ts
-    const path = "./yourFilePath.ts"
-    const project = new Project();
-    const sourceFile = project.addSourceFileAtPath(path);
-    let codeSlicer = new TSSlicer(path)
-    let VarNodes = sourceFile.getVariableDeclarations().filter(node => node.getName() == "yourVarName")
-    let test = { node: VarNodes, type: "", filePath: path, dataType: DataType.Var }
-    let res = codeSlicer.Slicing(test)
-```
-
-- Python
-    It requires the Slicer class from slicing_code_class and uses the `slicing_var`, `slicing_par`, and `slicing_ret` methods for var, params, and ret, respectively. The required contents are the target node, the root ast node, and the target file. Example:
-
-```python
-    var_slicer = Slicer(FILE_PATH)
-    with open(FILE_PATH, 'r', encoding='utf-8') as f:
-        source = f.read()
-    target_var = "Your_Var"
-    data, root = var_slicer.find_var_node(FILE_PATH, target_var)
-    ans = var_slicer.slicing_var(data, root, FILE_PATH)
-    other_prompt = var_slicer.get_other_prompt()
-```
-
-- It requires building inter-procedural information and running the script `Scripts/run.py` (run_read_data.py for Python) before slicing.
+Python 3.10 trở lên. Chạy tại root repository:
 
 ```bash
-    python Scripts/run.py your_project_path
+python -m pip install -e . --no-deps
+python -m pip install -r codet5p_type_retrieval/requirements-build.txt
+python -m typepro --help
 ```
 
+Finetune/infer GPU cần thêm `codet5p_type_retrieval/requirements.txt` và PyTorch
+phù hợp CUDA. Xem [SSH](ssh_notebooks/README.md), [Vast.ai](vastai_notebooks/README.md).
 
-3. Prompt and Generation
-    The slicing process includes the first type recommendation. You need to replace the `base_url` and `api_key` in `LLMAgent` with your correct values, create an LLMAgent class, and call the `GenerationType` method.
-
-## Run
-
-When you need to run the program on the dataset,You need to first download the repos of the dataset to the repos folder in the root directory, and then you can use the correct `dataset_path` in `Test.ts`, download the relevant repositories to the correct location, and specify the repositories root directory in the code.
-
-### python
-
-- To run the Python experiment, please execute `run.py`.
-
-Before running, please prepare the dataset and `api_key`.
-
-1. Replace `api_key` and `dataset_path` in `run.py`. The format of `dataset` is as follows:
-
-```json
-    [{
-        "cat": "builtins",
-        "file": "repos/Alissonrgs/honeydock/src/email.py",
-        "generic": false,
-        "gttype": "int",
-        "loc": "send_email_alert@global",
-        "name": "option",
-        "origttype": "builtins.int",
-        "processed_gttype": "int",
-        "scope": "arg",
-        "type_depth": 0
-    },
-    ...
-    ]
-```
-
-2. Create a `repos` directory under your Python directory and place the corresponding `project` folder for your dataset in this directory.
-
-### typescript
- - If you don't want to run the entire dataset, you can try this.
-```bash
-ts-node run.ts InputProjectPath Out.json
-```
-- This will run and output the files in the folder corresponding to InputProjectPath to out.json.
-- If you encounter errors at runtime, you can try modifying configurations in `tsconfig.json` such as `module` and `forceConsistentCasingInFileNames`.
-
-## Evaluation
-
-All results are saved in `RQ Results`. Run `compute_metrics_py.py` to obtain Python evaluation results, and `compute_metrics_ts.py` to obtain TypeScript evaluation results.
+## Process data
 
 ```bash
-    python compute_metrics_py.py
-    python compute_metrics_ts.py
+python -m typepro process-data --stage metadata --work-dir outputs/build
+python -m typepro process-data --stage slice --work-dir outputs/build
+python -m typepro process-data --stage finalize --work-dir outputs/build --output-dir outputs/dataset
+python -m typepro verify --data-dir outputs/dataset
 ```
-   
-## RQ Rsults
 
-We store all experimental results in `RQ Results`.
+Đây là ví dụ tách stage. Build Dataset chính thức theo cấu hình 19 physical jobs,
+revision lock và split ở [Kaggle runbook](kaggle_notebooks/README.md).
+
+## Finetune và infer
+
+```bash
+accelerate launch --num_processes 1 -m typepro finetune \
+  --data-dir datasets/typepro-python-generative-v19 \
+  --output-dir outputs/qwen \
+  --model-name Qwen/Qwen2.5-Coder-0.5B-Instruct
+
+python -m typepro infer \
+  --checkpoint outputs/qwen/best \
+  --model-name Qwen/Qwen2.5-Coder-0.5B-Instruct \
+  --input datasets/typepro-python-generative-v19/test.jsonl \
+  --output outputs/qwen/test_predictions.jsonl
+
+python -m typepro infer-api \
+  --input datasets/typepro-python-generative-v19/test.jsonl \
+  --output-dir outputs/deepseek
+```
+
+Dùng `COMMAND --help` để xem tham số. `finetune-ranker`/`infer-ranker` dành cho
+contrastive model cũ. API inference đọc credential local/environment.
+Script tmux hỗ trợ `TYPEPRO_REPO_DIR`, `TYPEPRO_DATA_DIR`, `TYPEPRO_OUTPUT_DIR`
+và `TYPEPRO_VENV_DIR` cho train/infer local, không phụ thuộc username của host.
+
+## Log, audit và kiểm tra
+
+Mỗi lần chạy tạo `outputs/audit/<run>/run.json` và `console.log`: stage, revision,
+thời gian, exit code, trạng thái và traceback. Đổi nơi lưu bằng `TYPEPRO_AUDIT_DIR`.
+Lỗi dữ liệu xem thêm `project_status/*.json`, `export_summary` và manifest.
+Chi tiết: [kiến trúc và audit](docs/architecture.md).
+
+```bash
+python -m pytest codet5p_type_retrieval/tests ssh_notebooks/test_infer_deepseek.py -q -p no:cacheprovider
+```
+
+Script cũ vẫn hoạt động qua entry point tương thích. Test CPU không thay cho
+kiểm chứng train thật trên GPU. Hướng dẫn bài báo/TypeScript:
+[upstream usage](docs/legacy_upstream.md).

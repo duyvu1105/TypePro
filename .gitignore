@@ -24,3 +24,8 @@ typepro_cloudrun_downloads/
 .orchestra-skills.json
 reports/typepro_test_audit/dataset_v10_audit.json
 /.tmp
+/outputs/
+/*.egg-info/
+/.venv/
+/build/
+/dist/

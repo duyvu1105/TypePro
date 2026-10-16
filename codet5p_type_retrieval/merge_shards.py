@@ -1,103 +1,12 @@
-from __future__ import annotations
-
-import argparse
-import hashlib
-import json
-import shutil
+"""Compatibility entry point; implementation: typepro.data.merge."""
+import importlib
+import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Merge resumable TypePro build shards")
-    parser.add_argument("--shard-build-dirs", nargs="+", required=True)
-    parser.add_argument("--work-dir", required=True)
-    parser.add_argument('--expected-retrieval-schema')
-    return parser.parse_args()
-
-
-def sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        while chunk := handle.read(1024 * 1024):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def copy_checked(source: Path, destination: Path) -> None:
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    if destination.exists():
-        if sha256(source) != sha256(destination):
-            raise ValueError(f"Conflicting shard file: {destination.name}")
-        return
-    shutil.copy2(source, destination)
-
-
-def locate_build_dir(path: Path) -> Path:
-    if (path / "metadata" / "split_manifest.json").exists():
-        return path
-    candidates = list(path.rglob("metadata/split_manifest.json"))
-    if len(candidates) != 1:
-        raise ValueError(f"Cannot uniquely locate typepro_build below {path}: {len(candidates)} matches")
-    return candidates[0].parent.parent
-
-
-def main() -> None:
-    args = parse_args()
-    destination = Path(args.work_dir).resolve()
-    builds = [locate_build_dir(Path(value).resolve()) for value in args.shard_build_dirs]
-    if args.expected_retrieval_schema:
-        for build in builds:
-            runtime = json.loads((build / 'runtime_manifest.json').read_text(encoding='utf-8'))
-            if runtime.get('retrieval_schema_version') != args.expected_retrieval_schema:
-                raise ValueError(f'Incompatible retrieval schema: {build}')
-            if runtime.get('context_policy_version') != 'ast-context-v7-verified-signature-evidence':
-                raise ValueError(f'Incompatible context policy: {build}')
-            for raw_file in (build / 'raw_slices').glob('*.jsonl'):
-                with raw_file.open(encoding='utf-8') as handle:
-                    for line in handle:
-                        if line.strip():
-                            row = json.loads(line)
-                            if row.get('target_masking_version') != 'typepro-shared-kb-masked-source-v7-resolved-bounded-context' or row.get('context_policy_version') != 'ast-context-v7-verified-signature-evidence':
-                                raise ValueError(f'Unmasked legacy record or incompatible context policy: {raw_file}')
-                            if row.get('candidate_definition_max_chars') != 8000 or any(len(str(item.get('definition') or '')) > 8000 for item in row.get('recommendation_types', [])):
-                                raise ValueError(f'Unbounded candidate definition: {raw_file}')
-    reference_manifest = None
-    reference_lock = None
-    copied = {"raw_slices": 0, "project_status": 0, "project_kb": 0}
-    for build in builds:
-        manifest_path = build / "metadata" / "split_manifest.json"
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        runtime_path = build / "runtime_manifest.json"
-        runtime_value = json.loads(runtime_path.read_text(encoding="utf-8"))
-        lock_identity = (
-            runtime_value.get("project_revision_lock_sha256"),
-            runtime_value.get("revision_lock_source"),
-            runtime_value.get("revision_lock_policy"),
-        )
-        if reference_lock is None:
-            reference_lock = lock_identity
-        elif lock_identity != reference_lock:
-            raise ValueError(f"Shard project revision locks differ: {build}")
-        if reference_manifest is None:
-            reference_manifest = manifest
-            for metadata_file in (build / "metadata").glob("*.json"):
-                copy_checked(metadata_file, destination / "metadata" / metadata_file.name)
-            runtime = build / "runtime_manifest.json"
-            if runtime.exists():
-                copy_checked(runtime, destination / runtime.name)
-        elif manifest != reference_manifest:
-            raise ValueError(f"Shard split manifest differs: {build}")
-
-        for directory, pattern in (
-            ("raw_slices", "*.jsonl"), ("project_status", "*.json"),
-            ("project_status", "*.log"), ("project_kb", "*/knowledge_base.json"),
-        ):
-            for source in (build / directory).glob(pattern):
-                relative = source.relative_to(build / directory)
-                copy_checked(source, destination / directory / relative)
-                copied[directory] += 1
-    print(json.dumps({"merged_builds": [str(path) for path in builds], **copied}, indent=2))
-
-
-if __name__ == "__main__":
-    main()
+if __name__ == '__main__':
+    from typepro.runtime import run_main
+    run_main(lambda: importlib.import_module('typepro.data.merge').main(), 'data')
+else:
+    sys.modules[__name__] = importlib.import_module('typepro.data.merge')

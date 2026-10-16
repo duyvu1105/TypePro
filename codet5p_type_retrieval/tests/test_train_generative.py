@@ -42,7 +42,7 @@ def test_length_grouped_sampler_reshuffles_between_epochs():
 def test_scheduler_advances_once_per_successful_update(num_processes, skip_update):
     """Exercise the actual scheduling statements without loading a Qwen model."""
     torch = pytest.importorskip("torch")
-    source = ROOT / "codet5p_type_retrieval" / "train_generative.py"
+    source = ROOT / "typepro" / "training" / "generative.py"
     tree = ast.parse(source.read_text(encoding="utf-8"))
     main = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "main")
     # Include any scheduler wrapping in the initialization, so reintroducing

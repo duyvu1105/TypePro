@@ -44,8 +44,9 @@ def build_notebook() -> dict:
         code(f"""
         from pathlib import Path
 
-        REPO_DIR = Path({str(REPO_ROOT)!r})
-        DATA_DIR = REPO_DIR / "datasets" / "typepro-python-generative-v15"
+        import os
+        REPO_DIR = Path(os.environ.get("TYPEPRO_REPO_DIR", str(Path.home() / "TypePro")))
+        DATA_DIR = Path(os.environ.get("TYPEPRO_DATA_DIR", str(REPO_DIR / "datasets" / "typepro-python-generative-v19")))
         PIPELINE_DIR = REPO_DIR / "codet5p_type_retrieval"
         VENV_DIR = REPO_DIR / ".venv"
         OUTPUT_DIR = REPO_DIR / "outputs" / "qwen25-coder-05b-8192"

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-REPO_DIR=/home/anhnd_02/TypePro
-DATA_DIR="$REPO_DIR/datasets/typepro-python-generative-v15"
+REPO_DIR="${TYPEPRO_REPO_DIR:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)}"
+DATA_DIR="${TYPEPRO_DATA_DIR:-$REPO_DIR/datasets/typepro-python-generative-v19}"
 PIPELINE_DIR="$REPO_DIR/codet5p_type_retrieval"
-VENV_DIR="$REPO_DIR/.venv"
-OUTPUT_DIR="$REPO_DIR/outputs/qwen25-coder-05b-8192"
+VENV_DIR="${TYPEPRO_VENV_DIR:-$REPO_DIR/.venv}"
+OUTPUT_DIR="${TYPEPRO_OUTPUT_DIR:-$REPO_DIR/outputs/qwen25-coder-05b}"
 CHECKPOINT="$OUTPUT_DIR/best"
 PREDICTIONS="$OUTPUT_DIR/test_predictions.jsonl"
 LOG_FILE="$OUTPUT_DIR/infer_tmux.log"
@@ -34,7 +34,7 @@ fi
 export CUDA_VISIBLE_DEVICES=0
 export TOKENIZERS_PARALLELISM=false
 export PYTHONUNBUFFERED=1
-export HF_HOME=/home/anhnd_02/.cache/huggingface
+export HF_HOME="${HF_HOME:-$HOME/.cache/huggingface}"
 
 cd "$REPO_DIR"
 "$VENV_DIR/bin/python" -u "$PIPELINE_DIR/infer_generative.py" \
