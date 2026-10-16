@@ -5,6 +5,7 @@ import argparse
 import json
 import math
 import random
+import time
 from pathlib import Path
 
 import torch
@@ -54,7 +55,7 @@ def main() -> None:
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--model-name", default="Qwen/Qwen2.5-Coder-1.5B-Instruct")
     parser.add_argument("--input-length", type=int, default=8192)
-    parser.add_argument("--label-length", type=int, default=128)
+    parser.add_argument("--label-length", type=int, default=64)
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--gradient-accumulation-steps", type=int, default=16)
     parser.add_argument("--epochs", type=int, default=3)
@@ -81,7 +82,12 @@ def main() -> None:
     )
     parser.add_argument("--preview-samples", type=int, default=2)
     parser.add_argument("--preview-max-chars", type=int, default=1200)
-    parser.add_argument("--log-every", type=int, default=10)
+    parser.add_argument(
+        "--log-every",
+        type=int,
+        default=50,
+        help="Log training metrics every N optimizer updates; 0 disables periodic logs",
+    )
     parser.add_argument(
         "--group-by-length",
         action=argparse.BooleanOptionalAction,
@@ -89,6 +95,18 @@ def main() -> None:
         help="Group similarly sized samples within shuffled windows to reduce padding",
     )
     parser.add_argument("--length-grouping-window", type=int, default=50)
+    parser.add_argument(
+        "--length-log-every",
+        type=int,
+        default=1000,
+        help="Log length-measurement progress every N samples; 0 disables intermediate logs",
+    )
+    parser.add_argument(
+        "--length-cache",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Cache measured train lengths in the output directory",
+    )
     args = parser.parse_args()
     accelerator = Accelerator(
         mixed_precision=args.mixed_precision,
@@ -149,19 +167,98 @@ def main() -> None:
         return left_pad_causal_batch(prompt_ids, sequences, tokenizer.pad_token_id)
 
     data_dir = Path(args.data_dir)
-    full_train_dataset = JsonlDataset(data_dir / "train.jsonl")
+    output = Path(args.output_dir)
+    output.mkdir(parents=True, exist_ok=True)
+    train_path = data_dir / "train.jsonl"
+    full_train_dataset = JsonlDataset(train_path)
     train_dataset = select_training_samples(
         full_train_dataset, args.train_samples, args.seed
     )
     train_sampler = None
     if args.group_by_length:
-        accelerator.print("Measuring train sequence lengths for bucketing...", flush=True)
-        train_lengths = [
-            training_sequence_length(
-                row, tokenizer, args.input_length, args.label_length
-            )
-            for row in train_dataset
-        ]
+        length_sample_count = len(train_dataset)
+        train_stat = train_path.stat()
+        cache_metadata = {
+            "version": 1,
+            "train_path": str(train_path.resolve()),
+            "train_size": train_stat.st_size,
+            "train_mtime_ns": train_stat.st_mtime_ns,
+            "model_name": args.model_name,
+            "tokenizer_revision": tokenizer.init_kwargs.get("_commit_hash"),
+            "input_length": args.input_length,
+            "label_length": args.label_length,
+            "train_samples": args.train_samples,
+            "seed": args.seed,
+            "sample_count": length_sample_count,
+        }
+        cache_path = output / "train_lengths_cache.json"
+        train_lengths = None
+        if args.length_cache and cache_path.is_file():
+            try:
+                cached = json.loads(cache_path.read_text(encoding="utf-8"))
+                cached_lengths = cached.get("lengths")
+                if (
+                    cached.get("metadata") == cache_metadata
+                    and isinstance(cached_lengths, list)
+                    and len(cached_lengths) == length_sample_count
+                    and all(
+                        isinstance(length, int) and 0 < length <= args.input_length
+                        for length in cached_lengths
+                    )
+                ):
+                    train_lengths = cached_lengths
+                    accelerator.print(
+                        f"Loaded {length_sample_count} train lengths from {cache_path}",
+                        flush=True,
+                    )
+                else:
+                    accelerator.print(
+                        f"Ignoring stale or incompatible length cache: {cache_path}",
+                        flush=True,
+                    )
+            except (OSError, ValueError, TypeError) as error:
+                accelerator.print(
+                    f"Ignoring unreadable length cache {cache_path}: {error}",
+                    flush=True,
+                )
+        if train_lengths is None:
+            accelerator.print("Measuring train sequence lengths for bucketing...", flush=True)
+            length_started_at = time.monotonic()
+            train_lengths = []
+            for sample_index, row in enumerate(train_dataset, start=1):
+                train_lengths.append(training_sequence_length(
+                    row, tokenizer, args.input_length, args.label_length
+                ))
+                should_log = (
+                    sample_index == length_sample_count
+                    or (
+                        args.length_log_every > 0
+                        and sample_index % args.length_log_every == 0
+                    )
+                )
+                if should_log:
+                    elapsed = time.monotonic() - length_started_at
+                    rate = sample_index / max(elapsed, 1e-9)
+                    remaining = (length_sample_count - sample_index) / max(rate, 1e-9)
+                    accelerator.print(
+                        "measuring train lengths: "
+                        f"{sample_index}/{length_sample_count} "
+                        f"({sample_index / length_sample_count:.1%}), "
+                        f"{rate:.1f} samples/s, ETA {remaining / 60:.1f} min",
+                        flush=True,
+                    )
+            if args.length_cache and accelerator.is_main_process:
+                temporary_cache = cache_path.with_suffix(".json.tmp")
+                temporary_cache.write_text(
+                    json.dumps({
+                        "metadata": cache_metadata,
+                        "lengths": train_lengths,
+                    }, ensure_ascii=False, separators=(",", ":")),
+                    encoding="utf-8",
+                )
+                temporary_cache.replace(cache_path)
+                accelerator.print(f"Saved train lengths to {cache_path}", flush=True)
+            accelerator.wait_for_everyone()
         train_sampler = LengthGroupedSampler(
             train_lengths,
             batch_size=args.batch_size,
@@ -242,14 +339,17 @@ def main() -> None:
             accelerator.print(json.dumps(preview, ensure_ascii=False), flush=True)
         accelerator.print("===== END TRAINING INPUT PREVIEW =====", flush=True)
 
-    output = Path(args.output_dir)
     best_loss = float("inf")
     progress = tqdm(
         total=total_updates,
         desc="training",
         unit="update",
+        mininterval=0,
+        miniters=max(1, args.log_every),
+        maxinterval=float("inf"),
         disable=not accelerator.is_local_main_process,
     )
+    completed_updates = 0
     for epoch in range(args.epochs):
         model.train()
         accelerator.print(f"epoch {epoch + 1}/{args.epochs} started", flush=True)
@@ -272,14 +372,21 @@ def main() -> None:
                     grad_norm = accelerator.clip_grad_norm_(model.parameters(), 1.0)
                     last_grad_norm = float(grad_norm.detach().float().item())
                 optimizer.step()
+                optimizer_update_completed = (
+                    accelerator.sync_gradients
+                    and not accelerator.optimizer_step_was_skipped
+                )
                 if accelerator.sync_gradients and not accelerator.optimizer_step_was_skipped:
                     scheduler.step()
+                if optimizer_update_completed:
+                    completed_updates += 1
                 optimizer.zero_grad()
-                if accelerator.sync_gradients:
+                if optimizer_update_completed:
                     progress.update(1)
                     progress.set_postfix(
                         loss=f"{loss.detach().float().item():.4f}",
                         lr=f"{optimizer.param_groups[0]['lr']:.2e}",
+                        refresh=False,
                     )
             loss_window.append(float(loss.detach().float().item()))
             # Causal-LM loss shifts labels by one; the first label in the
@@ -288,16 +395,18 @@ def main() -> None:
             epoch_loss_totals[0] += loss.detach().double() * label_tokens
             epoch_loss_totals[1] += label_tokens
             if (
-                batch_index == 1
-                or (args.log_every > 0 and batch_index % args.log_every == 0)
+                optimizer_update_completed
+                and args.log_every > 0
+                and completed_updates % args.log_every == 0
             ):
                 average_loss = sum(loss_window) / len(loss_window)
                 grad_norm_text = (
                     f"{last_grad_norm:.4f}" if last_grad_norm is not None else "n/a"
                 )
                 accelerator.print(
-                    f"epoch {epoch + 1}/{args.epochs} batch "
-                    f"{batch_index}/{len(train_loader)} "
+                    f"update {completed_updates}/{total_updates} "
+                    f"epoch {epoch + 1}/{args.epochs} "
+                    f"batch {batch_index}/{len(train_loader)} "
                     f"loss_avg={average_loss:.4f} "
                     f"lr={optimizer.param_groups[0]['lr']:.3e} "
                     f"grad_norm={grad_norm_text}",

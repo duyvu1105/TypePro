@@ -1,6 +1,7 @@
 # Local Kaggle API credentials. Never commit these files.
 /kaggle.json
 /kaggle[0-9]*.json
+/.env
 **/__pycache__/
 *.py[cod]
 .pytest_cache/
@@ -11,6 +12,8 @@ typepro_python_contrastive/
 codet5p-typepro*/
 test_predictions.jsonl
 typepro_kernel_versions/
+/datasets/
+/outputs/
 
 # Cloud Run dataset downloads
 typepro_cloudrun_downloads/
