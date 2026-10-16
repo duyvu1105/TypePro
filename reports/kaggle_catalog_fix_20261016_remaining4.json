@@ -1,0 +1,58 @@
+{
+  "checked_at": "2026-10-16T08:52:52.248375+00:00",
+  "revision": "02172d2d37ee72e96a4be2a919d32ec65a745d41",
+  "retrieval_schema": "typepro-project-kb-top10-generative-v17-catalog-fallback-audit",
+  "validation": {
+    "tests_passed": 357,
+    "tests_skipped": 2,
+    "dry_run": true
+  },
+  "jobs": [
+    {
+      "account": "duyvu1105",
+      "kernel": "duyvu1105/typepro-python-shard-04",
+      "kernel_version": 16,
+      "coordinate": "4/10",
+      "status": "RUNNING",
+      "submitted_at": "2026-10-16T08:51:19.909330+00:00",
+      "kernel_url": "https://www.kaggle.com/code/duyvu1105/typepro-python-shard-04",
+      "dataset": "duyvu1105/typepro-build-shard-04",
+      "dataset_verified": false
+    },
+    {
+      "account": "duyvu1105",
+      "kernel": "duyvu1105/typepro-python-shard-05",
+      "kernel_version": 12,
+      "coordinate": "5/10",
+      "status": "RUNNING",
+      "submitted_at": "2026-10-16T08:51:22.445220+00:00",
+      "kernel_url": "https://www.kaggle.com/code/duyvu1105/typepro-python-shard-05",
+      "dataset": "duyvu1105/typepro-build-shard-05",
+      "dataset_verified": false
+    },
+    {
+      "account": "duymign",
+      "kernel": "duymign/typepro-python-shard-07-part-02",
+      "kernel_version": 11,
+      "coordinate": "17/20",
+      "status": "RUNNING",
+      "submitted_at": "2026-10-16T08:52:20.496627+00:00",
+      "kernel_url": "https://www.kaggle.com/code/duymign/typepro-python-shard-07-part-02",
+      "dataset": "duymign/typepro-build-shard-17",
+      "dataset_verified": false
+    },
+    {
+      "account": "vdduy1105",
+      "kernel": "vdduy1105/typepro-python-shard-09-part-05",
+      "kernel_version": 13,
+      "coordinate": "89/90",
+      "status": "RUNNING",
+      "submitted_at": "2026-10-16T08:52:38.047567+00:00",
+      "kernel_url": "https://www.kaggle.com/code/vdduy1105/typepro-python-shard-09-part-05",
+      "dataset": "vdduy1105/typepro-build-shard-89",
+      "dataset_verified": false
+    }
+  ],
+  "total_submitted_partitions": 19,
+  "note": "All 19 partitions submitted across two batches; kernel status is not Dataset completeness or recovered test-sample proof."
+}
