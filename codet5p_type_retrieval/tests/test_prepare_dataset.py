@@ -21,6 +21,7 @@ from prepare_dataset import (
     parse_args,
     project_from_row,
     run_logged,
+    parse_export_summary,
     clone_project,
 )
 
@@ -32,6 +33,14 @@ class Args:
     test_projects = 2
     include_builtins = False
     include_returns = False
+
+
+def test_export_summary_survives_log_tail_noise():
+    summary = dict(eligible=4, written=1, failed=3, timed_out=1,
+                   empty_slices=1, exceptions_by_type={'KeyError': 1})
+    tail = 'partial line\n' + json.dumps(summary) + '\ntrailing log\n{}\n'
+    assert parse_export_summary(tail) == summary
+    assert parse_export_summary('no summary\n{invalid json') is None
 
 
 def row(project: str, number: int):

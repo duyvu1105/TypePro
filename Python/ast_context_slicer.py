@@ -824,7 +824,10 @@ class FunctionCatalog:
     def callers(self, qualified):
         """Revalidate caller sites instead of trusting the legacy name index."""
         if self.callers_cache is None:
-            self.callers_cache = {}
+            # Publish only a complete scan. Annotation deadlines can interrupt
+            # this shared catalog; a partial cache would hide later callers
+            # from every subsequent sample, even after a successful retry.
+            callers_cache, caller_rejections = {}, {}
             for path, tree in self.trees.items():
                 catalog = self
                 class Calls(ast.NodeVisitor):
@@ -851,15 +854,17 @@ class FunctionCatalog:
                     def visit_Call(self, node):
                         record, reason = catalog.resolve(node, path, self.caller)
                         if record is not None and self.caller is not None:
-                            catalog.callers_cache.setdefault(record[1], []).append((path, self.caller, node))
+                            callers_cache.setdefault(record[1], []).append((path, self.caller, node))
                         elif record is None:
                             leaf = node.func.id if isinstance(node.func, ast.Name) else node.func.attr if isinstance(node.func, ast.Attribute) else ''
                             if leaf:
-                                catalog.caller_rejections.setdefault(leaf, []).append(dict(component='caller',
+                                caller_rejections.setdefault(leaf, []).append(dict(component='caller',
                                     mode='unresolved', reason=reason, call=ast.unparse(node.func),
                                     source_file=path, source_line=node.lineno))
                         self.generic_visit(node)
                 Calls().visit(tree)
+            self.caller_rejections = caller_rejections
+            self.callers_cache = callers_cache
         return self.callers_cache.get(qualified, ())
 
 

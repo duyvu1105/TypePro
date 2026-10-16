@@ -1,0 +1,35 @@
+{
+  "scope": "Real v18 samples replayed with empty project index; slice export only, not full retrieval rerun",
+  "projects": {
+    "rafallan/gestao_clientes": {
+      "samples": 8,
+      "exported": 8,
+      "errors": []
+    },
+    "sara0871/-north-america-": {
+      "samples": 3,
+      "exported": 3,
+      "errors": []
+    },
+    "dudengjin/python.two": {
+      "samples": 21,
+      "exported": 21,
+      "errors": []
+    },
+    "zulip/zulip": {
+      "samples": 124,
+      "exported": 124,
+      "errors": []
+    },
+    "mozilla/gecko-dev": {
+      "samples": 89,
+      "exported": 89,
+      "errors": []
+    },
+    "apache/incubator-superset": {
+      "samples": 57,
+      "exported": 57,
+      "errors": []
+    }
+  }
+}

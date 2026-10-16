@@ -647,6 +647,18 @@ def run_logged(
     return tail
 
 
+def parse_export_summary(tail: str) -> dict | None:
+    """Recover the exporter's structured totals from the retained log tail."""
+    for line in reversed(tail.splitlines()):
+        try:
+            value = json.loads(line)
+        except (ValueError, TypeError):
+            continue
+        if isinstance(value, dict) and {'eligible', 'written', 'failed', 'timed_out'} <= value.keys():
+            return value
+    return None
+
+
 def clone_project(
     project: str, destination: Path, timeout_seconds: int = 0,
     expected_commit: str | None = None,
@@ -1051,6 +1063,7 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
                 },
                 "completed_at": datetime.now(timezone.utc).isoformat(),
                 "exporter_tail": exporter_tail,
+                "export_summary": parse_export_summary(exporter_tail),
             }
             write_json(status_path, status)
             counters["completed_projects"] += 1

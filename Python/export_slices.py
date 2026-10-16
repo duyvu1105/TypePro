@@ -370,6 +370,16 @@ def export_one(
                     continue
             base.context_catalog = FunctionCatalog(parsed)
             methods.context_catalog = base.context_catalog
+        local_catalog_fallback = str(file_path.resolve()) not in methods.context_catalog.trees
+        if local_catalog_fallback:
+            # Analysis can time out, and the project scan excludes venv/hidden
+            # directories. The explicitly requested file is still valid input.
+            # Build only its masked catalog for this export; never mutate the
+            # shared index or guess cross-file relationships.
+            from ast_context_slicer import FunctionCatalog
+            methods.context_catalog = FunctionCatalog([
+                (file_path, '', masked, ast.parse(masked)),
+            ])
         methods.total_function_data = [item._replace(source_code=clean(item.source_code))
                                        for item in base.total_function_data]
         methods.total_class_data = [item._replace(signature=clean(item.signature))
@@ -384,6 +394,10 @@ def export_one(
             recommendation_limit=recommendation_limit,
         )
     if result is not None:
+        if local_catalog_fallback:
+            result['recommendation_diagnostics']['context_reduction'].append(dict(
+                component='catalog', mode='file_local', reason='target_file_not_indexed',
+                source_file=str(file_path.resolve())))
         result['interprocedural_slice'] = render_masks(result['interprocedural_slice'])
         for item in result['recommendation_types']:
             item['definition'], _ = limit_candidate_definition(render_masks(clean(item['definition'])))
@@ -545,6 +559,8 @@ def main() -> None:
     function_methods: Function_methods | None = None
     analysis_cache: ProjectAnalysisCache | None = None
     written = failed = timed_out = 0
+    empty_slices = local_catalog_fallbacks = 0
+    exceptions_by_type = Counter()
 
     with output.open("w", encoding="utf-8") as handle:
         for index, row in enumerate(rows):
@@ -628,9 +644,13 @@ def main() -> None:
                     )
                 if result is None:
                     failed += 1
+                    empty_slices += 1
                 else:
                     handle.write(json.dumps(result, ensure_ascii=False) + "\n")
                     written += 1
+                    local_catalog_fallbacks += any(
+                        item.get('component') == 'catalog' and item.get('mode') == 'file_local'
+                        for item in result.get('recommendation_diagnostics', {}).get('context_reduction', []))
                 if trace_annotation:
                     diagnostics = (
                         result.get("recommendation_diagnostics", {})
@@ -657,6 +677,7 @@ def main() -> None:
                 )
             except Exception as error:  # Continue a long dataset export and retain actionable diagnostics.
                 failed += 1
+                exceptions_by_type[type(error).__name__] += 1
                 print(
                     f"[export:annotation:error] index={index + 1}/{len(rows)} "
                     f"file={row.get('file')!r} name={row.get('name')!r} "
@@ -679,6 +700,9 @@ def main() -> None:
         "written": written,
         "failed": failed,
         "timed_out": timed_out,
+        "empty_slices": empty_slices,
+        "exceptions_by_type": dict(exceptions_by_type),
+        "local_catalog_fallbacks": local_catalog_fallbacks,
         "annotation_timeout_seconds": args.annotation_timeout_seconds,
         "output": str(output),
     }))
