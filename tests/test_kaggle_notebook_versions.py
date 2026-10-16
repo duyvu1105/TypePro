@@ -1,0 +1,682 @@
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+
+ROOT = Path(__file__).resolve().parents[1]
+NOTEBOOK_DIR = ROOT / "kaggle_notebooks"
+sys.path.insert(0, str(NOTEBOOK_DIR))
+
+import commit_shard_versions
+import commit_merge_finalize
+import generate_notebooks
+import recover_shard_version
+import schedule_shards
+
+
+def source_with_tag(notebook, tag):
+    cells = [
+        cell
+        for cell in notebook["cells"]
+        if tag in cell.get("metadata", {}).get("tags", [])
+    ]
+    assert len(cells) == 1
+    return cells[0]["source"]
+
+
+def test_optional_resume_download_failure_starts_fresh(tmp_path, monkeypatch, capsys):
+    from types import SimpleNamespace
+    notebook = generate_notebooks.shard_notebook(0, 10, 'https://github.com/duyvu1105/TypePro.git', 'main', assigned_shards=[0], expected_dataset_owner='duyvu1105')
+    source = next(c['source'] for c in notebook['cells'] if c['cell_type'] == 'code' and 'resume_dir = Path' in c['source'])
+    source = source.replace('Path(f"/kaggle/working/resume_shard_{SHARD_INDEX:02d}")', 'Path(resume_test_path)')
+    commands = []
+    def run(command, **kwargs):
+        commands.append(command)
+        return SimpleNamespace(returncode=0 if 'files' in command else 1)
+    monkeypatch.setattr(subprocess, 'run', run)
+    work = tmp_path / 'work'
+    exec(compile(source, '<resume-cell>', 'exec'), {
+        'Path': Path, 'subprocess': subprocess, 'publish_username': 'duyvu1105',
+        'SHARD_INDEX': 2, 'SHARD_COUNT': 20, 'WORK_DIR': work,
+        'resume_test_path': str(tmp_path / 'resume'),
+    })
+    assert len(commands) == 2
+    assert not work.exists()
+    assert 'starting fresh' in capsys.readouterr().out
+
+
+def test_standalone_notebook_locks_publish_owner_and_single_shard():
+    notebook = generate_notebooks.shard_notebook(
+        0,
+        10,
+        "https://github.com/duyvu1105/TypePro.git",
+        "main",
+        assigned_shards=[0],
+        expected_dataset_owner="duyvu1105",
+    )
+    serialized = json.dumps(notebook)
+    config = source_with_tag(notebook, "typepro-shard-config")
+
+    assert "ASSIGNED_SHARDS = [0]" in config
+    assert "SHARD_INDEX = 0" in config
+    assert "EXPECTED_DATASET_OWNER = 'duyvu1105'" in config
+    assert "TYPEPRO_PUBLISH_USERNAME" in serialized
+    assert "TYPEPRO_PUBLISH_KEY" in serialized
+    assert "Kaggle notebook host" in serialized
+    assert "use_explicit_credential" in serialized
+    assert 'os.environ[\\"KAGGLE_USERNAME\\"] = publish_username' in serialized
+    assert "credentials_printed" in serialized
+    assert "SLICE_ANNOTATION_TIMEOUT_SECONDS = 120" in config
+    assert "PACKAGE_DOWNLOAD_TIMEOUT_SECONDS = 900" in config
+    assert "KB_PHASE_TIMEOUT_SECONDS = 1800" in config
+    assert "PROJECT_ANALYSIS_TIMEOUT_SECONDS = 300" in config
+    assert "SLICE_INDEX_TIMEOUT_SECONDS = 1800" in config
+    assert "SLICE_TRACE_EVERY = 1" in config
+    assert "CLONE_TIMEOUT_SECONDS = 900" in config
+    assert 'RETRIEVAL_SCHEMA_VERSION = "typepro-project-kb-top10-generative-v17-catalog-fallback-audit"' in config
+    assert "force-projects" in serialized
+    assert "INCLUDE_BUILTINS = True" in config
+    assert "INCLUDE_RETURNS = True" in config
+    assert "--slice-annotation-timeout-seconds" in serialized
+    assert "--package-download-timeout-seconds" in serialized
+    assert "--kb-phase-timeout-seconds" in serialized
+    assert "--project-analysis-timeout-seconds" in serialized
+    assert "--slice-index-timeout-seconds" in serialized
+    assert "--slice-trace-every" in serialized
+    assert "--slice-timeout-project" not in serialized
+    assert "--retrieval-schema-version" in serialized
+    assert 'REPO_DIR / \\"configs\\" / \\"project_revision_lock.json\\"' in serialized
+    assert "project.casefold() in locked_projects" in serialized
+    assert "excluded_unlocked_projects" in serialized
+    assert "restored_runtime.get" in serialized
+    assert notebook["metadata"]["typepro"] == {
+        "assigned_shards": [0],
+        "initial_shard_index": 0,
+        "expected_dataset_owner": "duyvu1105",
+        "public_dataset": False,
+    }
+
+
+@pytest.mark.parametrize("shard_index", range(10))
+def test_rendered_version_contains_exactly_one_assigned_shard(shard_index):
+    template = generate_notebooks.shard_notebook(
+        shard_index,
+        10,
+        "https://github.com/duyvu1105/TypePro.git",
+        "main",
+        assigned_shards=[shard_index],
+        expected_dataset_owner="duyvu1105" if shard_index < 5 else "duymign",
+        public_dataset=shard_index >= 5,
+    )
+    rendered = commit_shard_versions.render_shard_version(
+        template,
+        shard_index,
+        (shard_index,),
+        "duyvu1105" if shard_index < 5 else "duymign",
+        shard_index >= 5,
+    )
+    config = source_with_tag(rendered, "typepro-shard-config")
+
+    assert f"SHARD_INDEX = {shard_index}" in config
+    assert rendered["metadata"]["typepro"]["rendered_shard_index"] == shard_index
+    assert rendered["metadata"]["typepro"]["version_contract"] == (
+        "one-kaggle-notebook-builds-one-shard"
+    )
+
+
+def test_scheduler_defaults_to_remote_main_and_resumes_saved_revision(tmp_path, monkeypatch, capsys):
+    state = tmp_path / 'run.json'
+    monkeypatch.setattr(sys, 'argv', ['schedule_shards.py', '--state', str(state)])
+    monkeypatch.setattr(schedule_shards, 'latest_revision', lambda: 'a' * 40)
+    schedule_shards.main()
+    rendered = json.loads(capsys.readouterr().out)
+    assert rendered['revision'] == 'a' * 40
+    assert len(rendered['jobs']) == 19
+    assert {account: sum(job['account'] == account for job in rendered['jobs'])
+            for account in ('duyvu1105', 'duymign', 'vdduy1105')} == {
+                'duyvu1105': 7, 'duymign': 6, 'vdduy1105': 6}
+    payload = Path(rendered['jobs'][0]['payload'])
+    metadata = json.loads((payload / 'kernel-metadata.json').read_text())
+    notebook = json.loads((payload / metadata['code_file']).read_text(encoding='utf-8'))
+    checkout = next(''.join(cell['source']) for cell in notebook['cells']
+                    if '"git", "clone"' in ''.join(cell.get('source', [])))
+    assert checkout.index('"fetch", "origin"') < checkout.index('"checkout", "--detach"')
+    assert checkout.index('"checkout", "--detach"') < checkout.index('"pip", "install"')
+
+    saved = json.loads(state.read_text())
+    saved['jobs'][0]['status'] = 'submitted'
+    state.write_text(json.dumps(saved))
+
+    def no_remote_lookup():
+        pytest.fail('Resuming must use the saved SHA, even if remote main changes')
+
+    monkeypatch.setattr(schedule_shards, 'latest_revision', no_remote_lookup)
+    schedule_shards.main()
+    resumed = json.loads(capsys.readouterr().out)
+    assert resumed['revision'] == 'a' * 40
+    assert resumed['jobs'][0]['status'] == 'submitted'
+
+
+def test_scheduler_new_run_archives_old_ledger_and_resolves_latest(tmp_path, monkeypatch, capsys):
+    state = tmp_path / 'run.json'
+    original = {'revision': 'a' * 40, 'jobs': []}
+    state.write_text(json.dumps(original))
+    monkeypatch.setattr(sys, 'argv', ['schedule_shards.py', '--state', str(state), '--new-run'])
+    monkeypatch.setattr(schedule_shards, 'latest_revision', lambda: 'b' * 40)
+    schedule_shards.main()
+    rendered = json.loads(capsys.readouterr().out)
+    assert rendered['revision'] == 'b' * 40
+    assert all(job['status'] == 'pending' for job in rendered['jobs'])
+    archive, = tmp_path.glob('run-*.json')
+    assert json.loads(archive.read_text()) == original
+    assert json.loads(state.read_text())['revision'] == 'b' * 40
+
+
+def test_scheduler_new_run_requires_dry_run_before_push(monkeypatch):
+    monkeypatch.setattr(sys, 'argv', ['schedule_shards.py', '--new-run', '--push'])
+    with pytest.raises(SystemExit) as error:
+        schedule_shards.main()
+    assert error.value.code == 2
+
+
+def test_scheduler_resolves_remote_main_without_modifying_checkout(monkeypatch):
+    def git(command, **kwargs):
+        assert command == ['git', 'ls-remote', '--exit-code', 'origin', 'refs/heads/main']
+        return subprocess.CompletedProcess(command, 0, 'a' * 40 + '\trefs/heads/main\n', '')
+    monkeypatch.setattr(schedule_shards.subprocess, 'run', git)
+    assert schedule_shards.latest_revision() == 'a' * 40
+
+
+def test_scheduler_can_limit_each_account_to_five_physical_jobs(tmp_path):
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(NOTEBOOK_DIR / "schedule_shards.py"),
+            "--revision", "a" * 40,
+            "--state", str(tmp_path / "state.json"),
+            "--jobs-per-account", "5",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    jobs = json.loads(result.stdout)["jobs"]
+
+    assert len(jobs) == 15
+    for account in ("duyvu1105", "duymign", "vdduy1105"):
+        assert sum(job["account"] == account for job in jobs) == 5
+
+
+def test_scheduler_can_select_physical_jobs_after_first_five_per_account(tmp_path):
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(NOTEBOOK_DIR / "schedule_shards.py"),
+            "--revision", "a" * 40,
+            "--state", str(tmp_path / "state.json"),
+            "--skip-jobs-per-account", "5",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    jobs = json.loads(result.stdout)["jobs"]
+
+    assert [
+        (job["account"], job["shard_index"], job["shard_count"])
+        for job in jobs
+    ] == [
+        ("duyvu1105", 4, 10),
+        ("duyvu1105", 5, 10),
+        ("duymign", 17, 20),
+        ("vdduy1105", 89, 90),
+    ]
+
+
+def test_render_rejects_shard_owned_by_other_account():
+    template = generate_notebooks.shard_notebook(
+        0,
+        10,
+        "https://github.com/duyvu1105/TypePro.git",
+        "main",
+        assigned_shards=[0],
+        expected_dataset_owner="duyvu1105",
+    )
+    with pytest.raises(ValueError, match="not assigned"):
+        commit_shard_versions.render_shard_version(
+            template,
+            5,
+            (0,),
+            "duyvu1105",
+            False,
+        )
+
+
+def test_render_split_partition_uses_physical_modulo_coordinates():
+    template = generate_notebooks.shard_notebook(
+        1,
+        10,
+        "https://github.com/duyvu1105/TypePro.git",
+        "main",
+        assigned_shards=[1],
+        expected_dataset_owner="duyvu1105",
+    )
+    rendered = commit_shard_versions.render_shard_version(
+        template,
+        1,
+        (1,),
+        "duyvu1105",
+        False,
+        physical_shard_index=11,
+        physical_shard_count=30,
+    )
+    config = source_with_tag(rendered, "typepro-shard-config")
+
+    assert "ASSIGNED_SHARDS = [11]" in config
+    assert "SHARD_INDEX = 11" in config
+    assert "SHARD_COUNT = 30" in config
+
+
+def test_plan_requires_ten_notebooks_and_five_shards_per_account(tmp_path):
+    shards_plan = []
+    for account, shards in (("duyvu1105", range(5)), ("duymign", range(5, 10))):
+        for shard_index in shards:
+            notebook_name = f"shard-{shard_index:02d}.ipynb"
+            (tmp_path / notebook_name).write_text("{}", encoding="utf-8")
+            shards_plan.append({
+                "shard_index": shard_index,
+                "part_count": len(generate_notebooks.physical_partitions(shard_index)),
+                "runner_account": account,
+                "dataset_owner": account,
+                "public_dataset": account == "duymign",
+                "notebook": notebook_name,
+                "kernel_slug": f"typepro-python-shard-{shard_index:02d}",
+            })
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(
+        json.dumps({
+            "schema_version": "typepro-shard-account-plan-v3",
+            "final_dataset_owner": "duyvu1105",
+            "shard_count": 10,
+            "shards": shards_plan,
+        }),
+        encoding="utf-8",
+    )
+
+    owner, count, plans = commit_shard_versions.load_plan(plan_path)
+    assert owner == "duyvu1105"
+    assert count == 10
+    assert [plan.runner_account for plan in plans[:5]] == ["duyvu1105"] * 5
+    assert [plan.runner_account for plan in plans[5:]] == ["duymign"] * 5
+    assert [index for plan in plans for index in plan.assigned_shards] == list(range(10))
+
+
+def test_generated_artifacts_are_ten_standalone_notebooks_and_partitioned_merge():
+    owner, count, plans = commit_shard_versions.load_plan(
+        NOTEBOOK_DIR / "shard_account_plan.json"
+    )
+
+    assert owner == "duyvu1105"
+    assert count == 10
+    assert len(plans) == 10
+    assert [plan.notebook_path.name for plan in plans] == [
+        f"{index + 1:02d}_typepro_shard_{index:02d}.ipynb"
+        for index in range(10)
+    ]
+    assert len({plan.kernel_slug for plan in plans}) == 10
+    assert [plan.part_count for plan in plans] == [1, 1, 3, 3, 1, 1, 1, 2, 1, 5]
+    from collections import Counter
+    physical_counts = Counter()
+    kernel_ids = set()
+    for plan in plans:
+        for part in range(plan.part_count):
+            metadata = commit_shard_versions.kernel_metadata(plan, 'notebook.ipynb', part_index=part)
+            assert metadata['id'] not in kernel_ids
+            kernel_ids.add(metadata['id'])
+            assert metadata['id'].split('/')[1] == metadata['title'].lower().replace(' ', '-')
+            physical_counts[plan.runner_account] += 1
+            assert plan.public_dataset == (plan.runner_account != owner)
+    assert sorted(physical_counts.values()) == [6, 6, 7]
+    assert len(kernel_ids) == 19
+    for index, plan in enumerate(plans):
+        notebook = json.loads(plan.notebook_path.read_text(encoding="utf-8"))
+        config = source_with_tag(notebook, "typepro-shard-config")
+        assert f"ASSIGNED_SHARDS = [{index}]" in config
+        assert f"SHARD_INDEX = {index}" in config
+        assert "SHARD_COUNT = 10" in config
+
+    assert (NOTEBOOK_DIR / "11_merge_finalize.ipynb").exists()
+    assert (NOTEBOOK_DIR / "12_train_and_infer.ipynb").exists()
+    assert (NOTEBOOK_DIR / "13_data_analysis.ipynb").exists()
+    assert not (NOTEBOOK_DIR / "03_merge_finalize.ipynb").exists()
+    assert not (NOTEBOOK_DIR / "04_train_and_infer.ipynb").exists()
+
+
+def test_plan_rejects_private_non_final_account(tmp_path):
+    shards_plan = []
+    for account, shards in (("duyvu1105", range(5)), ("duymign", range(5, 10))):
+        for shard_index in shards:
+            notebook_name = f"shard-{shard_index:02d}.ipynb"
+            (tmp_path / notebook_name).write_text("{}", encoding="utf-8")
+            shards_plan.append({
+                "shard_index": shard_index,
+                "part_count": len(generate_notebooks.physical_partitions(shard_index)),
+                "runner_account": account,
+                "dataset_owner": account,
+                "public_dataset": False,
+                "notebook": notebook_name,
+                "kernel_slug": f"typepro-python-shard-{shard_index:02d}",
+            })
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(
+        json.dumps({
+            "schema_version": "typepro-shard-account-plan-v3",
+            "final_dataset_owner": "duyvu1105",
+            "shard_count": 10,
+            "shards": shards_plan,
+        }),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeError, match="other account's shards must be public"):
+        commit_shard_versions.load_plan(plan_path)
+
+
+def test_credential_must_belong_to_planned_runner(tmp_path):
+    credential = tmp_path / "kaggle.json"
+    credential.write_text(
+        json.dumps({"username": "duymign", "key": "not-printed"}),
+        encoding="utf-8",
+    )
+    with pytest.raises(RuntimeError, match="expected 'duyvu1105'"):
+        commit_shard_versions.load_credential(credential, "duyvu1105")
+
+
+def test_kernel_metadata_is_private_cpu_notebook():
+    plan = commit_shard_versions.AccountPlan(
+        runner_account="duymign",
+        dataset_owner="duymign",
+        public_dataset=True,
+        notebook_path=Path("template.ipynb"),
+        kernel_slug="typepro-python-shard-05",
+        assigned_shards=(5,),
+    )
+    metadata = commit_shard_versions.kernel_metadata(plan, "typepro_shard.ipynb")
+    assert metadata["id"] == "duymign/typepro-python-shard-05"
+    assert metadata["title"] == "TypePro Python Shard 05"
+    assert metadata["is_private"] is True
+    assert metadata["enable_gpu"] is False
+    assert metadata["enable_internet"] is True
+
+
+def test_split_kernel_metadata_targets_existing_shard_slug():
+    plan = commit_shard_versions.AccountPlan(
+        runner_account="duyvu1105",
+        dataset_owner="duyvu1105",
+        public_dataset=False,
+        notebook_path=Path("template.ipynb"),
+        kernel_slug="typepro-python-shard-01",
+        assigned_shards=(1,),
+        part_count=3,
+    )
+
+    metadata = commit_shard_versions.kernel_metadata(
+        plan, "typepro_shard.ipynb", part_index=1
+    )
+
+    assert metadata["id"] == "duyvu1105/typepro-python-shard-01"
+    assert metadata["title"] == "TypePro Python Shard 01"
+
+
+def test_merge_notebook_uses_attached_inputs_and_final_owner_for_publish():
+    shard_accounts = [
+        {
+            "runner_account": "duyvu1105",
+            "dataset_owner": "duyvu1105",
+            "public_dataset": False,
+            "assigned_shards": [0, 1, 2, 3, 4],
+        },
+        {
+            "runner_account": "duymign",
+            "dataset_owner": "duymign",
+            "public_dataset": True,
+            "assigned_shards": [5, 6, 7, 8, 9],
+        },
+    ]
+    notebook = generate_notebooks.merge_notebook(
+        10,
+        "https://github.com/duyvu1105/TypePro.git",
+        "main",
+        expected_dataset_owner="duyvu1105",
+        shard_accounts=shard_accounts,
+    )
+    serialized = json.dumps(notebook)
+
+    assert "TYPEPRO_FINAL_USERNAME" in serialized
+    assert "TYPEPRO_FINAL_KEY" in serialized
+    assert "Kaggle notebook host" in serialized
+    assert 'os.environ[\\"KAGGLE_USERNAME\\"] = final_username' in serialized
+    assert "use_credential(FINAL_SOURCE)" in serialized
+    assert 'item[\\"dataset_id\\"]' in serialized
+    assert "FINAL_SOURCE['owner']" in serialized
+    assert "/kaggle/input" in serialized
+    assert '\\"datasets\\", \\"download\\"' not in serialized
+    assert "INPUT_ROOT.rglob(\\\"shard_manifest.json\\\")" in serialized
+    assert "dataset_id.rsplit" not in serialized
+    assert "project_kb" in serialized
+    assert "typepro-python-generative" in serialized
+    assert "shutil.rmtree(MERGED_BUILD, ignore_errors=True)" in serialized
+
+
+def test_merge_kernel_metadata_attaches_exact_merge_plan_inputs():
+    dataset_ids = commit_merge_finalize.merge_dataset_ids()
+    metadata = commit_merge_finalize.kernel_metadata("typepro_merge_finalize.ipynb")
+
+    assert len(dataset_ids) == 19
+    assert len(set(dataset_ids)) == 19
+    assert metadata["id"] == "duyvu1105/merge-dataset"
+    assert metadata["dataset_sources"] == dataset_ids
+
+
+def test_train_notebook_uses_generative_model_not_contrastive_retrieval():
+    serialized = json.dumps(generate_notebooks.train_notebook(
+        "https://github.com/duyvu1105/TypePro.git", "main"
+    ))
+
+    assert "generative.py" in serialized
+    assert "generative.py" in serialized
+    assert "typepro-codet5p-generative-project-kb-v2" in serialized
+    assert "projection-dim" not in serialized
+    assert 'PIPELINE_DIR / \\"typepro.training.contrastive.py\\"' not in serialized
+    assert "TOKEN LENGTH STATISTICS (NO TRUNCATION)" in serialized
+    assert "average_tokens" in serialized
+    assert "min_tokens" in serialized
+    assert "max_tokens" in serialized
+    assert "chat_token_ids" in serialized
+    assert "TRAIN_BATCH_SIZE = 2" in serialized
+    assert "GRADIENT_ACCUMULATION_STEPS = 8" in serialized
+    assert "TRAIN_SAMPLES = None" in serialized
+    assert "--train-samples" in serialized
+    assert "--group-by-length" in serialized
+    assert serialized.index("TOKEN LENGTH STATISTICS") < serialized.index(
+        "generative.py"
+    )
+
+
+def test_data_analysis_notebook_reports_all_context_limits():
+    serialized = json.dumps(generate_notebooks.data_analysis_notebook(
+        "https://github.com/duyvu1105/TypePro.git", "main"
+    ))
+
+    assert "typepro-python-generative" in serialized
+    assert "Qwen/Qwen2.5-Coder-0.5B-Instruct" in serialized
+    for limit in (8192, 12288, 16384, 32768):
+        assert str(limit) in serialized
+    assert "prompt_truncated_pct" in serialized
+    assert "Tokenizing {split}" in serialized
+
+
+def test_test_retrieval_ablation_is_test_only_and_revision_pinned():
+    serialized = json.dumps(generate_notebooks.test_retrieval_ablation_notebook(
+        "https://github.com/duyvu1105/TypePro.git"
+    ))
+
+    assert "__TYPEPRO_REVISION__" in serialized
+    assert "--only-project-list" in serialized
+    assert "test_projects.txt" in serialized
+    assert "comparison.json" in serialized
+    assert "datasets create" not in serialized
+    assert "final.py" not in serialized
+
+
+def test_generative_batch_uses_left_padding_for_suffix_labels():
+    from typepro.shared.generative_chat import left_pad_causal_batch
+
+    batch = left_pad_causal_batch(
+        prompt_ids=[[10, 11], [20, 21, 22, 23]],
+        sequences=[[10, 11, 30], [20, 21, 22, 23, 40, 41]],
+        pad_token_id=0,
+    )
+
+    assert batch["input_ids"].tolist() == [
+        [0, 0, 0, 10, 11, 30],
+        [20, 21, 22, 23, 40, 41],
+    ]
+    assert batch["attention_mask"].tolist() == [
+        [0, 0, 0, 1, 1, 1],
+        [1, 1, 1, 1, 1, 1],
+    ]
+    assert batch["labels"].tolist() == [
+        [-100, -100, -100, -100, -100, 30],
+        [-100, -100, -100, -100, 40, 41],
+    ]
+
+
+def test_train_kernel_metadata_attaches_final_dataset(tmp_path):
+    import commit_train_notebook
+
+    metadata = commit_train_notebook.kernel_metadata("typepro_train_and_infer.ipynb")
+    assert metadata["id"] == "duyvu1105/typepro-python-train-infer"
+    assert metadata["enable_gpu"] is True
+    assert metadata["enable_internet"] is True
+    assert metadata["dataset_sources"] == ["duyvu1105/typepro-python-generative"]
+
+    commit_train_notebook.write_payload(tmp_path)
+    assert (tmp_path / "typepro_train_and_infer.ipynb").exists()
+    assert (tmp_path / "kernel-metadata.json").exists()
+
+
+def test_kernel_push_rejects_invalid_dataset_sources(tmp_path, monkeypatch):
+    result = subprocess.CompletedProcess(
+        args=["kaggle", "kernels", "push"],
+        returncode=0,
+        stdout="The following are not valid dataset sources and could not be added",
+    )
+    monkeypatch.setattr(commit_shard_versions.subprocess, "run", lambda *args, **kwargs: result)
+
+    with pytest.raises(RuntimeError, match="Kaggle kernel push failed"):
+        commit_shard_versions.run_push(
+            tmp_path,
+            {"username": "duyvu1105", "key": "redacted"},
+            tmp_path,
+        )
+
+
+def test_merge_plan_covers_all_logical_shards_without_overlap():
+    plan = json.loads(
+        (NOTEBOOK_DIR / "shard_merge_plan.json").read_text(encoding="utf-8")
+    )
+    datasets = generate_notebooks.validate_merge_datasets(
+        plan["datasets"], 10, "duyvu1105"
+    )
+
+    assert len(datasets) == 19
+    assert {(item["shard_index"], item["shard_count"]) for item in datasets} == {
+        (0, 10), (1, 10), (2, 20), (12, 40), (32, 40),
+        (3, 30), (13, 30), (23, 30), (4, 10),
+        (5, 10), (6, 10), (7, 20), (17, 20), (8, 10),
+        (9, 30), (19, 30), (29, 90), (59, 90), (89, 90),
+    }
+
+
+def test_shard_12_children_exactly_replace_parent_without_dataset_collision():
+    children = generate_notebooks.physical_partitions(2)[1:]
+    assert children == [(12, 40), (32, 40)]
+    for value in range(4000):
+        assert sum(value % count == index for index, count in children) == int(value % 20 == 12)
+    plan = json.loads((NOTEBOOK_DIR / "shard_merge_plan.json").read_text())
+    ids = {item['dataset_id'] for item in plan['datasets']}
+    assert 'duyvu1105/typepro-build-shard-12' not in ids
+    assert {'duyvu1105/typepro-build-shard-12-of-40', 'duyvu1105/typepro-build-shard-32-of-40'} <= ids
+
+
+def test_visit_deps_exclusion_only_in_stalled_subdivision():
+    template = json.loads((NOTEBOOK_DIR / '03_typepro_shard_02.ipynb').read_text())
+    for index, count in [(2, 20), (12, 40), (32, 40)]:
+        rendered = commit_shard_versions.render_shard_version(
+            template, 2, (2,), 'duyvu1105', False,
+            physical_shard_index=index, physical_shard_count=count,
+        )
+        config = source_with_tag(rendered, 'typepro-shard-config')
+        namespace = {}
+        exec(config.split('from pathlib import Path')[0], namespace)
+        assert namespace['SKIP_PROJECTS'] == (['visit-dav/visit-deps'] if index == 12 else [])
+        assert '--skip-project' in json.dumps(rendered)
+
+
+def test_recovery_notebook_only_restores_and_publishes_completed_shard():
+    notebook = generate_notebooks.recovery_notebook(
+        8,
+        10,
+        "https://github.com/duyvu1105/TypePro.git",
+        "main",
+        expected_dataset_owner="duymign",
+        public_dataset=True,
+        source_kernel="duymign/typepro-python-shard-08/9",
+    )
+    serialized = json.dumps(notebook)
+
+    assert 'SHARD_INDEX = 8' in serialized
+    assert 'expected_archive = f\\"typepro_build_shard_' in serialized
+    assert "shard.py" in serialized
+    assert "prepare.py" not in serialized
+    assert "kernels" in serialized
+    assert "source_handle" in serialized
+    assert 'os.environ[\\"KAGGLE_USERNAME\\"] = EXPECTED_DATASET_OWNER' in serialized
+    assert "PUBLISH_PUBLIC = True" in serialized
+
+
+def test_recovery_metadata_pins_exact_source_version():
+    plan = commit_shard_versions.AccountPlan(
+        runner_account="duymign",
+        dataset_owner="duymign",
+        public_dataset=True,
+        notebook_path=Path("template.ipynb"),
+        kernel_slug="typepro-python-shard-08",
+        assigned_shards=(8,),
+    )
+    metadata = recover_shard_version.recovery_metadata(
+        plan, 8, 9, "recover_shard.ipynb"
+    )
+
+    assert metadata["id"] == "duymign/typepro-recover-shard-08-from-v9"
+    assert metadata["kernel_sources"] == []
+    assert metadata["enable_gpu"] is False
+
+
+def test_republish_final_uses_completed_kernel_output(tmp_path):
+    commit_merge_finalize.write_payload(tmp_path, republish=True)
+    metadata = json.loads((tmp_path / 'kernel-metadata.json').read_text())
+    assert metadata['id'] == 'duyvu1105/republish-final-from-merge'
+    assert metadata['kernel_sources'] == ['duyvu1105/merge-dataset']
+    assert metadata['dataset_sources'] == []
+    source = ''.join(''.join(cell['source']) for cell in json.loads(
+        (tmp_path / 'typepro_merge_finalize.ipynb').read_text())['cells'] if cell['cell_type'] == 'code')
+    compile(source, '<republish>', 'exec')
+    assert 'verify.py' in source
+    assert 'final.py' in source
+    assert 'merge.py' not in source
+    assert 'prepare.py' not in source

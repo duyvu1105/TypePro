@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+if __package__ in (None, ''):
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
 import argparse
 import hashlib
 import json
@@ -8,7 +13,7 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-from kaggle_dataset_utils import publish_dataset
+from typepro.publishing.kaggle_dataset_utils import publish_dataset
 
 
 def package_final(data_dir: Path, payload_dir: Path) -> dict[str, str]:
@@ -20,7 +25,7 @@ def package_final(data_dir: Path, payload_dir: Path) -> dict[str, str]:
     index = {}
     seen = set()
     payload_dir.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(payload_dir / "project_kb.zip", "w", zipfile.ZIP_DEFLATED) as bundle:
+    with zipfile.ZipFile(payload_dir / "typepro.analysis.project_kb.zip", "w", zipfile.ZIP_DEFLATED) as bundle:
         for source in sources:
             slug = source.parent.name
             destination = slug
@@ -36,7 +41,7 @@ def package_final(data_dir: Path, payload_dir: Path) -> dict[str, str]:
             bundle.write(source, relative.removeprefix("project_kb/"))
     for source in sorted(data_dir.iterdir()):
         if source.is_file() and source.name not in {
-            "dataset-metadata.json", "MERGE_COMPLETE.json", "project_kb_index.json", "project_kb.zip"
+            "dataset-metadata.json", "MERGE_COMPLETE.json", "project_kb_index.json", "typepro.analysis.project_kb.zip"
         }:
             if source.name.casefold() in seen:
                 raise RuntimeError(f"Case-insensitive path collision: {source.name}")

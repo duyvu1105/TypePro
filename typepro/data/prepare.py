@@ -7,11 +7,15 @@ to stay within Kaggle's working-disk limit.
 """
 from __future__ import annotations
 
+if __package__ in (None, ''):
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
 import argparse
 import hashlib
 import json
 import os
-import random
 import re
 import queue
 import signal
@@ -28,7 +32,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
-from data_utils import is_builtin_annotation, iter_records, json_preview, print_jsonl_samples
+from typepro.shared.data_utils import is_builtin_annotation, iter_records, json_preview, print_jsonl_samples
 from tqdm.auto import tqdm
 
 
@@ -761,10 +765,11 @@ def matching_skip_pattern(project: str, patterns: Iterable[str]) -> str | None:
 
 
 def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path) -> dict[str, Any]:
-    python_dir = typepro_root / "Python"
-    exporter = python_dir / "export_slices.py"
-    kb_builder = python_dir / "build_third_party_kb.py"
-    project_kb_builder = python_dir / "project_kb.py"
+    analysis_dir = typepro_root / 'typepro' / 'analysis'
+    python_dir = work_dir / 'analysis_runtime'
+    exporter = analysis_dir / "export_slices.py"
+    kb_builder = analysis_dir / "build_third_party_kb.py"
+    project_kb_builder = analysis_dir / "project_kb.py"
     if not exporter.exists():
         raise FileNotFoundError(exporter)
     if args.build_import_kb and not kb_builder.exists():
@@ -1129,7 +1134,7 @@ def finalize_dataset(args: argparse.Namespace, work_dir: Path, output_dir: Path,
     if not any(raw_dir.glob("*.jsonl")):
         raise ValueError(f"No raw slice shards found in {raw_dir}")
     output_dir.mkdir(parents=True, exist_ok=True)
-    preprocess_script = Path(__file__).resolve().parents[2] / "codet5p_type_retrieval" / "preprocess_generative.py"
+    preprocess_script = Path(__file__).resolve().parents[2] / "typepro" / "data" / "preprocess.py"
     command = [
         sys.executable, str(preprocess_script), "--input", str(raw_dir),
         "--output-dir", str(output_dir), "--label-field", "gttype",
@@ -1138,7 +1143,7 @@ def finalize_dataset(args: argparse.Namespace, work_dir: Path, output_dir: Path,
     fixed_split = getattr(args, "test_project_list", None)
     fixed_split_manifest = None
     if fixed_split:
-        from fixed_test_split import prepare_project_holdout
+        from typepro.data.split import prepare_project_holdout
         fixed_split_manifest = prepare_project_holdout(
             work_dir, output_dir, Path(fixed_split), args.test_projects,
             args.seed, args.validation_project_ratio, project_from_row,
@@ -1192,7 +1197,7 @@ def finalize_dataset(args: argparse.Namespace, work_dir: Path, output_dir: Path,
         expected_projects.update(project_from_row(row) for row in read_json(work_dir / "metadata" / f"{split}.json"))
     metadata_project_count = len(expected_projects)
     if runtime_manifest.get("revision_lock_policy") == "only":
-        lock_path = typepro_root / "codet5p_type_retrieval" / "project_revision_lock.json"
+        lock_path = typepro_root / "configs" / "project_revision_lock.json"
         lock_sha256 = runtime_manifest.get("project_revision_lock_sha256")
         if not lock_sha256 or sha256_file(lock_path) != lock_sha256:
             raise ValueError("Merged project revision lock does not match the source checkout")
@@ -1201,7 +1206,6 @@ def finalize_dataset(args: argparse.Namespace, work_dir: Path, output_dir: Path,
             project for project in expected_projects
             if project.casefold() in revision_lock
         }
-    completed_projects = {status["project"] for status in statuses if "error" not in status}
     missing_projects = sorted(expected_projects - {status.get("project") for status in statuses})
     if not args.allow_partial and missing_projects:
         raise ValueError(

@@ -100,7 +100,7 @@ mỗi account đúng năm shard, owner và visibility khớp bảng trên. Chạ
 quan khi thay đổi generator/publisher:
 
 ```bash
-python -m pytest codet5p_type_retrieval/tests -q -p no:cacheprovider
+python -m pytest tests -q -p no:cacheprovider
 ```
 
 ## Push shard notebooks lên Kaggle
@@ -156,7 +156,7 @@ owner, create-vs-version, manifest và lỗi semantic dù CLI trả exit code `0
 Publish lại một completed shard ngay trong Kaggle session:
 
 ```bash
-python -u /kaggle/working/TypePro/codet5p_type_retrieval/publish_shard.py \
+python -u /kaggle/working/TypePro/typepro/publishing/shard.py \
   --work-dir /kaggle/working/typepro_build_shard_06 \
   --payload-dir /kaggle/working/publish_shard_06 \
   --dataset-id duymign/typepro-build-shard-06 \
@@ -171,7 +171,7 @@ Với shard `00-04`, thay owner/index tương ứng và bỏ `--public`. Publish
 Dataset chỉ sau verify/merge:
 
 ```bash
-python -u /kaggle/working/TypePro/codet5p_type_retrieval/publish_kaggle.py \
+python -u /kaggle/working/TypePro/typepro/publishing/final.py \
   --data-dir /kaggle/working/typepro_python_generative \
   --dataset-id duyvu1105/typepro-python-generative \
   --title "TypePro Python Generative Project-KB Data" \
@@ -213,9 +213,9 @@ Luôn dry-run bằng cách bỏ `--push` trước. Nếu `kaggle kernels output`
 ERROR rỗng thì session đã đóng không recover được; retry đúng shard bằng
 `commit_shard_versions.py --shard N --push`.
 
-Các script `restore_shard_02_from_v8.py` và
-`resume_shards_from_versions.py` chỉ dành cho lịch sử workflow năm shard. Output
-có `shard_count=5` không được trộn với workflow mười shard hiện tại.
+Các tiện ích recovery của workflow năm shard đã được loại bỏ sau refactor.
+Dùng `recover_shard_version.py` hoặc scheduler theo plan 19 partition hiện tại.
+Output có `shard_count=5` không được trộn với workflow hiện tại.
 
 ## Trình tự hoàn tất
 

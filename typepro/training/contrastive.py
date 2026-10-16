@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+if __package__ in (None, ''):
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
 import argparse
 import json
 import math
@@ -12,14 +17,14 @@ from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 from transformers import get_cosine_schedule_with_warmup, set_seed
 
-from data_utils import (
+from typepro.shared.data_utils import (
     ContrastiveCollator,
     JsonlDataset,
     canonical_type_name,
     print_jsonl_samples,
     select_training_samples,
 )
-from model import CodeT5pBiEncoder
+from typepro.training.model import CodeT5pBiEncoder
 
 
 def parse_args() -> argparse.Namespace:

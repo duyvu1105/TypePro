@@ -1,6 +1,11 @@
 """Create CodeT5 sequence-to-sequence records from project-local KB results."""
 from __future__ import annotations
 
+if __package__ in (None, ''):
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
 import argparse
 import hashlib
 import json
@@ -9,12 +14,11 @@ import sys
 from collections import Counter
 from pathlib import Path
 from typing import Any, Iterable
-from type_labels import normalize_type_label
+from typepro.shared.type_labels import normalize_type_label
 
 
 SPLITS = ("train", "validation", "test")
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'Python'))
-from ast_context_slicer import CANDIDATE_DEFINITION_MAX_CHARS, limit_candidate_definition
+from typepro.analysis.ast_context_slicer import CANDIDATE_DEFINITION_MAX_CHARS, limit_candidate_definition
 
 
 def iter_records(path: Path) -> Iterable[dict[str, Any]]:

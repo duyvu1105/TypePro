@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 REPO_DIR="${TYPEPRO_REPO_DIR:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)}"
 DATA_DIR="${TYPEPRO_DATA_DIR:-$REPO_DIR/datasets/typepro-python-generative-v19}"
-PIPELINE_DIR="$REPO_DIR/codet5p_type_retrieval"
+PIPELINE_DIR="$REPO_DIR/typepro"
 VENV_DIR="${TYPEPRO_VENV_DIR:-$REPO_DIR/.venv}"
 OUTPUT_DIR="${TYPEPRO_OUTPUT_DIR:-$REPO_DIR/outputs/qwen25-coder-05b}"
 LOG_FILE="$OUTPUT_DIR/train_tmux.log"
@@ -31,7 +31,7 @@ cd "$REPO_DIR"
   --num_machines 1 \
   --num_processes 1 \
   --mixed_precision fp16 \
-  "$PIPELINE_DIR/train_generative.py" \
+  "$PIPELINE_DIR/training/generative.py" \
   --data-dir "$DATA_DIR" \
   --output-dir "$OUTPUT_DIR" \
   --model-name Qwen/Qwen2.5-Coder-0.5B-Instruct \

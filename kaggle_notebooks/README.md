@@ -44,22 +44,26 @@ archives still require matching coordinates and retrieval schema before reuse.
 ```powershell
 python kaggle_notebooks/generate_notebooks.py --shards 10 --runner-accounts duyvu1105 duymign vdduy1105 --dataset-owner duyvu1105
 python kaggle_notebooks/commit_shard_versions.py
-python -m pytest codet5p_type_retrieval/tests -q -p no:cacheprovider
+python -m pytest tests -q -p no:cacheprovider
 ```
 
 For the complete rerun, use the scheduler instead of pushing all partitions
-without a slot check. Replace COMMIT_SHA with the full tested/pushed Git SHA.
-Dry-run first; it renders all payloads and does not contact Kaggle.
+without a slot check. Dry-run first; it resolves GitHub main once, saves the
+plan and renders all payloads without contacting Kaggle. No manual SHA is needed.
 
 ```powershell
-python kaggle_notebooks/schedule_shards.py --revision COMMIT_SHA
-uv run --with kaggle==1.7.4.2 python kaggle_notebooks/schedule_shards.py --revision COMMIT_SHA --push --watch
+python kaggle_notebooks/schedule_shards.py
+uv run --with kaggle==1.7.4.2 python kaggle_notebooks/schedule_shards.py --push --watch
 ```
 
 The scheduler pins the source checkout to that commit, counts nonterminal jobs
 across each account, reserves newly submitted slots, and keeps a durable ledger
-at `typepro_kernel_versions/rerun_state.json`. Reusing the same ledger avoids
-duplicate pushes. An interrupted `submitting` entry requires inspecting the
+at `typepro_kernel_versions/latest_run.json`. Reusing the same ledger retains
+its saved SHA and avoids duplicate pushes. To start another run with the newest
+GitHub main, dry-run with `--new-run`, then submit without that flag. The old
+ledger is archived. Explicit `--revision SHA` (or `latest`) and `--state PATH`
+remain supported, including resuming historical `rerun_state.json` ledgers.
+An interrupted `submitting` entry requires inspecting the
 remote version before any retry. The watcher exits after all 19 submissions;
 submission is not proof of completed datasets. Verify manifests/file listings
 before merge. Do not publish or train the final dataset automatically.
@@ -133,7 +137,7 @@ p99, maximum input character lengths and the 20 largest contexts. Large genuine
 target/resolved functions are reported rather than silently truncated. No
 tokenizer is run during shard creation.
 
-Run `python codet5p_type_retrieval/check_evidence_regressions.py --output reports/evidence_regressions_20261013.json`
+Run `python -m typepro.audit.regressions --output outputs/audit/evidence/regressions.json`
 to replay all nine supplied loss patterns. The JSON includes each check, rendered
 slice, top-10 candidates and provenance. These are regression fixtures, not model
 accuracy measurements or a verification of every row in an existing Dataset.
@@ -170,7 +174,7 @@ after an interrupted rebuild. Merge requires the new runtime schema and row
 stamps, preventing mixed old/new partitions.
 
 Repository checkout revisions are pinned in
-`codet5p_type_retrieval/project_revision_lock.json`, generated from the
+`configs/project_revision_lock.json`, generated from the
 published v13 rows. Shard notebooks process only projects in this lock and
 fetch each exact 40-character commit before slicing. The runtime manifest
 records the lock SHA-256 and source Dataset version. Regenerate the lock
@@ -309,7 +313,7 @@ they are pushed as successive versions of the existing notebook.
 Run the repository tests after generator/publisher changes:
 
 ```bash
-python -m pytest codet5p_type_retrieval/tests -q -p no:cacheprovider
+python -m pytest tests -q -p no:cacheprovider
 ```
 
 Render the token-analysis kernel locally without contacting Kaggle:
@@ -354,7 +358,7 @@ part.
 The finalizer now selects exactly **100 projects with usable preprocessed
 samples** for test. It prioritizes the 103 repository identifiers extracted from
 the published Python baseline artifacts in
-`reports/typepro_test_audit/projects.txt`. Unavailable projects (including those
+`configs/test_projects.txt`. Unavailable projects (including those
 with no parameter/return samples) are replaced by other successfully processed
 projects, ranked deterministically with seed 13. A streaming preflight applies
 the exact same sample filter as preprocessing, so failed or empty projects do
@@ -408,9 +412,9 @@ Here shard `08` is restored from version `2` of
 version. Recovery only republishes verified completed output; it does not
 rebuild recommendations.
 
-`restore_shard_02_from_v8.py` and `resume_shards_from_versions.py` are legacy
-five-shard history utilities. Their `shard_count=5` outputs must never be mixed
-with this ten-shard workflow.
+The obsolete five-shard recovery utilities were removed. For the current
+19-partition plan use `recover_shard_version.py` or rerun the exact partition
+with `schedule_shards.py`; never mix historical `shard_count=5` outputs.
 
 ## Completion order
 
@@ -429,7 +433,7 @@ omitted. To train on a deterministic random subset while keeping the complete
 validation split, run for example:
 
 ```bash
-accelerate launch --multi_gpu codet5p_type_retrieval/train_generative.py \
+accelerate launch --multi_gpu typepro/training/generative.py \
   --data-dir /kaggle/input/typepro-python-generative \
   --output-dir /kaggle/working/codet5p-typepro-python \
   --train-samples 10000

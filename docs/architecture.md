@@ -2,52 +2,66 @@
 
 | Phần | Nguồn chính | Trách nhiệm |
 | --- | --- | --- |
-| Phân tích source | `Python/` | AST, slicing, masking, project KB, evidence |
+| Phân tích source | `typepro/analysis/` | AST, slicing, masking, project KB, truy hồi bằng chứng |
 | Process data | `typepro/data/` | Metadata, export, split, preprocess, merge, verify |
 | Finetune | `typepro/training/` | Generative QLoRA và contrastive ranker |
 | Inference | `typepro/inference/` | Model local, ranker, API DeepSeek có resume SQLite |
 | Publish | `typepro/publishing/` | Đóng gói và publish shard/final Dataset |
-| Log và audit | `typepro/runtime.py` | Console log, lifecycle, revision, trạng thái, exception |
-| Môi trường chạy | `kaggle_notebooks/`, `ssh_notebooks/`, `vastai_notebooks/` | Generator, notebook, runner và cấu hình host |
-| Hỗ trợ chuyển tiếp | `codet5p_type_retrieval/` | Script tương thích, utilities dùng chung, evidence checks và tests |
+| Dùng chung | `typepro/shared/` | Đọc dữ liệu, chuẩn hóa nhãn, định dạng chat |
+| Kiểm tra bằng chứng | `typepro/audit/` | Regression, inventory và replay source |
+| Log khi chạy | `typepro/runtime.py` | Lifecycle, revision, trạng thái, exception và console log |
+| Cấu hình | `configs/`, `requirements/` | Revision lock, project test và dependency |
+| Kiểm thử | `tests/` | Fixtures và kiểm thử CPU; kiểm thử launcher DeepSeek ở `ssh_notebooks/` |
+| Môi trường chạy | `kaggle_notebooks/`, `ssh_notebooks/`, `vastai_notebooks/` | Generator, notebook và launcher theo host |
 
-Logic của 12 module đã chuyển vào package theo chức năng. Script cũ chỉ chuyển
-đến module mới; import cũ trả về cùng module để giữ các caller và monkeypatch.
-Các utilities chưa chuyển vẫn được dùng chung, không sao chép thành bản thứ hai.
-`typepro/__init__.py` thiết lập đường dẫn hỗ trợ cho giai đoạn chuyển tiếp này.
+Implementation Python đang dùng nằm trong package `typepro`. Không còn hai thư
+mục nguồn cũ hay lớp wrapper tương thích cho chúng. Các module dùng import đầy
+đủ theo package. `typepro/__init__.py` không sửa `sys.path`; script chạy trực tiếp
+chỉ thêm root repository khi cần.
 
-`python -m typepro COMMAND ...` là điểm vào thống nhất. Import model GPU chỉ diễn
-ra khi chọn bước train/infer; process data và trợ giúp chung không cần tải model.
-Các notebook cũ vẫn gọi được script tương thích. Chỉ sửa notebook qua generator.
+`python -m typepro COMMAND ...` là điểm vào thống nhất cho các workflow. Import
+model GPU chỉ diễn ra khi chọn bước train/infer. Notebook và launcher dùng
+đường dẫn mới; thay đổi notebook phải qua generator, không sửa tay artifact.
+
+Luồng dữ liệu chính: `data.prepare` điều phối các subprocess trong `analysis`,
+ghi raw slices và project KB, sau đó preprocess/split/verify. Cache phân tích
+ghi vào `<work-dir>/analysis_runtime/`, tách khỏi mã nguồn.
+`configs/project_revision_lock.json` khóa revision project;
+`configs/test_projects.txt` giữ danh sách project được ưu tiên cho tập test.
 
 ## Audit khi chạy
 
-Mỗi lệnh CLI/script tương thích tạo một thư mục riêng trong `outputs/audit/`
-(đổi bằng `TYPEPRO_AUDIT_DIR`):
+Các workflow qua CLI hoặc entry point có `run_main` tạo thư mục riêng trong
+`outputs/audit/` (đổi bằng `TYPEPRO_AUDIT_DIR`):
 
 - `run.json`: stage, thời gian bắt đầu/kết thúc, revision Git, PID/rank, exit code,
   trạng thái `running/complete/failed/interrupted` và loại lỗi.
 - `console.log`: stdout/stderr Python và traceback; các giá trị secret lấy từ
-  environment được che. Không ghi environment hoặc toàn bộ argv vào manifest.
+  environment được che. Không ghi toàn bộ environment hoặc argv vào manifest.
 
 Với nhiều GPU, mỗi process/rank ghi thư mục riêng để tránh ghi đè. Nếu host bị
-kill/mất điện, trạng thái có thể còn `running`; không diễn giải thành thành công.
-Output của subprocess/native code chưa redirect qua Python không được Tee thu
-thập; vẫn giữ log tmux và log project hiện có.
+kill/mất điện, trạng thái có thể còn `running`; đây không phải bằng chứng thành công.
+Output subprocess/native code chưa redirect qua Python không được Tee thu
+thập; vẫn cần log tmux và log project hiện có.
 
-Audit dữ liệu chi tiết vẫn ở work directory: `project_status/*.json`,
+Audit dữ liệu chi tiết ở work directory: `project_status/*.json`,
 `export_summary`, `exporter_tail`, `context_audit.json`, split audit và manifest.
-Checkpoint/model, predictions và metrics thuộc `outputs/`, không đưa vào Git.
+Checkpoint/model, predictions và metrics thuộc thư mục output, không đưa vào Git.
 DeepSeek giữ checkpoint SQLite và cấu hình để từ chối resume sai dữ liệu/model.
 
-Đây là refactor kiến trúc và vận hành, không đổi tập test, nhãn, ranking,
-masking hay giới hạn candidate 8k. Việc đủ 3.277 mẫu v18 vẫn cần build và so
-đối chiếu sau merge; không lấy số test pass thay cho kiểm chứng Dataset thật.
+Các công cụ `python -m typepro.audit.regressions`, `inventory`, `sources` sinh
+báo cáo theo đường dẫn `--output`. Chúng kiểm tra bằng chứng trong slice hoặc
+candidates; kết quả không chứng minh model dự đoán đúng hay Dataset đủ mẫu.
 
-## Tài liệu và artifacts
+## Phạm vi và tài liệu
 
-Tài liệu sử dụng hiện hành ở README root và README của từng môi trường.
-Các ghi chú rollout context v2/v3 và kế hoạch đã thay thế được bỏ khỏi cây làm
-việc; lịch sử Git và bản stash trước merge giữ được nội dung cũ. Giữ lại
-inventory/regression JSON, audit v18–v19, kết quả model và danh sách benchmark
-đang được generator sử dụng. Không xóa Dataset, checkpoint hay credentials.
+Việc chuyển package giữ chính sách slicing, masking, ranking, candidate 8k và
+split hiện hành. Kiểm thử CPU không thay cho build Dataset thật, đối chiếu
+3.277 mẫu test v18 hoặc chạy GPU. Job Kaggle đã submit vẫn dùng commit được pin
+trong version của chúng cho đến khi chủ động submit lại.
+
+Hướng dẫn sử dụng nằm trong README root và README của từng môi trường.
+Báo cáo cũ và hướng dẫn upstream không còn dùng đã được bỏ; nội dung đã commit
+còn trong lịch sử Git. Các chỉnh sửa local trước khi dọn có bản dự phòng trong
+Git stash. Danh sách test được chuyển sang `configs/` trước khi xóa báo cáo;
+Dataset, checkpoint và credential không thuộc phạm vi dọn dẹp này.

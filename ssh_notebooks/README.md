@@ -12,7 +12,7 @@ Tại root repository trên server Linux có GPU NVIDIA/CUDA:
 python -m venv .venv
 source .venv/bin/activate
 python -m pip install -e . --no-deps
-python -m pip install -r codet5p_type_retrieval/requirements.txt requests
+python -m pip install -r requirements/training.txt requests
 ```
 
 Cài PyTorch phù hợp CUDA của host. Credential Kaggle chỉ dùng khi download,

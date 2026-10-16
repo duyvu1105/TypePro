@@ -105,10 +105,10 @@ def build_notebook() -> dict:
         if REVISION == "main":
             run(["git", "pull", "--ff-only", "origin", "main"], cwd=REPO_DIR)
 
-        PIPELINE_DIR = REPO_DIR / "codet5p_type_retrieval"
+        PIPELINE_DIR = REPO_DIR / "typepro"
         run([
             sys.executable, "-m", "pip", "install", "-q",
-            "-r", PIPELINE_DIR / "requirements.txt",
+            "-r", REPO_DIR / "requirements" / "training.txt",
         ])
         """),
         markdown("""
@@ -159,7 +159,7 @@ def build_notebook() -> dict:
             raise RuntimeError(f"Cần đúng một Dataset TypePro, tìm thấy: {candidates}")
         DATA_DIR = candidates[0]
         print("Dataset:", DATA_DIR)
-        run([sys.executable, PIPELINE_DIR / "verify_dataset.py", "--data-dir", DATA_DIR])
+        run([sys.executable, PIPELINE_DIR / "data" / "verify.py", "--data-dir", DATA_DIR])
         """),
         markdown("## 5. Xác nhận PyTorch nhìn thấy đúng một GPU"),
         code("""
@@ -190,7 +190,7 @@ def build_notebook() -> dict:
             "--num_machines", "1",
             "--num_processes", "1",
             "--mixed_precision", "fp16",
-            PIPELINE_DIR / "train_generative.py",
+            PIPELINE_DIR / "training" / "generative.py",
             "--data-dir", DATA_DIR,
             "--output-dir", OUTPUT_DIR,
             "--model-name", MODEL_NAME,
@@ -216,7 +216,7 @@ def build_notebook() -> dict:
         if not best_checkpoint.is_dir():
             raise RuntimeError(f"Không tìm thấy checkpoint: {best_checkpoint}")
         run([
-            sys.executable, "-u", PIPELINE_DIR / "infer_generative.py",
+            sys.executable, "-u", PIPELINE_DIR / "inference" / "generative.py",
             "--checkpoint", best_checkpoint,
             "--model-name", MODEL_NAME,
             "--input", DATA_DIR / "test.jsonl",

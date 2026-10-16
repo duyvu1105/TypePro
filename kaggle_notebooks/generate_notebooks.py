@@ -569,8 +569,8 @@ def shard_notebook(
         else:
             print("Using existing repository:", REPO_DIR)
 
-        PIPELINE_DIR = REPO_DIR / "codet5p_type_retrieval"
-        run([sys.executable, "-m", "pip", "install", "-q", "-U", "-r", PIPELINE_DIR / "requirements-build.txt"])
+        PIPELINE_DIR = REPO_DIR / "typepro"
+        run([sys.executable, "-m", "pip", "install", "-q", "-U", "-r", REPO_DIR / "requirements" / "build.txt"])
         if use_explicit_credential:
             # This release always honors the explicit legacy username/key pair.
             run([sys.executable, "-m", "pip", "install", "-q", "--force-reinstall", "kaggle==1.7.4.2"])
@@ -694,11 +694,11 @@ def shard_notebook(
         """),
         markdown("## Download metadata and create the deterministic project split"),
         code("""
-        prepare = PIPELINE_DIR / "prepare_dataset.py"
+        prepare = PIPELINE_DIR / "data" / "prepare.py"
         common = [
             "--typepro-root", REPO_DIR,
             "--work-dir", WORK_DIR,
-            "--project-revision-lock", PIPELINE_DIR / "project_revision_lock.json",
+            "--project-revision-lock", REPO_DIR / "configs" / "project_revision_lock.json",
             "--revision-lock-policy", "only",
             "--split-profile", "paper_project",
             "--test-projects", TEST_PROJECTS,
@@ -742,8 +742,8 @@ def shard_notebook(
         markdown("## Verify that this shard attempted every assigned project"),
         code("""
         import json
-        sys.path.insert(0, str(PIPELINE_DIR))
-        from prepare_dataset import project_from_row, read_json, stable_number
+        sys.path.insert(0, str(REPO_DIR))
+        from typepro.data.prepare import project_from_row, read_json, stable_number
 
         projects = set()
         for split in ("train", "validation", "test"):
@@ -754,7 +754,7 @@ def shard_notebook(
             if stable_number(project, SEED + 4) % SHARD_COUNT == SHARD_INDEX
         }
         revision_lock_payload = json.loads(
-            (PIPELINE_DIR / "project_revision_lock.json").read_text(encoding="utf-8")
+            (REPO_DIR / "configs" / "project_revision_lock.json").read_text(encoding="utf-8")
         )
         locked_projects = {
             project.casefold()
@@ -796,7 +796,7 @@ def shard_notebook(
         ),
         code("""
         publish_command = [
-            sys.executable, "-u", PIPELINE_DIR / "publish_shard.py",
+            sys.executable, "-u", PIPELINE_DIR / "publishing" / "shard.py",
             "--work-dir", WORK_DIR,
             "--payload-dir", PUBLISH_DIR,
             "--dataset-id", dataset_id,
@@ -1010,7 +1010,7 @@ def recovery_notebook(
         REPO_DIR = Path("/kaggle/working/TypePro")
         if not REPO_DIR.exists():
             run(["git", "clone", "--branch", BRANCH, "--single-branch", REPOSITORY, REPO_DIR])
-        PIPELINE_DIR = REPO_DIR / "codet5p_type_retrieval"
+        PIPELINE_DIR = REPO_DIR / "typepro"
         """),
         markdown("## Download, locate, and validate the completed shard output"),
         code("""
@@ -1081,7 +1081,7 @@ def recovery_notebook(
         if SHARD_COUNT == 40:
             dataset_id += "-of-40"
         publish_command = [
-            sys.executable, "-u", PIPELINE_DIR / "publish_shard.py",
+            sys.executable, "-u", PIPELINE_DIR / "publishing" / "shard.py",
             "--work-dir", WORK_DIR,
             "--payload-dir", PUBLISH_DIR,
             "--dataset-id", dataset_id,
@@ -1250,8 +1250,8 @@ def merge_notebook(
         code("""
         if not REPO_DIR.exists():
             run(["git", "clone", "--branch", BRANCH, "--single-branch", REPOSITORY, REPO_DIR])
-        PIPELINE_DIR = REPO_DIR / "codet5p_type_retrieval"
-        run([sys.executable, "-m", "pip", "install", "-q", "-U", "-r", PIPELINE_DIR / "requirements-build.txt"])
+        PIPELINE_DIR = REPO_DIR / "typepro"
+        run([sys.executable, "-m", "pip", "install", "-q", "-U", "-r", REPO_DIR / "requirements" / "build.txt"])
         if use_explicit_credential:
             run([sys.executable, "-m", "pip", "install", "-q", "--force-reinstall", "kaggle==1.7.4.2"])
         else:
@@ -1365,7 +1365,7 @@ def merge_notebook(
         """),
         markdown("## Merge shard outputs"),
         code("""
-        merge_script = PIPELINE_DIR / "merge_shards.py"
+        merge_script = PIPELINE_DIR / "data" / "merge.py"
         run([
             sys.executable, "-u", merge_script,
             "--shard-build-dirs", *shard_builds,
@@ -1375,7 +1375,7 @@ def merge_notebook(
         """),
         markdown("## Finalize generative train/validation/test and retain project KBs"),
         code("""
-        prepare = PIPELINE_DIR / "prepare_dataset.py"
+        prepare = PIPELINE_DIR / "data" / "prepare.py"
         finalize_flags = []
         if INCLUDE_BUILTINS:
             finalize_flags.append("--include-builtins")
@@ -1388,7 +1388,7 @@ def merge_notebook(
             "--work-dir", MERGED_BUILD,
             "--output-dir", FINAL_DIR,
             "--split-profile", "paper_project",
-            "--test-project-list", REPO_DIR / "reports" / "typepro_test_audit" / "projects.txt",
+            "--test-project-list", REPO_DIR / "configs" / "test_projects.txt",
             "--test-projects", 100,
             "--validation-project-ratio", 0.10,
             "--seed", SEED,
@@ -1397,7 +1397,7 @@ def merge_notebook(
             "--log-every", 10000,
             *finalize_flags,
         ])
-        run([sys.executable, PIPELINE_DIR / "verify_dataset.py", "--data-dir", FINAL_DIR])
+        run([sys.executable, PIPELINE_DIR / "data" / "verify.py", "--data-dir", FINAL_DIR])
         # Finalize has consumed the merged raw slices and KBs; drop the
         # transient build so publishing has room on the Kaggle working disk.
         shutil.rmtree(MERGED_BUILD, ignore_errors=True)
@@ -1431,7 +1431,7 @@ def merge_notebook(
         use_credential(FINAL_SOURCE)
         final_id = f"{FINAL_SOURCE['owner']}/{FINAL_DATASET_SLUG}"
         run([
-            sys.executable, PIPELINE_DIR / "publish_kaggle.py",
+            sys.executable, PIPELINE_DIR / "publishing" / "final.py",
             "--data-dir", FINAL_DIR,
             "--dataset-id", final_id,
             "--title", "TypePro Python Generative Project-KB Data",
@@ -1464,7 +1464,7 @@ def republish_final_notebook(merge: dict) -> dict:
         shutil.copytree(source, FINAL_DIR)
         # A completion marker from an older publisher must not survive a retry.
         (FINAL_DIR / "MERGE_COMPLETE.json").unlink(missing_ok=True)
-        run([sys.executable, PIPELINE_DIR / "verify_dataset.py", "--data-dir", FINAL_DIR])
+        run([sys.executable, PIPELINE_DIR / "data" / "verify.py", "--data-dir", FINAL_DIR])
         manifest = json.loads((FINAL_DIR / "manifest.json").read_text(encoding="utf-8"))
         """),
         merge["cells"][-2],
@@ -1512,8 +1512,8 @@ def train_notebook(repository: str, branch: str) -> dict:
             # A rerun can reuse /kaggle/working/TypePro; refresh it so helper
             # modules such as generative_chat.py match this notebook version.
             run(["git", "-C", REPO_DIR, "pull", "--ff-only", "origin", BRANCH])
-        PIPELINE_DIR = REPO_DIR / "codet5p_type_retrieval"
-        run([sys.executable, "-m", "pip", "install", "-q", "-r", PIPELINE_DIR / "requirements.txt"])
+        PIPELINE_DIR = REPO_DIR / "typepro"
+        run([sys.executable, "-m", "pip", "install", "-q", "-r", REPO_DIR / "requirements" / "training.txt"])
         """),
         markdown("## Locate and verify the attached processed dataset"),
         code("""
@@ -1529,15 +1529,15 @@ def train_notebook(repository: str, branch: str) -> dict:
             raise RuntimeError(f"Expected exactly one TypePro processed dataset, found {candidates}")
         DATA_DIR = candidates[0]
         print("Using dataset:", DATA_DIR)
-        run([sys.executable, PIPELINE_DIR / "verify_dataset.py", "--data-dir", DATA_DIR])
+        run([sys.executable, PIPELINE_DIR / "data" / "verify.py", "--data-dir", DATA_DIR])
         """),
         markdown("## Measure token lengths before training"),
         code("""
         from transformers import AutoTokenizer
-        pipeline_path = str(PIPELINE_DIR)
+        pipeline_path = str(REPO_DIR)
         if pipeline_path not in sys.path:
             sys.path.insert(0, pipeline_path)
-        from generative_chat import chat_token_ids
+        from typepro.shared.generative_chat import chat_token_ids
 
         tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
         # Measurement intentionally keeps long sequences untruncated.
@@ -1650,7 +1650,7 @@ def train_notebook(repository: str, branch: str) -> dict:
         code("""
         train_command = [
             "accelerate", "launch", "--multi_gpu",
-            PIPELINE_DIR / "train_generative.py",
+            PIPELINE_DIR / "training" / "generative.py",
             "--data-dir", DATA_DIR,
             "--output-dir", OUTPUT_DIR,
             "--model-name", MODEL_NAME,
@@ -1673,7 +1673,7 @@ def train_notebook(repository: str, branch: str) -> dict:
         code("""
         predictions = Path("/kaggle/working/test_predictions.jsonl")
         run([
-            sys.executable, "-u", PIPELINE_DIR / "infer_generative.py",
+            sys.executable, "-u", PIPELINE_DIR / "inference" / "generative.py",
             "--checkpoint", OUTPUT_DIR / "best",
             "--model-name", MODEL_NAME,
             "--input", DATA_DIR / "test.jsonl",
@@ -1724,10 +1724,10 @@ def data_analysis_notebook(repository: str, branch: str) -> dict:
             run(["git", "clone", "--branch", BRANCH, "--single-branch", REPOSITORY, REPO_DIR])
         else:
             run(["git", "-C", REPO_DIR, "pull", "--ff-only", "origin", BRANCH])
-        PIPELINE_DIR = REPO_DIR / "codet5p_type_retrieval"
+        PIPELINE_DIR = REPO_DIR / "typepro"
         run([sys.executable, "-m", "pip", "install", "-q", "transformers>=4.44,<5", "sentencepiece"])
-        if str(PIPELINE_DIR) not in sys.path:
-            sys.path.insert(0, str(PIPELINE_DIR))
+        if str(REPO_DIR) not in sys.path:
+            sys.path.insert(0, str(REPO_DIR))
         """),
         markdown("## Locate the attached final Dataset"),
         code("""
@@ -1764,7 +1764,7 @@ def data_analysis_notebook(repository: str, branch: str) -> dict:
         from tqdm.auto import tqdm
         from transformers import AutoTokenizer
 
-        from generative_chat import chat_token_ids
+        from typepro.shared.generative_chat import chat_token_ids
 
         tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
         # Disable implicit tokenizer truncation: this cell measures raw lengths.
@@ -1952,7 +1952,7 @@ def data_analysis_notebook(repository: str, branch: str) -> dict:
                 "model_name": MODEL_NAME,
                 "label_length": LABEL_LENGTH,
                 "input_limits": LIMITS,
-                "template": "generative_chat.chat_token_ids",
+                "template": "typepro.shared.generative_chat.chat_token_ids",
                 "dataset": str(DATA_DIR),
             }, indent=2),
             encoding="utf-8",
@@ -2024,23 +2024,23 @@ def test_retrieval_ablation_notebook(repository: str) -> dict:
             run(["git", "clone", REPOSITORY, REPO_DIR])
         run(["git", "-C", REPO_DIR, "fetch", "origin", REVISION, "--depth", "1"])
         run(["git", "-C", REPO_DIR, "checkout", "--detach", REVISION])
-        PIPELINE_DIR = REPO_DIR / "codet5p_type_retrieval"
-        run([sys.executable, "-m", "pip", "install", "-q", "-U", "-r", PIPELINE_DIR / "requirements-build.txt"])
+        PIPELINE_DIR = REPO_DIR / "typepro"
+        run([sys.executable, "-m", "pip", "install", "-q", "-U", "-r", REPO_DIR / "requirements" / "build.txt"])
         run([
             sys.executable, "-m", "pytest",
-            PIPELINE_DIR / "tests/test_type_signal_analyzer.py",
-            PIPELINE_DIR / "tests/test_project_kb_generative.py",
-            PIPELINE_DIR / "tests/test_target_masking.py",
+            REPO_DIR / "tests/test_type_signal_analyzer.py",
+            REPO_DIR / "tests/test_project_kb_generative.py",
+            REPO_DIR / "tests/test_target_masking.py",
             "-q", "-p", "no:cacheprovider",
         ], cwd=REPO_DIR)
         """),
         markdown("## Build metadata and slice only the v12 test projects"),
         code("""
-        prepare = PIPELINE_DIR / "prepare_dataset.py"
+        prepare = PIPELINE_DIR / "data" / "prepare.py"
         common = [
             "--typepro-root", REPO_DIR,
             "--work-dir", WORK_DIR,
-            "--project-revision-lock", PIPELINE_DIR / "project_revision_lock.json",
+            "--project-revision-lock", REPO_DIR / "configs" / "project_revision_lock.json",
             "--revision-lock-policy", "only",
             "--split-profile", "paper_project",
             "--test-projects", 100,
@@ -2074,7 +2074,7 @@ def test_retrieval_ablation_notebook(repository: str) -> dict:
         split_map.write_text(json.dumps({project: "test" for project in projects}, indent=2), encoding="utf-8")
         NEW_DATA_DIR = OUTPUT_DIR / "dataset"
         run([
-            sys.executable, "-u", PIPELINE_DIR / "preprocess_generative.py",
+            sys.executable, "-u", PIPELINE_DIR / "data" / "preprocess.py",
             "--input", WORK_DIR / "raw_slices",
             "--output-dir", NEW_DATA_DIR,
             "--project-split-map", split_map,
@@ -2134,7 +2134,7 @@ def test_retrieval_ablation_notebook(repository: str) -> dict:
         (OUTPUT_DIR / "comparison.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
         with (OUTPUT_DIR / "changed_candidates.jsonl").open("w", encoding="utf-8") as handle:
             for item in changed:
-                handle.write(json.dumps(item, ensure_ascii=False) + "\n")
+                handle.write(json.dumps(item, ensure_ascii=False) + "\\n")
         print(json.dumps(summary, indent=2))
         """),
     ], gpu=False)

@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+if __package__ in (None, ''):
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
 import argparse
 import json
 import zipfile
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from kaggle_dataset_utils import publish_dataset
+from typepro.publishing.kaggle_dataset_utils import publish_dataset
 
 
 def parse_args() -> argparse.Namespace:
@@ -74,7 +79,7 @@ def package_shard(work_dir: Path, payload_dir: Path) -> tuple[Path, dict[str, An
     } and runtime.get('context_policy_version') != 'ast-context-v7-verified-signature-evidence':
         raise RuntimeError('Missing retained-type-evidence context policy for shard')
     if runtime.get('context_policy_version') == 'ast-context-v7-verified-signature-evidence':
-        from audit_context import audit
+        from typepro.audit.context import audit
         report = audit(work_dir / 'raw_slices')
         (work_dir / 'context_audit.json').write_text(json.dumps(report, indent=2), encoding='utf-8')
         print(json.dumps({k: v for k, v in report.items() if k != 'largest_inputs'}, indent=2), flush=True)

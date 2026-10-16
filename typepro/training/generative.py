@@ -1,6 +1,11 @@
 """Fine-tune a causal code language model to generate the annotation label."""
 from __future__ import annotations
 
+if __package__ in (None, ''):
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
 import argparse
 import json
 import math
@@ -21,9 +26,9 @@ from transformers import (
 )
 from tqdm.auto import tqdm
 
-from data_utils import select_training_samples
-from generative_chat import chat_token_ids, left_pad_causal_batch
-from length_grouping import LengthGroupedSampler
+from typepro.shared.data_utils import select_training_samples
+from typepro.shared.generative_chat import chat_token_ids, left_pad_causal_batch
+from typepro.training.length_grouping import LengthGroupedSampler
 
 
 class JsonlDataset(Dataset):

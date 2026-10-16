@@ -1,0 +1,413 @@
+import os
+import json
+import subprocess
+import sys
+import time
+from pathlib import Path
+from unittest.mock import patch
+
+import pytest
+
+
+import typepro.data.prepare as prepare_dataset_module
+from typepro.data.prepare import (
+    annotation_timeout_for_project,
+    build_splits,
+    eligible_parameter_rows,
+    finalize_dataset,
+    matching_skip_pattern,
+    load_project_revision_lock,
+    parse_args,
+    project_from_row,
+    run_logged,
+    parse_export_summary,
+    clone_project,
+)
+
+
+class Args:
+    split_profile = "paper_project"
+    seed = 13
+    validation_project_ratio = 0.20
+    test_projects = 2
+    include_builtins = False
+    include_returns = False
+
+
+def test_export_summary_survives_log_tail_noise():
+    summary = dict(eligible=4, written=1, failed=3, timed_out=1,
+                   empty_slices=1, exceptions_by_type={'KeyError': 1})
+    tail = 'partial line\n' + json.dumps(summary) + '\ntrailing log\n{}\n'
+    assert parse_export_summary(tail) == summary
+    assert parse_export_summary('no summary\n{invalid json') is None
+
+
+def row(project: str, number: int):
+    return {
+        "file": f"repos/{project}/module_{number}.py",
+        "loc": "global@global",
+        "name": f"value_{number}",
+        "scope": "arg",
+        "cat": "user-defined",
+        "gttype": "Response",
+    }
+
+
+def test_project_from_typegen_path():
+    assert project_from_row(row("owner/repository", 1)) == "owner/repository"
+
+
+def test_paper_split_has_no_project_overlap():
+    projects = [f"owner/repo{i}" for i in range(30)]
+    train = [row(project, index) for index, project in enumerate(projects[:20])]
+    test = [row(project, index + 100) for index, project in enumerate(projects[10:])]
+    sampled = test[:5]
+    values = {"trainset.json": train, "testset.json": test, "testset_randomsampled.json": sampled}
+    with patch("typepro.data.prepare.read_json", side_effect=lambda path: values[path.name]):
+        splits, _ = build_splits(Args(), Path("unused"))
+    project_sets = [{project_from_row(item) for item in splits[split]} for split in ("train", "validation", "test")]
+    assert project_sets[0].isdisjoint(project_sets[1])
+    assert project_sets[0].isdisjoint(project_sets[2])
+    assert project_sets[1].isdisjoint(project_sets[2])
+
+
+def test_only_non_builtin_parameters_are_eligible():
+    rows = [
+        row("owner/repository", 1),
+        {**row("owner/repository", 2), "scope": "return"},
+        {**row("owner/repository", 3), "cat": "builtins", "gttype": "int"},
+    ]
+    eligible, stats = eligible_parameter_rows(rows, Args())
+    assert [item["name"] for item in eligible] == ["value_1"]
+    assert stats["non_parameter"] == 1
+    assert stats["builtin"] == 1
+
+
+def test_include_builtins_and_returns_expands_eligibility():
+    rows = [
+        row("owner/repository", 1),
+        {**row("owner/repository", 2), "scope": "return"},
+        {**row("owner/repository", 3), "cat": "builtins", "gttype": "int"},
+        {**row("owner/repository", 4), "scope": "var"},
+    ]
+    args = Args()
+    args.include_builtins = True
+    args.include_returns = True
+    eligible, stats = eligible_parameter_rows(rows, args)
+    assert [item["name"] for item in eligible] == [
+        "value_1", "value_2", "value_3"
+    ]
+    assert stats["non_parameter"] == 1
+    assert stats["builtin"] == 0
+
+
+def test_annotation_timeout_is_limited_to_configured_slow_projects():
+    projects = {"home-assistant/home-assistant", "Opentrons/opentrons"}
+
+    assert annotation_timeout_for_project(600, projects, "home-assistant/home-assistant") == 600
+    assert annotation_timeout_for_project(600, projects, "Opentrons/opentrons") == 600
+    assert annotation_timeout_for_project(600, projects, "fast/project") == 0
+    assert annotation_timeout_for_project(0, projects, "home-assistant/home-assistant") == 0
+
+
+def test_annotation_timeout_applies_to_every_project_when_allowlist_is_empty():
+    assert annotation_timeout_for_project(120, set(), "fast/project") == 120
+    assert annotation_timeout_for_project(120, set(), "henne90gen/tower_defense") == 120
+
+
+def test_slice_trace_defaults_to_every_annotation():
+    with patch.object(sys, "argv", ["prepare.py"]):
+        args = parse_args()
+
+    assert args.slice_trace_every == 1
+    assert args.skip_project == []
+    assert args.package_download_timeout_seconds == 60
+    assert args.kb_phase_timeout_seconds == 0
+    assert args.project_analysis_timeout_seconds == 0
+    assert args.slice_index_timeout_seconds == 1800
+    assert args.only_project_list is None
+
+
+def test_only_project_list_argument_is_parsed(tmp_path):
+    selected = tmp_path / "projects.txt"
+    with patch.object(
+        sys, "argv", ["prepare.py", "--only-project-list", str(selected)]
+    ):
+        args = parse_args()
+
+    assert args.only_project_list == selected
+
+
+def test_revision_lock_is_validated_and_case_insensitive(tmp_path):
+    lock = tmp_path / "lock.json"
+    lock.write_text(json.dumps({
+        "schema_version": "typepro-project-revision-lock-v1",
+        "projects": {"Owner/Repo": "a" * 40},
+    }), encoding="utf-8")
+    projects, payload = load_project_revision_lock(lock)
+    assert projects == {"owner/repo": "a" * 40}
+    assert payload["schema_version"] == "typepro-project-revision-lock-v1"
+
+
+def test_clone_project_checks_out_locked_commit_from_existing_cache(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    subprocess.run(["git", "init", "-q", str(source)], check=True)
+    subprocess.run(["git", "-C", str(source), "config", "user.email", "test@example.com"], check=True)
+    subprocess.run(["git", "-C", str(source), "config", "user.name", "Test"], check=True)
+    (source / "value.txt").write_text("first", encoding="utf-8")
+    subprocess.run(["git", "-C", str(source), "add", "value.txt"], check=True)
+    subprocess.run(["git", "-C", str(source), "commit", "-qm", "first"], check=True)
+    first = subprocess.run(["git", "-C", str(source), "rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip()
+    (source / "value.txt").write_text("second", encoding="utf-8")
+    subprocess.run(["git", "-C", str(source), "commit", "-qam", "second"], check=True)
+    cache = tmp_path / "cache"
+    subprocess.run(["git", "clone", "-q", str(source), str(cache)], check=True)
+    actual = clone_project("owner/repo", cache, expected_commit=first)
+    assert actual == first
+    assert (cache / "value.txt").read_text(encoding="utf-8") == "first"
+
+
+def test_run_logged_terminates_a_timed_out_phase(tmp_path):
+    with pytest.raises(subprocess.TimeoutExpired):
+        run_logged(
+            [sys.executable, "-c", "import time; time.sleep(10)"],
+            tmp_path,
+            tmp_path / "phase.log",
+            timeout_seconds=0.1,
+        )
+
+
+def test_run_logged_bounds_silent_exporter_startup(tmp_path):
+    with pytest.raises(subprocess.TimeoutExpired):
+        run_logged(
+            [sys.executable, "-c", "import time; time.sleep(2)"],
+            tmp_path, tmp_path / "silent.log",
+            annotation_stall_timeout_seconds=0.2,
+        )
+
+
+@pytest.mark.parametrize("partial_line", [False, True])
+def test_run_logged_bounds_pipe_held_after_parent_exit(tmp_path, monkeypatch, partial_line):
+    monkeypatch.setattr(prepare_dataset_module, "PIPE_CLOSE_GRACE_SECONDS", 0.1)
+    child = "import time; time.sleep(3)"
+    script = (
+        "import subprocess, sys; "
+        f"subprocess.Popen([sys.executable, '-c', {child!r}], "
+        "stdout=sys.stdout, start_new_session=True); "
+        + ("sys.stdout.write('unfinished'); sys.stdout.flush()" if partial_line else "")
+    )
+    started = time.monotonic()
+    with pytest.raises(subprocess.TimeoutExpired):
+        run_logged(
+            [sys.executable, "-u", "-c", script],
+            tmp_path, tmp_path / "inherited.log", timeout_seconds=0.5,
+        )
+    assert time.monotonic() - started < 2.5
+
+
+def test_run_logged_hard_kills_annotation_when_soft_timeout_stalls(tmp_path):
+    command = [
+        sys.executable,
+        "-u",
+        "-c",
+        (
+            "import time; "
+            "print('[export:annotation:start] index=1/1', flush=True); "
+            "time.sleep(10)"
+        ),
+    ]
+
+    with pytest.raises(subprocess.TimeoutExpired) as error:
+        run_logged(
+            command,
+            tmp_path,
+            tmp_path / "annotation.log",
+            annotation_stall_timeout_seconds=0.1,
+        )
+
+    assert error.value.timeout == 0.1
+    assert "[export:annotation:start]" in (error.value.output or "")
+
+
+def test_run_logged_hard_kills_index_phase_when_analysis_stalls(tmp_path):
+    command = [
+        sys.executable,
+        "-u",
+        "-c",
+        (
+            "import time; "
+            "print('[export:index:start] project=owner/repo', flush=True); "
+            "time.sleep(10)"
+        ),
+    ]
+
+    with pytest.raises(subprocess.TimeoutExpired) as error:
+        run_logged(
+            command,
+            tmp_path,
+            tmp_path / "index.log",
+            index_stall_timeout_seconds=0.1,
+        )
+
+    assert error.value.timeout == 0.1
+    assert "[export:index:start]" in (error.value.output or "")
+
+
+def test_run_logged_cancels_index_timer_when_analysis_finishes(tmp_path):
+    command = [
+        sys.executable,
+        "-u",
+        "-c",
+        (
+            "import time; "
+            "print('[export:index:start] project=owner/repo', flush=True); "
+            "print('[export:project-analysis:done] project=owner/repo functions=1 seconds=0.0', "
+            "flush=True); "
+            "time.sleep(0.2)"
+        ),
+    ]
+
+    tail = run_logged(
+        command,
+        tmp_path,
+        tmp_path / "index-ok.log",
+        index_stall_timeout_seconds=0.1,
+    )
+
+    assert "[export:project-analysis:done]" in tail
+
+
+@pytest.mark.skipif(os.name == "nt", reason="requires POSIX process groups")
+def test_run_logged_raises_when_killed_process_leaves_pipe_open(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        prepare_dataset_module, "PIPE_CLOSE_GRACE_SECONDS", 2
+    )
+    script = (
+        "import subprocess, sys, time; "
+        "child = subprocess.Popen("
+        "[sys.executable, '-c', 'import time; time.sleep(15)'], "
+        "stdout=sys.stdout, start_new_session=True); "
+        "print(child.pid, flush=True); time.sleep(60)"
+    )
+    with pytest.raises(subprocess.TimeoutExpired):
+        run_logged(
+            [sys.executable, "-u", "-c", script],
+            tmp_path,
+            tmp_path / "stuck.log",
+            timeout_seconds=0.3,
+        )
+
+
+def test_finalize_dataset_prunes_consumed_sources(tmp_path):
+    work = tmp_path / "build"
+    output = tmp_path / "final"
+    raw = work / "raw_slices"
+    kb = work / "project_kb" / "owner__repo"
+    metadata = work / "metadata"
+    (raw).mkdir(parents=True)
+    (raw / "owner__repo.jsonl").write_text("{}\n", encoding="utf-8")
+    kb.mkdir(parents=True)
+    (kb / "knowledge_base.json").write_text('{"x": 1}', encoding="utf-8")
+    (kb / "imports").mkdir()
+    (kb / "imports" / "third_party.json").write_text("{}", encoding="utf-8")
+    (work / "project_status").mkdir()
+    (work / "project_status" / "owner__repo.json").write_text(
+        '{"project": "owner/repo"}', encoding="utf-8"
+    )
+    metadata.mkdir()
+    (metadata / "split_manifest.json").write_text(
+        '{"split_profile": "paper_project"}', encoding="utf-8"
+    )
+    (output).mkdir(parents=True)
+    for split in ("train", "validation", "test"):
+        (metadata / f"{split}.json").write_text("[]", encoding="utf-8")
+        (output / f"{split}.jsonl").write_text("", encoding="utf-8")
+    (output / "preprocess_stats.json").write_text("{}", encoding="utf-8")
+
+    args = Args()
+    args.allow_partial = True
+    args.strict_projects = False
+    args.preview_samples = 0
+    args.preview_max_chars = 1600
+
+    with patch("typepro.data.prepare.run") as fake_run:
+        fake_run.return_value.stdout = "deadbeef"
+        finalize_dataset(args, work, output, Path("."))
+    fake_run.assert_called()
+
+    assert not raw.exists()
+    assert not (work / "project_kb").exists()
+    assert (
+        output / "project_kb" / "owner__repo" / "knowledge_base.json"
+    ).exists()
+    assert not (output / "project_kb" / "owner__repo" / "imports").exists()
+    assert (output / "manifest.json").exists()
+
+
+def test_finalize_only_expects_projects_in_verified_revision_lock(tmp_path):
+    work = tmp_path / "build"
+    output = tmp_path / "final"
+    source = tmp_path / "source" / "configs"
+    source.mkdir(parents=True)
+    lock_path = source / "project_revision_lock.json"
+    lock_path.write_text(json.dumps({
+        "schema_version": "typepro-project-revision-lock-v1",
+        "projects": {"owner/locked": "a" * 40},
+    }), encoding="utf-8")
+    (work / "raw_slices").mkdir(parents=True)
+    (work / "raw_slices" / "owner__locked.jsonl").write_text("{}\n", encoding="utf-8")
+    kb = work / "project_kb" / "owner__locked"
+    kb.mkdir(parents=True)
+    (kb / "knowledge_base.json").write_text("{}", encoding="utf-8")
+    status_dir = work / "project_status"
+    status_dir.mkdir()
+    (status_dir / "owner__locked.json").write_text(
+        '{"project": "owner/locked"}', encoding="utf-8"
+    )
+    metadata = work / "metadata"
+    metadata.mkdir()
+    (metadata / "split_manifest.json").write_text(
+        '{"split_profile": "paper_project"}', encoding="utf-8"
+    )
+    (metadata / "train.json").write_text(
+        json.dumps([row("owner/locked", 1), row("owner/unlocked", 2)]),
+        encoding="utf-8",
+    )
+    for split in ("validation", "test"):
+        (metadata / f"{split}.json").write_text("[]", encoding="utf-8")
+    (work / "runtime_manifest.json").write_text(json.dumps({
+        "revision_lock_policy": "only",
+        "project_revision_lock_sha256": prepare_dataset_module.sha256_file(lock_path),
+    }), encoding="utf-8")
+    output.mkdir()
+    for split in ("train", "validation", "test"):
+        (output / f"{split}.jsonl").write_text("", encoding="utf-8")
+    (output / "preprocess_stats.json").write_text("{}", encoding="utf-8")
+    args = Args()
+    args.allow_partial = False
+    args.strict_projects = False
+    args.preview_samples = 0
+    args.preview_max_chars = 1600
+    with patch("typepro.data.prepare.run") as fake_run:
+        fake_run.return_value.stdout = "deadbeef"
+        manifest = finalize_dataset(args, work, output, tmp_path / "source")
+    assert manifest["projects"]["expected"] == 1
+    assert manifest["projects"]["excluded_unlocked"] == 1
+    assert manifest["projects"]["missing"] == []
+
+
+def test_skip_project_patterns_match_case_insensitive_owner_or_repository():
+    patterns = ["F-shakalaka", "home-assistant"]
+
+    assert (
+        matching_skip_pattern("F-Shakalaka/example-project", patterns)
+        == "F-shakalaka"
+    )
+    assert (
+        matching_skip_pattern("home-assistant/home-assistant", patterns)
+        == "home-assistant"
+    )
+    assert matching_skip_pattern("ocf/ocfweb", patterns) is None

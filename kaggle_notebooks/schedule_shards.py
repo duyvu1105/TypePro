@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import re
+import subprocess
 import tempfile
 import time
 
@@ -15,6 +16,30 @@ from commit_shard_versions import (
 )
 
 TERMINAL = {'COMPLETE', 'ERROR', 'CANCEL_ACKNOWLEDGED', 'CANCELLED', 'NO_RUNS'}
+
+
+def latest_revision():
+    """Resolve GitHub main once, without changing the local checkout."""
+    result = subprocess.run(
+        ['git', 'ls-remote', '--exit-code', 'origin', 'refs/heads/main'],
+        cwd=REPO_ROOT, capture_output=True, text=True, timeout=30,
+    )
+    revision = result.stdout.split()[0] if result.stdout.split() else ''
+    if result.returncode or not re.fullmatch(r'[0-9a-f]{40}', revision):
+        raise ValueError('Cannot resolve origin/main; check Git connectivity or supply --revision SHA')
+    return revision
+
+
+def select_revision(requested, previous):
+    if requested is None and previous is not None:
+        revision = previous['revision']
+    elif requested in (None, 'latest'):
+        revision = latest_revision()
+    else:
+        revision = requested
+    if not re.fullmatch(r'[0-9a-f]{40}', revision):
+        raise ValueError('--revision must be latest or a full Git commit SHA')
+    return revision
 
 
 def status_name(value):
@@ -40,21 +65,27 @@ def main():
     parser.add_argument('--push', action='store_true')
     parser.add_argument('--watch', action='store_true')
     parser.add_argument('--account', action='append', choices=['duyvu1105', 'duymign', 'vdduy1105'], default=[])
-    parser.add_argument('--revision', required=True)
-    parser.add_argument('--state', type=Path, default=REPO_ROOT / 'typepro_kernel_versions' / 'rerun_state.json')
+    parser.add_argument('--revision', help='Default: GitHub main for a new run, saved SHA when resuming; accepts latest or a full SHA')
+    parser.add_argument('--state', type=Path, default=REPO_ROOT / 'typepro_kernel_versions' / 'latest_run.json')
+    parser.add_argument('--new-run', action='store_true', help='Prepare a fresh dry-run and archive the previous ledger')
     parser.add_argument('--max-active', type=int, default=5)
     parser.add_argument('--jobs-per-account', type=int)
     parser.add_argument('--skip-jobs-per-account', type=int, default=0)
     parser.add_argument('--poll-seconds', type=int, default=60)
     args = parser.parse_args()
-    if not re.fullmatch(r'[0-9a-f]{40}', args.revision):
-        parser.error('--revision must be a full Git commit SHA')
+    if args.new_run and args.push:
+        parser.error('Run --new-run without --push first, then submit with --push --watch')
     if not 1 <= args.max_active <= 5:
         parser.error('--max-active must be 1..5')
     if args.jobs_per_account is not None and args.jobs_per_account < 1:
         parser.error('--jobs-per-account must be >= 1')
     if args.skip_jobs_per_account < 0:
         parser.error('--skip-jobs-per-account must be >= 0')
+    previous = json.loads(args.state.read_text(encoding='utf-8')) if args.state.exists() else None
+    try:
+        args.revision = select_revision(args.revision, None if args.new_run else previous)
+    except ValueError as error:
+        parser.error(str(error))
     _, _, plans = load_plan(ROOT / 'shard_account_plan.json')
     if not all(plan.independent_parts for plan in plans):
         parser.error('Scheduling requires independent partition kernels')
@@ -78,22 +109,32 @@ def main():
             if len(clone_cells) != 1:
                 raise ValueError('Expected exactly one clone cell')
             source = ''.join(clone_cells[0]['source'])
-            clone_cells[0]['source'] = source + '\nrun(["git", "-C", REPO_DIR, "checkout", "--detach", ' + repr(args.revision) + '])\n'
+            marker = '\nPIPELINE_DIR = '
+            if marker not in source:
+                raise ValueError('Expected pipeline setup after repository checkout')
+            checkout = (
+                '\nrun(["git", "-C", REPO_DIR, "fetch", "origin", ' + repr(args.revision) + ', "--depth", "1"])\n'
+                'run(["git", "-C", REPO_DIR, "checkout", "--detach", ' + repr(args.revision) + '])\n'
+            )
+            clone_cells[0]['source'] = source.replace(marker, checkout + marker, 1)
             directory = args.state.parent / 'scheduled' / plan.runner_account / f'{index:02d}'
             write_version(directory, plan, rendered, part_index=part)
             jobs.append({'account': plan.runner_account, 'kernel': f'{plan.runner_account}/{partition_kernel_slug(plan, part)}',
                          'shard_index': index, 'shard_count': count, 'dataset': f'{plan.dataset_owner}/typepro-build-shard-{index:02d}' + ('-of-40' if count == 40 else ''),
                          'payload': str(directory), 'status': 'pending'})
             jobs_by_account[plan.runner_account] = account_jobs + 1
-    if not args.push:
-        print(json.dumps({'revision': args.revision, 'jobs': jobs}, indent=2))
-        return
-    state = json.loads(args.state.read_text()) if args.state.exists() else {'revision': args.revision, 'jobs': jobs}
+    state = previous if previous is not None and not args.new_run else {'revision': args.revision, 'jobs': jobs}
     if state['revision'] != args.revision or [j['kernel'] for j in state['jobs']] != [j['kernel'] for j in jobs]:
-        raise ValueError('Ledger does not match this revision/plan; use a new state file')
+        raise ValueError('Ledger does not match this revision/plan; use --new-run or a new --state file')
     if any(job['status'] == 'submitting' for job in state['jobs']):
         raise ValueError('Ambiguous prior submission; inspect kernel version before updating ledger')
+    if args.new_run and previous is not None:
+        archive = args.state.with_name(args.state.stem + '-' + datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ') + '.json')
+        save(archive, previous)
     save(args.state, state)
+    if not args.push:
+        print(json.dumps({'revision': args.revision, 'state': str(args.state), 'jobs': state['jobs']}, indent=2))
+        return
     with tempfile.TemporaryDirectory(prefix='typepro_scheduler_auth_') as auth_dir:
         while True:
             for account, credential_path in credentials.items():

@@ -1,9 +1,9 @@
 """Select an exact-size test holdout from successfully preprocessed projects."""
+
 import hashlib
 import json
 import re
 from collections import Counter
-from pathlib import Path
 
 SPLITS = ('train', 'validation', 'test')
 
@@ -57,7 +57,7 @@ def iter_output_rows(output_dir):
 
 def prepare_project_holdout(work_dir, output_dir, project_list, count, seed, validation_ratio, project_from_row):
     # Scan with the SAME eligibility predicate as the writer. No output copy is made.
-    from preprocess_generative import iter_records, project_name, record_fields
+    from typepro.data.preprocess import iter_records, project_name, record_fields
     preferred = load_test_projects(project_list)
     available = set()
     counts_by_project = Counter()

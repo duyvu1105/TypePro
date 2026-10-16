@@ -1,6 +1,11 @@
 """Generate TypePro labels and report exact-match accuracy."""
 from __future__ import annotations
 
+if __package__ in (None, ''):
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
 import argparse
 import json
 from pathlib import Path
@@ -9,8 +14,8 @@ import torch
 from peft import PeftModel
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
-from generative_chat import chat_token_ids
-from type_labels import normalize_type_label
+from typepro.shared.generative_chat import chat_token_ids
+from typepro.shared.type_labels import normalize_type_label
 
 
 def main() -> None:

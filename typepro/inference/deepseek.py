@@ -1,6 +1,11 @@
 """Resumable DeepSeek type inference and exact-match evaluation for a JSONL test split."""
 from __future__ import annotations
 
+if __package__ in (None, ''):
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
 import argparse
 import hashlib
 import json
@@ -27,8 +32,7 @@ SYSTEM_PROMPT = (
 )
 RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 
-sys.path.insert(0, str(REPO_DIR / "codet5p_type_retrieval"))
-from type_labels import normalize_type_label  # noqa: E402
+from typepro.shared.type_labels import normalize_type_label  # noqa: E402
 
 
 def load_api_key(env_file: Path) -> str:

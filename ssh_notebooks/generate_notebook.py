@@ -47,7 +47,7 @@ def build_notebook() -> dict:
         import os
         REPO_DIR = Path(os.environ.get("TYPEPRO_REPO_DIR", str(Path.home() / "TypePro")))
         DATA_DIR = Path(os.environ.get("TYPEPRO_DATA_DIR", str(REPO_DIR / "datasets" / "typepro-python-generative-v19")))
-        PIPELINE_DIR = REPO_DIR / "codet5p_type_retrieval"
+        PIPELINE_DIR = REPO_DIR / "typepro"
         VENV_DIR = REPO_DIR / ".venv"
         OUTPUT_DIR = REPO_DIR / "outputs" / "qwen25-coder-05b-8192"
         PREDICTIONS = OUTPUT_DIR / "test_predictions.jsonl"
@@ -144,7 +144,7 @@ def build_notebook() -> dict:
         missing = [name for name in required if not (DATA_DIR / name).is_file()]
         if missing:
             raise RuntimeError(f"Dataset chưa tải đủ, thiếu: {missing}")
-        run([PYTHON, PIPELINE_DIR / "verify_dataset.py", "--data-dir", DATA_DIR])
+        run([PYTHON, PIPELINE_DIR / "data" / "verify.py", "--data-dir", DATA_DIR])
 
         manifest = json.loads((DATA_DIR / "manifest.json").read_text(encoding="utf-8"))
         print(json.dumps({
@@ -166,7 +166,7 @@ def build_notebook() -> dict:
             "--num_machines", "1",
             "--num_processes", "1",
             "--mixed_precision", "fp16",
-            PIPELINE_DIR / "train_generative.py",
+            PIPELINE_DIR / "training" / "generative.py",
             "--data-dir", DATA_DIR,
             "--output-dir", OUTPUT_DIR,
             "--model-name", MODEL_NAME,
@@ -198,7 +198,7 @@ def build_notebook() -> dict:
             raise RuntimeError(f"Không tìm thấy checkpoint: {best_checkpoint}")
 
         run([
-            PYTHON, "-u", PIPELINE_DIR / "infer_generative.py",
+            PYTHON, "-u", PIPELINE_DIR / "inference" / "generative.py",
             "--checkpoint", best_checkpoint,
             "--model-name", MODEL_NAME,
             "--input", DATA_DIR / "test.jsonl",

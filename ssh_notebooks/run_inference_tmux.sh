@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 REPO_DIR="${TYPEPRO_REPO_DIR:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)}"
 DATA_DIR="${TYPEPRO_DATA_DIR:-$REPO_DIR/datasets/typepro-python-generative-v19}"
-PIPELINE_DIR="$REPO_DIR/codet5p_type_retrieval"
+PIPELINE_DIR="$REPO_DIR/typepro"
 VENV_DIR="${TYPEPRO_VENV_DIR:-$REPO_DIR/.venv}"
 OUTPUT_DIR="${TYPEPRO_OUTPUT_DIR:-$REPO_DIR/outputs/qwen25-coder-05b}"
 CHECKPOINT="$OUTPUT_DIR/best"
@@ -37,7 +37,7 @@ export PYTHONUNBUFFERED=1
 export HF_HOME="${HF_HOME:-$HOME/.cache/huggingface}"
 
 cd "$REPO_DIR"
-"$VENV_DIR/bin/python" -u "$PIPELINE_DIR/infer_generative.py" \
+"$VENV_DIR/bin/python" -u "$PIPELINE_DIR/inference/generative.py" \
   --checkpoint "$CHECKPOINT" \
   --model-name Qwen/Qwen2.5-Coder-0.5B-Instruct \
   --input "$DATA_DIR/test.jsonl" \
