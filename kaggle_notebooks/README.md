@@ -69,7 +69,11 @@ before merge. Do not publish or train the final dataset automatically.
 The resolved-context rerun uses
 `context_policy_version=ast-context-v7-verified-signature-evidence`
 and masking stamp `typepro-shared-kb-masked-source-v7-resolved-bounded-context`.
-Schema v16 and project-KB v7 invalidate prior raw slices/resume outputs. Target and resolved
+Current schema v17 (`typepro-project-kb-top10-generative-v17-catalog-fallback-audit`)
+invalidates v16 raw slices so the missing-catalog export fix and complete caller
+cache are actually rerun. Project-KB v7, masking and evidence policy stay unchanged.
+Exporter summaries now distinguish empty slices, timeouts, exceptions by type,
+and successful file-local catalog fallbacks. Target and resolved
 function contexts preserve their leading docstrings. Caller contexts retain
 their signatures (including parameter annotations) and docstrings alongside
 the reduced body; target annotations remain masked in all copies. Opaque

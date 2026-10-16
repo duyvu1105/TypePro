@@ -68,8 +68,11 @@ def package_shard(work_dir: Path, payload_dir: Path) -> tuple[Path, dict[str, An
     manifest = read_manifest(work_dir)
     runtime_path = work_dir / 'runtime_manifest.json'
     runtime = json.loads(runtime_path.read_text(encoding='utf-8'))
-    if runtime.get('retrieval_schema_version') == 'typepro-project-kb-top10-generative-v16-verified-signature-evidence' and runtime.get('context_policy_version') != 'ast-context-v7-verified-signature-evidence':
-        raise RuntimeError('Missing retained-type-evidence context policy for v15 shard')
+    if runtime.get('retrieval_schema_version') in {
+        'typepro-project-kb-top10-generative-v16-verified-signature-evidence',
+        'typepro-project-kb-top10-generative-v17-catalog-fallback-audit',
+    } and runtime.get('context_policy_version') != 'ast-context-v7-verified-signature-evidence':
+        raise RuntimeError('Missing retained-type-evidence context policy for shard')
     if runtime.get('context_policy_version') == 'ast-context-v7-verified-signature-evidence':
         from audit_context import audit
         report = audit(work_dir / 'raw_slices')

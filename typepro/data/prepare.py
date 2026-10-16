@@ -109,7 +109,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--retrieval-schema-version",
-        default="typepro-project-kb-top10-generative-v16-verified-signature-evidence",
+        default="typepro-project-kb-top10-generative-v17-catalog-fallback-audit",
         help="Invalidates restored raw slices when recommendation logic changes",
     )
     parser.add_argument(
