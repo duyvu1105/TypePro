@@ -1,7 +1,23 @@
 
 import math
 from collections import Counter
+from functools import lru_cache
 from typing import Iterable, Optional
+
+
+def _prepare_text(text):
+    # Keep duplicates and their original order for the score accumulation.
+    tokens = tuple(text.split())
+    return tokens, frozenset(tokens), Counter(tokens)
+
+
+_cached_text = lru_cache(maxsize=128)(_prepare_text)
+
+
+def _text_data(text):
+    # Bound retained source size as well as the number of cache entries.
+    return _cached_text(text) if len(text) <= 32768 else _prepare_text(text)
+
 
 def bm25_similarity(
     text1: str,
@@ -31,9 +47,9 @@ def bm25_similarity(
     """
 
     # --- tokenize (simple whitespace)
-    tokens1 = text1.split()
-    tokens2 = text2.split()
-    docs = [tokens1, tokens2]
+    tokens1, terms1, frequency1 = _text_data(text1)
+    tokens2, terms2, frequency2 = _text_data(text2)
+    docs = [terms1, terms2]
     N = len(docs)
 
     # handle empty docs
@@ -45,14 +61,13 @@ def bm25_similarity(
     df = {term: sum(1 for doc in docs if term in doc) for term in all_terms}
 
     # --- avg doc length
-    avgdl = sum(len(doc) for doc in docs) / N if N > 0 else 0.0
+    avgdl = sum(len(doc) for doc in (tokens1, tokens2)) / N if N > 0 else 0.0
 
     # --- idf with small smoothing (same formula as original)
     idf = {term: math.log((N - freq + 0.5) / (freq + 0.5) + 1) for term, freq in df.items()}
 
-    def score(query_tokens: Iterable[str], doc_tokens: Iterable[str]) -> float:
-        doc_len = len(list(doc_tokens))
-        freq = Counter(doc_tokens)
+    def score(query_tokens: Iterable[str], doc_tokens: Iterable[str], freq) -> float:
+        doc_len = len(doc_tokens)
         s = 0.0
         for term in query_tokens:
             f = freq.get(term, 0)
@@ -64,8 +79,8 @@ def bm25_similarity(
         return s
 
     # symmetric BM25 (average of both directions)
-    score12 = score(tokens1, tokens2)
-    score21 = score(tokens2, tokens1)
+    score12 = score(tokens1, tokens2, frequency2)
+    score21 = score(tokens2, tokens1, frequency1)
     raw = (score12 + score21) / 2.0
 
     if return_raw:

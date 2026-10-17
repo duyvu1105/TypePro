@@ -300,16 +300,18 @@ def top_project_types(
 ) -> list[dict[str, Any]]:
     """Rank project-KB records without reading the target annotation."""
     from typepro.analysis.candidate_policy import (
-        MIN_SCORE, MAX_CANDIDATES, allocate_characters, score_candidate,
+        MIN_SCORE, MAX_CANDIDATES, allocate_characters, score_candidate, structural_text,
     )
     # Kept as a compatible argument; seed presence/order no longer earns points.
     ranked = []
+    query_text = structural_text(code_slice)
     for item in candidate_records(kb):
         definition = str(item.get("definition") or item["name"])
         if target_function and target_scope:
             definition = mask_definition(definition, target_function, target_name, target_scope)
         score, components = score_candidate(
             item, definition, target_name, code_slice, target_members, evidence or {},
+            query_text=query_text,
         )
         if score >= MIN_SCORE:
             ranked.append((-score, str(item.get('qualified_name') or item['name']).casefold(),

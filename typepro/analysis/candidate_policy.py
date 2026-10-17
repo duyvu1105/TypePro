@@ -5,6 +5,7 @@ import ast
 import copy
 import re
 from difflib import SequenceMatcher
+from functools import lru_cache
 
 from typepro.analysis.ast_context_slicer import (
     FUNCTIONS,
@@ -31,29 +32,48 @@ STOP_WORDS = {
 }
 
 
-def structural_text(text):
+def _structural_text(text):
     return ' '.join(t.casefold() for t in re.findall(r'[A-Za-z_]\w*', text)
                     if t.casefold() not in STOP_WORDS)
 
 
-def score_candidate(item, definition, target_name, code_slice, members, evidence):
+_cached_structural_text = lru_cache(maxsize=256)(_structural_text)
+
+
+def structural_text(text):
+    # Cache by exact masked content, never by a candidate name or KB identity.
+    return _cached_structural_text(text) if len(text) <= 32768 else _structural_text(text)
+
+
+def _definition_members(definition):
+    available = set()
+    try:
+        tree = ast.parse(definition.replace('<mask>', '__TYPEPRO_TARGET_MASK__'))
+        for cls in (n for n in tree.body if isinstance(n, ast.ClassDef)):
+            available.update(n.name for n in cls.body if isinstance(n, FUNCTIONS))
+            available.update(n.attr for n in ast.walk(cls) if isinstance(n, ast.Attribute)
+                             and isinstance(n.ctx, ast.Store) and isinstance(n.value, ast.Name)
+                             and n.value.id in {'self', 'cls'})
+    except (SyntaxError, ValueError):
+        pass
+    return frozenset(available)
+
+
+_cached_definition_members = lru_cache(maxsize=128)(_definition_members)
+
+
+def score_candidate(item, definition, target_name, code_slice, members, evidence, *, query_text=None):
     """Five components in [0, 1]; seed position gives no points."""
     qualified = str(item.get('qualified_name') or item['name'])
     wanted = set((members or {}).get('methods', ())) | set((members or {}).get('attributes', ()))
     available = set(item.get('members', ()))
     if wanted and not available:
-        try:
-            tree = ast.parse(definition.replace('<mask>', '__TYPEPRO_TARGET_MASK__'))
-            for cls in (n for n in tree.body if isinstance(n, ast.ClassDef)):
-                available.update(n.name for n in cls.body if isinstance(n, FUNCTIONS))
-                available.update(n.attr for n in ast.walk(cls) if isinstance(n, ast.Attribute)
-                                 and isinstance(n.ctx, ast.Store) and isinstance(n.value, ast.Name)
-                                 and n.value.id in {'self', 'cls'})
-        except (SyntaxError, ValueError):
-            pass
+        available.update(_cached_definition_members(definition) if len(definition) <= 32768
+                         else _definition_members(definition))
     compact = lambda value: re.sub(r'[^a-z0-9]', '', value.casefold())
     left, right = compact(target_name), compact(str(item['name']))
-    query_text = structural_text(code_slice)
+    if query_text is None:
+        query_text = structural_text(code_slice)
     document_text = structural_text(definition)
     components = {
         'direct': float(qualified in evidence.get('direct', ())),
@@ -80,9 +100,13 @@ def source_evidence(catalog, file_path, function, target_name, target_scope, rec
     if path not in catalog.trees:
         return evidence
     identities = {str(r.get('qualified_name') or r['name']) for r in records}
+    opaque_scopes = {}
 
     def identity(expression, source_path, scope):
-        if opaque(catalog, source_path, scope):
+        key = (source_path, id(scope))
+        if key not in opaque_scopes:
+            opaque_scopes[key] = opaque(catalog, source_path, scope)
+        if opaque_scopes[key]:
             return None
         root = expression
         while isinstance(root, ast.Attribute):
@@ -206,7 +230,7 @@ def candidate_section(items):
     return '\n'.join([HEADER, *(candidate_block(item) for item in items)])
 
 
-def fit_definition(definition, maximum):
+def _fit_definition(definition, maximum):
     """Use whole declarations; an impossible header drops the candidate."""
     if maximum <= 0:
         return ''
@@ -240,6 +264,16 @@ def fit_definition(definition, maximum):
         except (SyntaxError, ValueError):
             pass
     return text
+
+
+_cached_fit_definition = lru_cache(maxsize=256)(_fit_definition)
+
+
+def fit_definition(definition, maximum):
+    # Only immutable rendered strings are shared; parsed ASTs stay private.
+    if len(definition) <= 32768:
+        return _cached_fit_definition(definition, maximum)
+    return _fit_definition(definition, maximum)
 
 
 def allocate_characters(items):
