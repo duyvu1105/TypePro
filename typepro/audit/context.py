@@ -11,6 +11,9 @@ import json
 from pathlib import Path
 
 from typepro.data.preprocess import format_input
+from typepro.analysis.candidate_policy import (
+    POLICY as CANDIDATE_POLICY, DEFINITION_CHARS, TOTAL_CHARS, candidate_section,
+)
 
 POLICY = 'ast-context-v7-verified-signature-evidence'
 MASKING = 'typepro-shared-kb-masked-source-v7-resolved-bounded-context'
@@ -32,11 +35,15 @@ def audit(raw_dir: Path) -> dict:
                 where = f'{path}:{number}'
                 if row.get('context_policy_version') != POLICY or row.get('target_masking_version') != MASKING:
                     raise ValueError(f'Incompatible context policy: {where}')
-                if row.get('candidate_definition_max_chars') != MAX_DEFINITION_CHARS:
+                maximum = (DEFINITION_CHARS if row.get('candidate_policy_version') == CANDIDATE_POLICY
+                           else MAX_DEFINITION_CHARS)
+                if row.get('candidate_definition_max_chars') != maximum:
                     raise ValueError(f'Missing candidate length contract: {where}')
                 candidates = row.get('recommendation_types', [])
-                if len(candidates) > 10 or any(len(item['definition']) > MAX_DEFINITION_CHARS for item in candidates):
+                if len(candidates) > 10 or any(len(item['definition']) > maximum for item in candidates):
                     raise ValueError(f'Unbounded candidates: {where}')
+                if row.get('candidate_policy_version') == CANDIDATE_POLICY and len(candidate_section(candidates)) > TOTAL_CHARS:
+                    raise ValueError(f'Candidate section exceeds character budget: {where}')
                 for item in row.get('recommendation_diagnostics', {}).get('context_reduction', []):
                     if item.get('component') in {'caller', 'alias'} and item.get('mode') != 'unresolved':
                         if item.get('resolution') != 'resolved' or not item.get('source_file') or not item.get('source_line'):

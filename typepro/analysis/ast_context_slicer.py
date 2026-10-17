@@ -176,7 +176,7 @@ def docstring_statement(function):
     return function.body[:1] if ast.get_docstring(function, clean=False) is not None else []
 
 
-def limit_candidate_definition(definition):
+def limit_candidate_definition(definition, maximum=CANDIDATE_DEFINITION_MAX_CHARS):
     """Keep small definitions verbatim; summarize large ones without cutting code.
 
     Signatures take priority over complete docstring paragraphs. If signatures
@@ -184,7 +184,6 @@ def limit_candidate_definition(definition):
     definitions and ranking inputs are never modified.
     """
     import re
-    maximum = CANDIDATE_DEFINITION_MAX_CHARS
     if len(definition) <= maximum:
         return definition, {'mode': 'full', 'docstrings_shortened': False, 'omitted_declarations': 0}
     display_mask = '<mask>' in definition

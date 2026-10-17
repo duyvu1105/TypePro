@@ -36,8 +36,11 @@ tmux new-session -d -s typepro_train ./ssh_notebooks/run_training_tmux.sh
 tmux attach -t typepro_train
 ```
 
-Nhấn `Ctrl-b`, `d` để detach. Xem `train_tmux.log` trong output directory.
-Sau khi checkpoint `best` tồn tại:
+Nhấn `Ctrl-b`, `d` để detach. Launcher tự infer toàn bộ test split sau khi
+fine-tune thành công, dùng checkpoint `best` và ghi `test_predictions.jsonl`.
+Xem log train và infer trong `train_tmux.log`. Đặt
+`TYPEPRO_INFERENCE_BATCH_SIZE` để đổi batch infer (mặc định 1).
+Để chạy lại infer riêng với checkpoint đã có:
 
 ```bash
 tmux new-session -d -s typepro_infer ./ssh_notebooks/run_inference_tmux.sh
@@ -67,6 +70,8 @@ python ssh_notebooks/generate_notebook.py
 ```
 
 Notebook đọc `TYPEPRO_REPO_DIR` (mặc định `~/TypePro`) và `TYPEPRO_DATA_DIR`.
+Cell fine-tune tự chạy infer; cell infer riêng có `RERUN_INFERENCE = False`
+để tránh chạy hai lần khi Run All. Đổi thành `True` để infer lại độc lập.
 Mỗi lần gọi stage lưu `outputs/audit/<run>/run.json` và `console.log`; log tmux
 giữ thêm output native/subprocess. Training giữ checkpoint, cấu hình và length
 cache trong output. Không commit checkpoint, Dataset hoặc credential.

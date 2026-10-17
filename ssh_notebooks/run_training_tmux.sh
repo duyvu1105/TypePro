@@ -12,12 +12,12 @@ mkdir -p "$OUTPUT_DIR"
 exec > >(tee -a "$LOG_FILE") 2>&1
 
 echo
-echo "===== TypePro training started: $(date --iso-8601=seconds) ====="
+echo "===== TypePro training + inference started: $(date --iso-8601=seconds) ====="
 echo "Log: $LOG_FILE"
 
 finish() {
   exit_code=$?
-  echo "===== TypePro training finished: $(date --iso-8601=seconds), exit=$exit_code ====="
+  echo "===== TypePro training + inference finished: $(date --iso-8601=seconds), exit=$exit_code ====="
 }
 trap finish EXIT
 
@@ -38,6 +38,7 @@ cd "$REPO_DIR"
   --input-length 8192 \
   --label-length 64 \
   --batch-size 1 \
+  --inference-batch-size "${TYPEPRO_INFERENCE_BATCH_SIZE:-1}" \
   --gradient-accumulation-steps 16 \
   --epochs 3 \
   --learning-rate 1e-4 \

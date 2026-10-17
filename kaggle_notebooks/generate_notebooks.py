@@ -1657,6 +1657,8 @@ def train_notebook(repository: str, branch: str) -> dict:
             "--input-length", INPUT_LENGTH,
             "--label-length", LABEL_LENGTH,
             "--batch-size", TRAIN_BATCH_SIZE,
+            "--inference-batch-size", 4,
+            "--inference-output", Path("/kaggle/working/test_predictions.jsonl"),
             "--gradient-accumulation-steps", GRADIENT_ACCUMULATION_STEPS,
             "--epochs", EPOCHS,
             "--learning-rate", "2e-5",
@@ -1669,20 +1671,23 @@ def train_notebook(repository: str, branch: str) -> dict:
             train_command.extend(["--train-samples", TRAIN_SAMPLES])
         run(train_command)
         """),
-        markdown("## Batched inference and test metrics"),
+        markdown("## Fine-tuning includes inference; enable `RERUN_INFERENCE` for a separate test run"),
         code("""
-        predictions = Path("/kaggle/working/test_predictions.jsonl")
-        run([
-            sys.executable, "-u", PIPELINE_DIR / "inference" / "generative.py",
-            "--checkpoint", OUTPUT_DIR / "best",
-            "--model-name", MODEL_NAME,
-            "--input", DATA_DIR / "test.jsonl",
-            "--output", predictions,
-            "--input-length", INPUT_LENGTH,
-            "--label-length", LABEL_LENGTH,
-            "--batch-size", 4,
-        ])
-        print("Predictions:", predictions)
+        # Fine-tune already ran inference. Set True to run inference separately.
+        RERUN_INFERENCE = False
+        if RERUN_INFERENCE:
+            predictions = Path("/kaggle/working/test_predictions.jsonl")
+            run([
+                sys.executable, "-u", PIPELINE_DIR / "inference" / "generative.py",
+                "--checkpoint", OUTPUT_DIR / "best",
+                "--model-name", MODEL_NAME,
+                "--input", DATA_DIR / "test.jsonl",
+                "--output", predictions,
+                "--input-length", INPUT_LENGTH,
+                "--label-length", LABEL_LENGTH,
+                "--batch-size", 4,
+            ])
+            print("Predictions:", predictions)
         """),
     ], gpu=True)
 

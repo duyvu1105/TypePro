@@ -14,9 +14,7 @@ import argparse
 import ast
 import copy
 import json
-import math
 import re
-from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -286,7 +284,7 @@ def build_project_kb(project_root: Path, imports_dir: Path | None = None, *, par
 
 
 def candidate_records(kb: dict[str, Any]) -> list[dict[str, Any]]:
-    allowed = {"class", "type_alias", "reexport_alias", "function_return", "alias"}
+    allowed = {"class", "type_alias", "reexport_alias", "function_return", "alias", "imported_symbol"}
     return [
         item for item in kb.get("records", [])
         if isinstance(item, dict) and item.get("name") and item.get("kind") in allowed
@@ -298,118 +296,55 @@ def top_project_types(
     seed_candidates: Iterable[dict[str, Any]] = (), limit: int = 10,
     *, target_function: str = "", target_scope: str = "",
     target_members: dict[str, list[str]] | None = None,
+    evidence: dict[str, set[str]] | None = None,
 ) -> list[dict[str, Any]]:
     """Rank project-KB records without reading the target annotation."""
-    seeds: dict[str, int] = {}
-    for index, item in enumerate(seed_candidates):
-        for value in (item.get("qualified_name"), item.get("name")):
-            if value:
-                seeds.setdefault(str(value).casefold(), index)
-    target_tokens = set(re.findall(r"[A-Za-z_]\w*", target_name.casefold()))
-    slice_tokens = set(re.findall(r"[A-Za-z_]\w*", code_slice.casefold()))
-    ranked = []
-    member_query = set((target_members or {}).get("methods", ())) | set(
-        (target_members or {}).get("attributes", ())
+    from typepro.analysis.candidate_policy import (
+        MIN_SCORE, MAX_CANDIDATES, allocate_characters, score_candidate,
     )
-    member_frequency: dict[str, int] = {}
-    class_records = [item for item in candidate_records(kb) if item.get("kind") == "class"]
-    for member in member_query:
-        member_frequency[member] = sum(member in item.get("members", ()) for item in class_records)
-    member_ranked = []
+    # Kept as a compatible argument; seed presence/order no longer earns points.
+    ranked = []
     for item in candidate_records(kb):
-        name = str(item["name"])
-        qualified = str(item.get("qualified_name") or name)
-        definition = str(item.get("definition") or name)
+        definition = str(item.get("definition") or item["name"])
         if target_function and target_scope:
-            definition = mask_definition(
-                definition, target_function, target_name, target_scope
-            )
-        seed_rank = min(
-            seeds.get(qualified.casefold(), 10_000),
-            seeds.get(name.casefold(), 10_000),
+            definition = mask_definition(definition, target_function, target_name, target_scope)
+        score, components = score_candidate(
+            item, definition, target_name, code_slice, target_members, evidence or {},
         )
-        words = set(re.findall(
-            r"[A-Za-z_]\w*",
-            f"{name} {qualified} {definition}".casefold(),
-        ))
-        score = 0.0
-        if seed_rank < 10_000:
-            score += 10_000 - seed_rank
-        score += 40 * len(target_tokens & words)
-        score += min(25, len(slice_tokens & words))
-        if name.casefold() in slice_tokens:
-            score += 100
-        if item.get('kind') == 'type_alias':
-            # Similarity is retrieval evidence only; it never inserts an alias
-            # into the slice or reads the masked target annotation.
-            compact_target = re.sub(r'[^a-z0-9]', '', target_name.casefold())
-            compact_alias = re.sub(r'[^a-z0-9]', '', name.casefold())
-            similarity = SequenceMatcher(None, compact_target, compact_alias).ratio()
-            if similarity >= .6:
-                score += 60 * similarity
-        ranked.append((-score, qualified.casefold(), item, definition))
-        matched = member_query & set(item.get("members", ()))
-        method_matches = set((target_members or {}).get("methods", ())) & matched
-        rare_attribute = any(
-            member_frequency.get(member, len(class_records)) <= max(3, len(class_records) // 50)
-            for member in matched
-        )
-        eligible = bool(method_matches or len(matched) >= 2 or rare_attribute)
-        if eligible:
-            member_score = sum(
-                1.0 + math.log((len(class_records) + 1) / (member_frequency[member] + 1))
-                for member in matched
-            )
-            member_ranked.append((-member_score, -len(matched), qualified.casefold(), item, definition))
-    ranked.sort(key=lambda value: (value[0], value[1]))
-    member_ranked.sort(key=lambda value: value[:3])
-    result = []
-    seen_names = set()
-    # Preserve most of the existing list while allowing strong target-member
-    # evidence to contribute at most two candidates.
-    combined = [(item, definition) for *_, item, definition in member_ranked[:2]]
-    combined.extend((item, definition) for _, _, item, definition in ranked)
-    for item, definition in combined:
-        key = str(item.get("qualified_name") or item["name"]).casefold()
-        if key in seen_names:
-            continue
-        seen_names.add(key)
-        reduction = None
-        if item.get('source') == 'project' and item.get('kind') == 'class':
-            query = target_members
-            if not query:
-                # Only constructor calls with this exact class spelling are
-                # positive evidence; otherwise retain the full definition.
-                try:
-                    source_tree = ast.parse(code_slice.replace('<mask>', MASK))
-                    constructed = any(isinstance(n, ast.Call) and dotted_name(n.func) in {name, qualified}
-                                      for n in ast.walk(source_tree))
-                except (SyntaxError, ValueError):
-                    constructed = False
-                query = {'methods': ['__init__'], 'attributes': []} if constructed else {}
-            definition, reduction = reduce_class(definition, query)
-            if reduction.get('mode') == 'sliced':
-                definition = append_notes(definition, item.get('member_notes', {}), reduction.get('kept_members', ()))
-        original_chars = len(str(item.get('definition') or item['name']))
-        rendered_chars = len(definition)
-        definition, length_reduction = limit_candidate_definition(definition)
-        result.append({
-            "name": str(item["name"]),
-            "qualified_name": str(item.get("qualified_name") or item["name"]),
-            "source": str(item.get("source") or "project"),
-            "kind": str(item.get("kind") or "class"),
-            "definition": definition,
-            "definition_reduction": {
-                "kb_chars": original_chars, "rendered_chars": rendered_chars,
-                "output_chars": len(definition), "truncated": rendered_chars > len(definition),
-                "max_chars": CANDIDATE_DEFINITION_MAX_CHARS,
-                **length_reduction,
-            },
-            **({'context_reduction': reduction} if reduction is not None else {}),
-        })
-        if len(result) >= limit:
+        if score >= MIN_SCORE:
+            ranked.append((-score, str(item.get('qualified_name') or item['name']).casefold(),
+                           item, definition, components))
+    ranked.sort(key=lambda entry: entry[:2])
+    result, seen = [], set()
+    for negative_score, key, item, definition, components in ranked:
+        if len(result) >= min(limit, MAX_CANDIDATES):
             break
-    return result
+        if key in seen:
+            continue
+        seen.add(key)
+        original_chars = len(definition)
+        reduction = None
+        if item.get('kind') == 'class':
+            definition, reduction = reduce_class(definition, target_members or {})
+            if reduction.get('mode') == 'sliced':
+                definition = append_notes(definition, item.get('member_notes', {}),
+                                          reduction.get('kept_members', ()))
+        candidate = {
+            'name': str(item['name']),
+            'qualified_name': str(item.get('qualified_name') or item['name']),
+            'source': str(item.get('source') or 'project'),
+            'kind': str(item.get('kind') or 'class'),
+            'definition': definition,
+            'score': -negative_score,
+            'score_components': components,
+            'definition_reduction': {'kb_chars': original_chars, 'rendered_chars': len(definition)},
+            **({'context_reduction': reduction} if reduction is not None else {}),
+        }
+        # Skip impossible headers and continue with the next ranked record.
+        if allocate_characters([candidate]):
+            result.append(candidate)
+    return allocate_characters(result)
+
 
 
 def target_member_query(function: ast.AST | None, target_name: str) -> dict[str, list[str]]:

@@ -159,6 +159,7 @@ def build_notebook() -> dict:
 
         Cấu hình đã được smoke test ở chuỗi 8192 token trên RTX A4000 16 GB.
         Cell này chạy lâu. Checkpoint tốt nhất được lưu trong `OUTPUT_DIR/best`.
+        Sau khi train thành công, cell tự infer toàn bộ test split.
         """),
         code("""
         train_command = [
@@ -173,6 +174,8 @@ def build_notebook() -> dict:
             "--input-length", INPUT_LENGTH,
             "--label-length", LABEL_LENGTH,
             "--batch-size", TRAIN_BATCH_SIZE,
+            "--inference-batch-size", INFERENCE_BATCH_SIZE,
+            "--inference-output", PREDICTIONS,
             "--gradient-accumulation-steps", GRADIENT_ACCUMULATION_STEPS,
             "--epochs", EPOCHS,
             "--learning-rate", "2e-5",
@@ -191,23 +194,26 @@ def build_notebook() -> dict:
         train_env["CUDA_VISIBLE_DEVICES"] = "0"
         run(train_command, env=train_env)
         """),
-        markdown("## 5. Infer toàn bộ tập test và tính exact match"),
+        markdown("## 5. Infer riêng: bật `RERUN_INFERENCE` để chạy lại trên tập test"),
         code("""
-        best_checkpoint = OUTPUT_DIR / "best"
-        if not best_checkpoint.is_dir():
-            raise RuntimeError(f"Không tìm thấy checkpoint: {best_checkpoint}")
+        # Fine-tune already ran inference. Set True to run inference separately.
+        RERUN_INFERENCE = False
+        if RERUN_INFERENCE:
+            best_checkpoint = OUTPUT_DIR / "best"
+            if not best_checkpoint.is_dir():
+                raise RuntimeError(f"Không tìm thấy checkpoint: {best_checkpoint}")
 
-        run([
-            PYTHON, "-u", PIPELINE_DIR / "inference" / "generative.py",
-            "--checkpoint", best_checkpoint,
-            "--model-name", MODEL_NAME,
-            "--input", DATA_DIR / "test.jsonl",
-            "--output", PREDICTIONS,
-            "--input-length", INPUT_LENGTH,
-            "--label-length", LABEL_LENGTH,
-            "--batch-size", INFERENCE_BATCH_SIZE,
-        ], env=os.environ.copy())
-        print("Predictions:", PREDICTIONS)
+            run([
+                PYTHON, "-u", PIPELINE_DIR / "inference" / "generative.py",
+                "--checkpoint", best_checkpoint,
+                "--model-name", MODEL_NAME,
+                "--input", DATA_DIR / "test.jsonl",
+                "--output", PREDICTIONS,
+                "--input-length", INPUT_LENGTH,
+                "--label-length", LABEL_LENGTH,
+                "--batch-size", INFERENCE_BATCH_SIZE,
+            ], env=os.environ.copy())
+            print("Predictions:", PREDICTIONS)
         """),
         markdown("## 6. Đóng gói adapter và kết quả inference"),
         code("""

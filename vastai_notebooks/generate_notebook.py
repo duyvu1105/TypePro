@@ -197,6 +197,8 @@ def build_notebook() -> dict:
             "--input-length", INPUT_LENGTH,
             "--label-length", LABEL_LENGTH,
             "--batch-size", TRAIN_BATCH_SIZE,
+            "--inference-batch-size", INFERENCE_BATCH_SIZE,
+            "--inference-output", PREDICTIONS,
             "--gradient-accumulation-steps", GRADIENT_ACCUMULATION_STEPS,
             "--epochs", EPOCHS,
             "--learning-rate", "2e-5",
@@ -210,22 +212,25 @@ def build_notebook() -> dict:
             train_command.extend(["--train-samples", TRAIN_SAMPLES])
         run(train_command, cwd=REPO_DIR)
         """),
-        markdown("## 7. Chạy inference và tính exact-match trên tập test"),
+        markdown("## 7. Fine-tune đã tự infer; bật `RERUN_INFERENCE` để infer riêng trên tập test"),
         code("""
-        best_checkpoint = OUTPUT_DIR / "best"
-        if not best_checkpoint.is_dir():
-            raise RuntimeError(f"Không tìm thấy checkpoint: {best_checkpoint}")
-        run([
-            sys.executable, "-u", PIPELINE_DIR / "inference" / "generative.py",
-            "--checkpoint", best_checkpoint,
-            "--model-name", MODEL_NAME,
-            "--input", DATA_DIR / "test.jsonl",
-            "--output", PREDICTIONS,
-            "--input-length", INPUT_LENGTH,
-            "--label-length", LABEL_LENGTH,
-            "--batch-size", INFERENCE_BATCH_SIZE,
-        ], cwd=REPO_DIR)
-        print("Predictions:", PREDICTIONS)
+        # Fine-tune already ran inference. Set True to run inference separately.
+        RERUN_INFERENCE = False
+        if RERUN_INFERENCE:
+            best_checkpoint = OUTPUT_DIR / "best"
+            if not best_checkpoint.is_dir():
+                raise RuntimeError(f"Không tìm thấy checkpoint: {best_checkpoint}")
+            run([
+                sys.executable, "-u", PIPELINE_DIR / "inference" / "generative.py",
+                "--checkpoint", best_checkpoint,
+                "--model-name", MODEL_NAME,
+                "--input", DATA_DIR / "test.jsonl",
+                "--output", PREDICTIONS,
+                "--input-length", INPUT_LENGTH,
+                "--label-length", LABEL_LENGTH,
+                "--batch-size", INFERENCE_BATCH_SIZE,
+            ], cwd=REPO_DIR)
+            print("Predictions:", PREDICTIONS)
         """),
         markdown("## 8. Đóng gói kết quả trước khi dừng/xóa instance"),
         code("""

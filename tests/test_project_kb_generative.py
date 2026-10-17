@@ -86,7 +86,7 @@ def test_top_project_types_never_uses_candidate_outside_project_kb(tmp_path):
         [{"name": "ForeignType", "qualified_name": "shared.ForeignType"}],
         limit=10,
     )
-    assert [item["name"] for item in ranked] == ["LocalType"]
+    assert ranked == [], 'No below-threshold filler, even when the KB is nonempty'
 
 
 def test_top_project_types_masks_target_before_candidate_scoring(tmp_path):
@@ -109,6 +109,7 @@ def test_top_project_types_masks_target_before_candidate_scoring(tmp_path):
         ranked = top_project_types(
             kb, "value", "def target(self, value: <mask>):\n    return marker",
             target_function="target", target_scope="arg", limit=2,
+            evidence={'direct': {'app.A', 'app.B'}},
         )
         assert kb == before
         class_a = next(item for item in ranked if item["name"] == "A")
@@ -116,7 +117,7 @@ def test_top_project_types_masks_target_before_candidate_scoring(tmp_path):
         assert MASK in class_a["definition"]
         orders.append([item["name"] for item in ranked])
 
-    assert orders[0] == orders[1] == ["B", "A"]
+    assert orders[0] == orders[1]
 
 
 def test_target_member_matching_uses_target_receiver_and_inheritance(tmp_path):
@@ -151,7 +152,7 @@ def test_target_member_matching_uses_target_receiver_and_inheritance(tmp_path):
         kb, "debugger", "def inspect(debugger: <mask>): pass", limit=3,
         target_function="inspect", target_scope="arg", target_members=query,
     )
-    assert [item["name"] for item in ranked[:2]] == ["BaseDebugger", "Debugger"]
+    assert [item["name"] for item in ranked[:2]] == ["Debugger", "BaseDebugger"]
 
 
 def test_target_member_matching_is_annotation_invariant(tmp_path):

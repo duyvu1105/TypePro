@@ -34,6 +34,7 @@ from typing import Any, Iterable
 
 from typepro.shared.data_utils import is_builtin_annotation, iter_records, json_preview, print_jsonl_samples
 from tqdm.auto import tqdm
+from typepro.analysis.candidate_policy import POLICY as CANDIDATE_POLICY, DEFINITION_CHARS
 
 
 TYPEGEN_URL = "https://github.com/JohnnyPeng18/TypeGen/releases/download/data/data.zip"
@@ -836,6 +837,7 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
     previous_runtime = (json.loads(previous_runtime_path.read_text(encoding='utf-8'))
                         if previous_runtime_path.exists() else {})
     if (previous_runtime.get('retrieval_schema_version') != args.retrieval_schema_version
+            or previous_runtime.get('candidate_policy_version') != CANDIDATE_POLICY
             or previous_runtime.get('context_policy_version') != 'ast-context-v7-verified-signature-evidence'):
         # Keep source/download caches, but never skip old completed outputs.
         args.force_projects = True
@@ -860,7 +862,8 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
         "only_project_count": len(only_projects) if only_projects is not None else None,
         "retrieval_schema_version": args.retrieval_schema_version,
         "context_policy_version": "ast-context-v7-verified-signature-evidence",
-        "candidate_definition_max_chars": 8000,
+        "candidate_definition_max_chars": DEFINITION_CHARS,
+        "candidate_policy_version": CANDIDATE_POLICY,
         "project_revision_lock": str(args.project_revision_lock.resolve()) if args.project_revision_lock else None,
         "project_revision_lock_sha256": sha256_file(args.project_revision_lock) if args.project_revision_lock else None,
         "project_revision_lock_projects": len(revision_lock),
@@ -920,6 +923,7 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
             output_path.exists() and status_path.exists() and project_kb_path.exists()
             and not args.force_projects
             and existing_status.get('retrieval_schema_version') == args.retrieval_schema_version
+            and existing_status.get('candidate_policy_version') == CANDIDATE_POLICY
             and existing_status.get('context_policy_version') == 'ast-context-v7-verified-signature-evidence'
             and (not expected_commit or existing_status.get('commit') == expected_commit)
         ):
@@ -1056,7 +1060,8 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
                 "commit": commit,
                 "retrieval_schema_version": args.retrieval_schema_version,
                 "context_policy_version": "ast-context-v7-verified-signature-evidence",
-                "candidate_definition_max_chars": 8000,
+                "candidate_definition_max_chars": DEFINITION_CHARS,
+                "candidate_policy_version": CANDIDATE_POLICY,
                 "annotations": len(project_rows),
                 "exported": exported,
                 "failed_annotations": len(project_rows) - exported,

@@ -18,7 +18,7 @@ from typepro.shared.generative_chat import chat_token_ids
 from typepro.shared.type_labels import normalize_type_label
 
 
-def main() -> None:
+def main(argv=None) -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--model-name", default="Qwen/Qwen2.5-Coder-1.5B-Instruct")
@@ -27,7 +27,7 @@ def main() -> None:
     parser.add_argument("--input-length", type=int, default=8192)
     parser.add_argument("--label-length", type=int, default=64)
     parser.add_argument("--batch-size", type=int, default=4)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     tokenizer = AutoTokenizer.from_pretrained(args.checkpoint)
     if tokenizer.pad_token is None:

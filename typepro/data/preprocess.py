@@ -18,7 +18,11 @@ from typepro.shared.type_labels import normalize_type_label
 
 
 SPLITS = ("train", "validation", "test")
-from typepro.analysis.ast_context_slicer import CANDIDATE_DEFINITION_MAX_CHARS, limit_candidate_definition
+from typepro.analysis.ast_context_slicer import limit_candidate_definition
+from typepro.analysis.ast_context_slicer import CANDIDATE_DEFINITION_MAX_CHARS as CANDIDATE_DEFINITION_MAX_CHARS
+from typepro.analysis.candidate_policy import (
+    POLICY as CANDIDATE_POLICY, DEFINITION_CHARS, MIN_SCORE, allocate_characters, candidate_section,
+)
 
 
 def iter_records(path: Path) -> Iterable[dict[str, Any]]:
@@ -58,6 +62,8 @@ def normalized_recommendations(row: dict[str, Any], limit: int) -> list[dict[str
     for item in row.get("recommendation_types") or []:
         if not isinstance(item, dict):
             continue
+        if 'score' in item and item['score'] < MIN_SCORE:
+            continue
         name = str(item.get("name") or item.get("type") or "").strip()
         definition = str(item.get("definition") or "").strip()
         qualified = str(item.get("qualified_name") or name).strip()
@@ -69,10 +75,11 @@ def normalized_recommendations(row: dict[str, Any], limit: int) -> list[dict[str
             "type": name,
             "definition": limit_candidate_definition(definition)[0],
             **({"qualified_name": qualified} if qualified else {}),
+            **{key: item[key] for key in ('score', 'score_components', 'character_budget') if key in item},
         })
         if len(result) >= limit:
             break
-    return result
+    return allocate_characters(result)
 
 
 def target_function(row: dict[str, Any]) -> str:
@@ -96,12 +103,8 @@ def format_input(
         f"[TARGET_FUNCTION] {function}",
         f"[TARGET_SCOPE] {scope}",
         f"[INTERPROCEDURAL_SLICE]\n{code_slice}",
-        "[RECOMMENDATION_TYPES]",
+        candidate_section(recommendations),
     ]
-    for item in recommendations:
-        sections.append(
-            f"[TYPE] {item['type']}\n[DEFINITION]\n{item['definition']}"
-        )
     return "\n".join(sections)
 
 
@@ -142,7 +145,7 @@ def main() -> None:
         for index, row in enumerate(iter_records(Path(args.input))):
             stats["input_records"] += 1
             name, label, code_slice, recommendations = record_fields(row, args.label_field, args.recommendation_limit)
-            if not name or not label or not code_slice or not recommendations:
+            if not name or not label or not code_slice:
                 if str(row.get(args.label_field) or "").strip() and not label:
                     stats["dropped_invalid_label"] += 1
                 stats["dropped_incomplete"] += 1
@@ -169,7 +172,8 @@ def main() -> None:
                 "input": format_input(name, function, scope, code_slice, recommendations),
                 "label": label,
                 "source_commit": row.get("source_commit"),
-                "candidate_definition_max_chars": CANDIDATE_DEFINITION_MAX_CHARS,
+                "candidate_definition_max_chars": DEFINITION_CHARS,
+                "candidate_policy_version": row.get('candidate_policy_version', CANDIDATE_POLICY),
                 **({"context_policy_version": row["context_policy_version"]}
                    if row.get("context_policy_version") else {}),
             }

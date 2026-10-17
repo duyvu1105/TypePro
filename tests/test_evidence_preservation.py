@@ -16,7 +16,8 @@ def test_all_supplied_evidence_survives(case, tmp_path):
     result = replay(case, tmp_path)
     assert result['passed'], [c for c in result['checks'] if not c['passed']]
     if case['id'] == 'foolbox_tuple_alias':
-        assert len(result['candidates']) == 10
+        assert 1 <= len(result['candidates']) <= 10
+        assert all(c['score'] >= 1 for c in result['candidates'])
         assert any(c['name'] == 'ModelAndData' for c in result['candidates'])
         assert 'ModelAndData' not in result['slice']  # similarity is not a proven dependency
 

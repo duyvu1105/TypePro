@@ -47,6 +47,9 @@ def locate_build_dir(path: Path) -> Path:
 
 
 def main() -> None:
+    from typepro.analysis.candidate_policy import (
+        POLICY as CANDIDATE_POLICY, DEFINITION_CHARS, TOTAL_CHARS, candidate_section,
+    )
     args = parse_args()
     destination = Path(args.work_dir).resolve()
     builds = [locate_build_dir(Path(value).resolve()) for value in args.shard_build_dirs]
@@ -64,8 +67,11 @@ def main() -> None:
                             row = json.loads(line)
                             if row.get('target_masking_version') != 'typepro-shared-kb-masked-source-v7-resolved-bounded-context' or row.get('context_policy_version') != 'ast-context-v7-verified-signature-evidence':
                                 raise ValueError(f'Unmasked legacy record or incompatible context policy: {raw_file}')
-                            if row.get('candidate_definition_max_chars') != 8000 or any(len(str(item.get('definition') or '')) > 8000 for item in row.get('recommendation_types', [])):
+                            maximum = DEFINITION_CHARS if row.get('candidate_policy_version') == CANDIDATE_POLICY else 8000
+                            if row.get('candidate_definition_max_chars') != maximum or any(len(str(item.get('definition') or '')) > maximum for item in row.get('recommendation_types', [])):
                                 raise ValueError(f'Unbounded candidate definition: {raw_file}')
+                            if maximum == DEFINITION_CHARS and len(candidate_section(row.get('recommendation_types', []))) > TOTAL_CHARS:
+                                raise ValueError(f'Unbounded candidate section: {raw_file}')
     reference_manifest = None
     reference_lock = None
     copied = {"raw_slices": 0, "project_status": 0, "project_kb": 0}

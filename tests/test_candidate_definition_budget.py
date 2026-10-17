@@ -109,8 +109,13 @@ def test_masking_ranking_and_preprocessing_share_summary_policy():
     before = copy.deepcopy(kb)
     seeds = [{'qualified_name': r['qualified_name']} for r in reversed(records)]
     candidates = top_project_types(kb, 'value', 'target(value)', seeds,
-                                   target_function='target', target_scope='arg')
-    assert [c['name'] for c in candidates] == [r['name'] for r in reversed(records)][0:10]
+                                   target_function='target', target_scope='arg',
+                                   evidence={'direct': {r['qualified_name'] for r in records}})
+    assert len(candidates) == 10
+    other = top_project_types(kb, 'value', 'target(value)', list(reversed(seeds)),
+                              target_function='target', target_scope='arg',
+                              evidence={'direct': {r['qualified_name'] for r in records}})
+    assert candidates == other, 'Seed order must not override weighted evidence'
     assert all('HiddenGold' not in c['definition'] and 'Browser descriptors.' in c['definition'] for c in candidates)
     assert kb == before
     normalized = normalized_recommendations({'recommendation_types': candidates}, 10)

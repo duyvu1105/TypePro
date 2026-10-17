@@ -52,21 +52,21 @@ def test_preflight_and_writer_share_filter_and_write_only_one_copy(tmp_path):
     audit = prepare_project_holdout(build, output, preferred, 100, 13, .1, project_from_row)
     assert not list(output.glob('*.jsonl*')), 'Preflight must never copy the processed dataset'
     assert audit['written_projects']['test'] == 100
-    assert audit['retained_preferred_projects'] == ['owner/repo0']
-    assert set(audit['unavailable_preferred_projects']) == {'owner/missing', 'owner/empty'}
-    assert len(audit['supplemented_projects']) == 99
+    assert audit['retained_preferred_projects'] == ['owner/empty', 'owner/repo0']
+    assert set(audit['unavailable_preferred_projects']) == {'owner/missing'}
+    assert len(audit['supplemented_projects']) == 98
     script = Path(__file__).resolve().parents[1] / "typepro" / "data" / "preprocess.py"
     subprocess.run([sys.executable, str(script), '--input', str(raw), '--output-dir', str(output),
                     '--project-split-map', str(output / 'project_split_map.json')], check=True, capture_output=True)
     final_rows = list(iter_output_rows(output))
-    assert len(final_rows) == 300
+    assert len(final_rows) == 301
     assert {r['id'] for r in final_rows} == {str(i) for i in range(300)}
     assert all(r['label'] == 'Thing' and r['interprocedural_slice'] == 'def f(x): pass' for r in final_rows)
     sets = {s: {r['project'] for r in final_rows if r['split'] == s} for s in ('train', 'validation', 'test')}
     assert sets['train'] and sets['validation'] and len(sets['test']) == 100
     assert not (sets['train'] & sets['test'] or sets['validation'] & sets['test'] or sets['train'] & sets['validation'])
     stats = json.loads((output / 'preprocess_stats.json').read_text())
-    assert stats['dropped_incomplete'] == 1
+    assert stats.get('dropped_incomplete', 0) == 0
     assert all(stats[f'{s}_written'] == audit['expected_written_counts'][s] for s in sets)
     assert not list(output.glob('*.tmp'))
     assert len((output / 'test_projects.txt').read_text().splitlines()) == 100

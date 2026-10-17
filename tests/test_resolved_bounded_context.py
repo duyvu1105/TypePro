@@ -83,7 +83,7 @@ def test_thousands_of_same_name_methods_do_not_enter_slice(tmp_path, monkeypatch
     assert 'HiddenGold' not in text
 
 
-@pytest.mark.parametrize('size', [7999, 8000, 8001, 430474])
+@pytest.mark.parametrize('size', [3999, 4000, 4001, 430474])
 def test_definition_boundaries_and_unicode_preserve_kb(size):
     prefix, suffix = 'class Parser:\n    text = "', '"\n'
     definition = prefix + '\u03bb' * (size - len(prefix) - len(suffix)) + suffix
@@ -91,21 +91,22 @@ def test_definition_boundaries_and_unicode_preserve_kb(size):
                        'source': 'project', 'definition': definition, 'members': []}]}
     before = copy.deepcopy(kb)
     candidate = top_project_types(kb, 'parser', 'parser')[0]
-    if size <= 8000:
+    if size <= 4000:
         assert candidate['definition'] == definition
     else:
         assert candidate['definition'] == 'class Parser:\n    text = ...'
-        assert candidate['definition_reduction']['mode'] == 'signature_docstring'
+        assert candidate['definition_reduction']['mode'] == 'character_summary'
     assert kb == before
-    assert candidate['definition_reduction']['output_chars'] == len(candidate['definition']) <= 8000
+    assert candidate['definition_reduction']['output_chars'] == len(candidate['definition']) <= 4000
 
 
 def test_preprocessing_caps_all_ten_definitions_without_changing_ranking():
-    rows = [{'name': f'Type{i}', 'qualified_name': f'app.Type{i}', 'definition': 'x' * 17000} for i in range(12)]
+    rows = [{'name': f'Type{i}', 'qualified_name': f'app.Type{i}',
+             'definition': f'class Type{i}:\n    payload = "' + 'x' * 17000 + '"'} for i in range(12)]
     result = normalized_recommendations({'recommendation_types': rows}, 10)
     assert [r['type'] for r in result] == [f'Type{i}' for i in range(10)]
-    assert all(len(r['definition']) <= CANDIDATE_DEFINITION_MAX_CHARS for r in result)
-    assert all(len(r['definition']) == 17000 for r in rows)
+    assert all(len(r['definition']) <= 4000 for r in result)
+    assert all(len(r['definition']) > 17000 for r in rows)
 
 
 def test_caller_context_excludes_unresolved_same_name_calls(tmp_path, monkeypatch):

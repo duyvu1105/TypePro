@@ -12,6 +12,65 @@ ROOT = Path(__file__).resolve().parents[1]
 from typepro.training.length_grouping import LengthGroupedSampler
 
 
+@pytest.mark.parametrize("enabled,is_main", [(True, True), (False, True), (True, False)])
+def test_finetune_handoff_releases_training_memory_and_reuses_configuration(tmp_path, monkeypatch, enabled, is_main):
+    """Exercise orchestration without requiring GPU training dependencies."""
+    from types import ModuleType
+
+    events = []
+    output = tmp_path / "model"
+    (output / "best").mkdir(parents=True)
+    (output / "best" / "adapter_config.json").write_text("{}")
+    args = SimpleNamespace(
+        output_dir=str(output), data_dir=str(tmp_path / "data"),
+        model_name="custom/base", input_length=2048, label_length=32,
+        inference_batch_size=2, infer_after_training=enabled, inference_output=None,
+    )
+    accelerator = SimpleNamespace(
+        free_memory=lambda: events.append("free"),
+        wait_for_everyone=lambda: events.append("wait"),
+        end_training=lambda: events.append("end"), is_main_process=is_main,
+    )
+    fake_infer = ModuleType("typepro.inference.generative")
+    fake_infer.main = lambda argv: events.append(dict(zip(argv[::2], argv[1::2])))
+    monkeypatch.setitem(sys.modules, fake_infer.__name__, fake_infer)
+    scope = dict(
+        train=lambda: (args, accelerator), Path=Path,
+        gc=SimpleNamespace(collect=lambda: events.append("gc")),
+        torch=SimpleNamespace(cuda=SimpleNamespace(
+            is_available=lambda: True, empty_cache=lambda: events.append("cuda"))),
+    )
+    source = ROOT / "typepro/training/generative.py"
+    main = next(n for n in ast.parse(source.read_text(encoding="utf-8")).body
+                if isinstance(n, ast.FunctionDef) and n.name == "main")
+    exec(compile(ast.Module(body=[main], type_ignores=[]), str(source), "exec"), scope)
+    scope["main"]()
+    assert events[:5] == ["free", "gc", "cuda", "wait", "end"]
+    if enabled and is_main:
+        assert events[5] == {
+            "--checkpoint": str(output / "best"), "--model-name": "custom/base",
+            "--input": str(tmp_path / "data/test.jsonl"),
+            "--output": str(output / "test_predictions.jsonl"),
+            "--input-length": "2048", "--label-length": "32", "--batch-size": "2",
+        }
+    else:
+        assert len(events) == 5
+
+
+def test_finetune_failure_does_not_start_inference():
+    source = ROOT / "typepro/training/generative.py"
+    main = next(n for n in ast.parse(source.read_text(encoding="utf-8")).body
+                if isinstance(n, ast.FunctionDef) and n.name == "main")
+
+    def train():
+        raise RuntimeError("training failed")
+
+    scope = {"train": train}
+    exec(compile(ast.Module(body=[main], type_ignores=[]), str(source), "exec"), scope)
+    with pytest.raises(RuntimeError, match="training failed"):
+        scope["main"]()
+
+
 def test_length_grouped_sampler_keeps_similar_lengths_in_each_batch():
     lengths = [1, 100, 2, 99, 3, 98, 4, 97]
     sampler = LengthGroupedSampler(
@@ -43,7 +102,7 @@ def test_scheduler_advances_once_per_successful_update(num_processes, skip_updat
     torch = pytest.importorskip("torch")
     source = ROOT / "typepro" / "training" / "generative.py"
     tree = ast.parse(source.read_text(encoding="utf-8"))
-    main = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "main")
+    main = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "train")
     # Include any scheduler wrapping in the initialization, so reintroducing
     # AcceleratedScheduler's process multiplier fails the regression test.
     initialization = [

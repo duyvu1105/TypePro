@@ -406,10 +406,13 @@ def export_one(
         result['interprocedural_slice'] = render_masks(result['interprocedural_slice'])
         for item in result['recommendation_types']:
             item['definition'], _ = limit_candidate_definition(render_masks(clean(item['definition'])))
+            item['character_budget']['output_chars'] = len(item['definition'])
+            item['definition_reduction']['output_chars'] = len(item['definition'])
         result['other_prompt'] = [render_masks(value) for value in result['other_prompt']]
         result['target_masking_version'] = 'typepro-shared-kb-masked-source-v7-resolved-bounded-context'
         result['context_policy_version'] = POLICY
-        result['candidate_definition_max_chars'] = CANDIDATE_DEFINITION_MAX_CHARS
+        from typepro.analysis.candidate_policy import DEFINITION_CHARS
+        result['candidate_definition_max_chars'] = DEFINITION_CHARS
     return result
 
 
@@ -501,17 +504,23 @@ def _export_masked_one(
             result["qualified_target_function"] = qualified_target
     result["interprocedural_slice"] = code_slice
     seed_recommendations = recommendation_objects(slicer.get_type_recommend())
-    recommendations = (
-        top_project_types(
-            project_kb, target_name, code_slice, seed_recommendations,
-            limit=recommendation_limit,
-            target_function=target_function_label,
-            target_scope=scope,
-            target_members=target_member_query(target_node, target_name) if scope == "arg" else None,
-        )
-        if project_kb is not None else seed_recommendations
+    from typepro.analysis.candidate_policy import source_evidence, POLICY as CANDIDATE_POLICY
+    retrieval_kb = project_kb if project_kb is not None else {
+        'records': seed_recommendations
+    }
+    recommendations = top_project_types(
+        retrieval_kb, target_name, code_slice, seed_recommendations,
+        limit=recommendation_limit,
+        target_function=target_function_label,
+        target_scope=scope,
+        target_members=target_member_query(target_node, target_name) if scope == "arg" else None,
+        evidence=source_evidence(
+            getattr(function_methods, 'context_catalog', None), file_path, target_node,
+            target_name, scope, retrieval_kb.get('records', []),
+        ),
     )
     result["recommendation_types"] = recommendations
+    result['candidate_policy_version'] = CANDIDATE_POLICY
     result["recommendation_diagnostics"] = {
         "context_reduction": slicer.context_diagnostics,
         "count": len(recommendations),

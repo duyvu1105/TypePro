@@ -71,7 +71,7 @@ def test_shared_kb_is_reused_unchanged_with_masked_source(tmp_path, monkeypatch,
         assert '-> ' + gold not in context
         assert 'container: ' + gold not in context
         assert MASK not in context
-        assert 'int' in str(result['recommendation_types']) or scope == 'arg'
+        assert all(c['score'] >= 1 for c in result['recommendation_types'])
         outputs.append((result['interprocedural_slice'], result['recommendation_types']))
     assert outputs[0] == outputs[1]
 

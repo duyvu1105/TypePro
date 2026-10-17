@@ -9,6 +9,9 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+from typepro.analysis.candidate_policy import (
+    POLICY as CANDIDATE_POLICY, DEFINITION_CHARS, MIN_SCORE, TOTAL_CHARS, candidate_section,
+)
 
 
 def sha256(path: Path) -> str:
@@ -66,8 +69,9 @@ def main() -> None:
                 if missing:
                     errors.append(f"{split}:{line_number}: missing fields {sorted(missing)}")
                     break
-                if not 1 <= len(row["recommendation_types"]) <= 10:
-                    errors.append(f"{split}:{line_number}: recommendation count is not 1..10")
+                candidates = row['recommendation_types']
+                if not 0 <= len(candidates) <= 10:
+                    errors.append(f"{split}:{line_number}: recommendation count is not 0..10")
                     break
                 if any(
                     not item.get("type") or not item.get("definition")
@@ -80,11 +84,21 @@ def main() -> None:
                 ):
                     errors.append(f"{split}:{line_number}: candidate definition exceeds 8000 characters")
                     break
-                if not all(tag in row["input"] for tag in (
+                if row.get('candidate_policy_version') == CANDIDATE_POLICY:
+                    if any(len(c['definition']) > DEFINITION_CHARS or
+                           ('score' in c and c['score'] < MIN_SCORE) for c in candidates):
+                        errors.append(f'{split}:{line_number}: invalid weighted candidate')
+                    section = candidate_section(candidates)
+                    if len(section) > TOTAL_CHARS or not row['input'].endswith(section):
+                        errors.append(f'{split}:{line_number}: candidate character budget/render mismatch')
+                tags = [
                     "[TARGET_NAME]", "[TARGET_FUNCTION]", "[TARGET_SCOPE]",
                     "[INTERPROCEDURAL_SLICE]",
-                    "[RECOMMENDATION_TYPES]", "[TYPE]", "[DEFINITION]",
-                )):
+                    "[RECOMMENDATION_TYPES]",
+                ]
+                if candidates:
+                    tags.extend(['[TYPE]', '[DEFINITION]'])
+                if not all(tag in row["input"] for tag in tags):
                     errors.append(f"{split}:{line_number}: tagged input is incomplete")
                     break
                 if kb_available:

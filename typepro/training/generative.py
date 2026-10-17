@@ -7,6 +7,7 @@ if __package__ in (None, ''):
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import argparse
+import gc
 import json
 import math
 import random
@@ -54,7 +55,7 @@ def training_sequence_length(row, tokenizer, input_length: int, label_length: in
     return min(len(prompt_ids), prompt_limit) + completion_length
 
 
-def main() -> None:
+def train():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-dir", required=True)
     parser.add_argument("--output-dir", required=True)
@@ -62,6 +63,12 @@ def main() -> None:
     parser.add_argument("--input-length", type=int, default=8192)
     parser.add_argument("--label-length", type=int, default=64)
     parser.add_argument("--batch-size", type=int, default=1)
+    parser.add_argument(
+        "--infer-after-training", action=argparse.BooleanOptionalAction, default=True,
+        help="Evaluate best checkpoint on test.jsonl after successful training",
+    )
+    parser.add_argument("--inference-batch-size", type=int, default=1)
+    parser.add_argument("--inference-output", help="Predictions path; defaults to OUTPUT_DIR/test_predictions.jsonl")
     parser.add_argument("--gradient-accumulation-steps", type=int, default=16)
     parser.add_argument("--epochs", type=int, default=3)
     parser.add_argument("--learning-rate", type=float, default=2e-5)
@@ -113,6 +120,12 @@ def main() -> None:
         help="Cache measured train lengths in the output directory",
     )
     args = parser.parse_args()
+    if args.epochs < 1:
+        parser.error("--epochs must be positive")
+    if args.inference_batch_size < 1:
+        parser.error("--inference-batch-size must be positive")
+    if args.infer_after_training and not (Path(args.data_dir) / "test.jsonl").is_file():
+        parser.error("Automatic inference requires test.jsonl in --data-dir")
     accelerator = Accelerator(
         mixed_precision=args.mixed_precision,
         gradient_accumulation_steps=args.gradient_accumulation_steps,
@@ -456,6 +469,39 @@ def main() -> None:
             if accelerator.is_main_process:
                 tokenizer.save_pretrained(output / "best")
     progress.close()
+    return args, accelerator
+
+
+def main() -> None:
+    args, accelerator = train()
+    # The training frame has returned, releasing its model/optimizer references.
+    # Clear Accelerate's references and CUDA cache before loading for inference.
+    accelerator.free_memory()
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    accelerator.wait_for_everyone()
+    is_main_process = accelerator.is_main_process
+    accelerator.end_training()
+    if args.infer_after_training and is_main_process:
+        from typepro.inference.generative import main as infer
+
+        output = Path(args.output_dir)
+        checkpoint = output / "best"
+        if not (checkpoint / "adapter_config.json").is_file():
+            raise RuntimeError(f"Training did not produce a best checkpoint: {checkpoint}")
+        print("Training complete; running inference from", checkpoint, flush=True)
+        predictions = Path(args.inference_output) if args.inference_output else output / "test_predictions.jsonl"
+        predictions.parent.mkdir(parents=True, exist_ok=True)
+        infer([
+            "--checkpoint", str(checkpoint),
+            "--model-name", args.model_name,
+            "--input", str(Path(args.data_dir) / "test.jsonl"),
+            "--output", str(predictions),
+            "--input-length", str(args.input_length),
+            "--label-length", str(args.label_length),
+            "--batch-size", str(args.inference_batch_size),
+        ])
 
 
 if __name__ == "__main__":

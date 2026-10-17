@@ -98,7 +98,7 @@ python ssh_notebooks/download_dataset.py --credential kaggle.json --output-dir "
 python -m typepro verify --data-dir "$TYPEPRO_DATA_DIR"
 python -c 'import json,os,pathlib; p=pathlib.Path(os.environ["TYPEPRO_DATA_DIR"]); m=json.loads((p/"manifest.json").read_text()); print(json.dumps({"source":m.get("source"),"output":m.get("output")}, indent=2))'
 
-# 16. Finetune toàn bộ train split trên 1 GPU.
+# 16. Finetune toàn bộ train split trên 1 GPU, tự infer khi thành công.
 export CUDA_VISIBLE_DEVICES=0
 export TOKENIZERS_PARALLELISM=false
 accelerate launch --num_machines 1 --num_processes 1 --mixed_precision fp16 -m typepro finetune \
@@ -123,7 +123,7 @@ accelerate launch --num_machines 1 --num_processes 1 --mixed_precision fp16 -m t
 # 17. Khi train kết thúc thành công, kiểm tra checkpoint tốt nhất.
 test -f "$TYPEPRO_OUTPUT_DIR/best/adapter_config.json"
 
-# 18. Infer và đánh giá trên toàn bộ test split bằng checkpoint đó.
+# 18. Tùy chọn: chạy lại infer riêng bằng checkpoint đó.
 python -m typepro infer \
   --checkpoint "$TYPEPRO_OUTPUT_DIR/best" \
   --model-name Qwen/Qwen2.5-Coder-0.5B-Instruct \
@@ -244,6 +244,13 @@ nếu mục tiêu là giữ nguyên benchmark cũ.
 `--train-samples` nghĩa là dùng toàn bộ train split. Để chạy thử nhanh, thêm
 `--train-samples 7000` nếu tập train có ít nhất 7000 dòng; validation vẫn đầy đủ.
 Nếu thiếu VRAM, giảm context xuống 4096 và dùng cùng cấu hình khi infer.
+
+Fine-tune tự infer toàn bộ `test.jsonl` sau khi train thành công, dùng checkpoint
+`best`, cùng model/context/label length và ghi `OUTPUT_DIR/test_predictions.jsonl`.
+Batch infer mặc định 1; đổi bằng `--inference-batch-size N`, đổi đường dẫn bằng
+`--inference-output PATH`. Dùng `--no-infer-after-training` nếu chỉ muốn train.
+Lệnh `python -m typepro infer` vẫn chạy độc lập. Trong notebook, bật
+`RERUN_INFERENCE` ở cell infer riêng khi cần chạy lại.
 
 Checkpoint `best` gồm LoRA adapter và tokenizer, được cập nhật khi validation
 loss tốt hơn. Bước kiểm tra file không thay cho kiểm tra tiến trình train đã kết

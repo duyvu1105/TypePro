@@ -62,7 +62,7 @@ def prepare_project_holdout(work_dir, output_dir, project_list, count, seed, val
     available = set()
     counts_by_project = Counter()
     for row in iter_records(work_dir / 'raw_slices'):
-        if all(record_fields(row)):
+        if all(record_fields(row)[:3]):
             project = project_name(row)
             available.add(project)
             counts_by_project[project] += 1
