@@ -35,7 +35,7 @@ class Args:
 
 
 @pytest.mark.parametrize('exceptions,retry', [
-    ({'SyntaxError': 2}, True), ({}, False), ({'FileNotFoundError': 1}, False),
+    ({'SyntaxError': 2}, True), ({}, False), ({'FileNotFoundError': 1}, False), (None, False),
 ])
 def test_resume_retries_syntax_errors_but_keeps_other_completed_projects(tmp_path, monkeypatch, exceptions, retry):
     monkeypatch.setattr(sys, 'argv', ['prepare', '--no-build-import-kb', '--preview-samples', '0'])
@@ -45,7 +45,7 @@ def test_resume_retries_syntax_errors_but_keeps_other_completed_projects(tmp_pat
                    context_policy_version='ast-context-v7-verified-signature-evidence')
     prepare_dataset_module.write_json(tmp_path / 'runtime_manifest.json', runtime)
     status = dict(runtime, project='owner/repository', annotations=1, exported=1,
-                  export_summary={'exceptions_by_type': exceptions})
+                  export_summary={'exceptions_by_type': exceptions} if exceptions is not None else None)
     status_path = tmp_path / 'project_status/owner__repository.json'
     prepare_dataset_module.write_json(status_path, status)
     raw = tmp_path / 'raw_slices/owner__repository.jsonl'
