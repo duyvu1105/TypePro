@@ -16,6 +16,7 @@ from typepro.analysis.candidate_policy import (
     source_evidence,
 )
 from typepro.analysis.function_methods import Function_methods
+from typepro.analysis.export_slices import export_one
 from typepro.analysis.project_index import scan_project
 from typepro.analysis.project_kb import top_project_types
 from typepro.data.preprocess import (
@@ -141,6 +142,44 @@ def test_rebinding_and_wrong_module_do_not_get_direct_points(tmp_path):
     records = [dict(candidate(), qualified_name='external.Client')]
     result = source_evidence(catalog, path, function, 'value', 'arg', records)
     assert result == {'direct': set(), 'import': set()}
+
+
+@pytest.mark.parametrize('qualified', [
+    'numpy.typing.tests.data.pass.ufunc_config.func1',
+    'cv2.config-3.PYTHON_EXTENSIONS_PATHS',
+])
+def test_invalid_import_expression_preserves_evidence_and_export(tmp_path, qualified):
+    module = qualified.split('.')[0]
+    records = [dict(candidate(), qualified_name=f'{module}.Client'),
+               dict(candidate(), qualified_name=qualified)]
+    expected = {'direct': {f'{module}.Client'}, 'import': {f'{module}.Client'}}
+    results = []
+    for gold in ('HiddenGoldA', 'HiddenGoldB'):
+        source = (f'import {module} as lib\n'
+                  f'def fetch(Client: {gold}): return Client\n'
+                  'fetch(lib.Client())\n')
+        path = tmp_path / 'app.py'
+        path.write_text(source, encoding='utf-8')
+        parsed, _ = scan_project(tmp_path)
+        methods = Function_methods.from_parsed(tmp_path, parsed)
+        function = next(n for n in ast.parse(source).body if isinstance(n, ast.FunctionDef))
+        kb = {'records': copy.deepcopy(records)}
+        before = copy.deepcopy(kb)
+        evidence = source_evidence(methods.context_catalog, path, function, 'Client', 'arg', kb['records'])
+        assert evidence == expected
+        # An invalid import spelling does not remove the record from other scores.
+        selected = top_project_types(kb, 'Client', '', evidence=evidence)
+        invalid = next(c for c in selected if c['qualified_name'] == qualified)
+        assert invalid['score_components']['name'] == 1
+        assert invalid['score_components']['import'] == 0
+        result = export_one({'scope': 'arg', 'name': 'Client', 'loc': 'fetch@2',
+                             'gttype': gold}, path, function_methods=methods, project_kb=kb)
+        assert result is not None
+        assert '<mask>' in result['interprocedural_slice']
+        assert gold not in result['interprocedural_slice']
+        assert kb == before
+        results.append(result['recommendation_types'])
+    assert results[0] == results[1]
 
 
 def test_preprocess_and_verify_allow_empty_candidates(tmp_path, monkeypatch):

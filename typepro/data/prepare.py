@@ -926,6 +926,9 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
             and existing_status.get('candidate_policy_version') == CANDIDATE_POLICY
             and existing_status.get('context_policy_version') == 'ast-context-v7-verified-signature-evidence'
             and (not expected_commit or existing_status.get('commit') == expected_commit)
+            # Old import-evidence parse failures can leave a partial output
+            # marked complete. Retry that project with the corrected exporter.
+            and not existing_status.get('export_summary', {}).get('exceptions_by_type', {}).get('SyntaxError', 0)
         ):
             counters["skipped_complete"] += 1
             if not args.keep_repos and not args.repos_root:

@@ -156,7 +156,12 @@ def source_evidence(catalog, file_path, function, target_name, target_scope, rec
                     if not qualified.startswith(alias.name + '.'):
                         continue
                     spelling = ((local + qualified[len(alias.name):]) if alias.asname else qualified)
-                expression = ast.parse(spelling, mode='eval').body
+                try:
+                    expression = ast.parse(spelling, mode='eval').body
+                except (SyntaxError, ValueError):
+                    # Scanned file names can contain keywords or punctuation.
+                    # Ignore only this import evidence, not the target or record.
+                    continue
                 if identity(expression, path, function) == qualified:
                     evidence['import'].add(qualified)
 

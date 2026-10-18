@@ -34,6 +34,39 @@ class Args:
     include_returns = False
 
 
+@pytest.mark.parametrize('exceptions,retry', [
+    ({'SyntaxError': 2}, True), ({}, False), ({'FileNotFoundError': 1}, False),
+])
+def test_resume_retries_syntax_errors_but_keeps_other_completed_projects(tmp_path, monkeypatch, exceptions, retry):
+    monkeypatch.setattr(sys, 'argv', ['prepare', '--no-build-import-kb', '--preview-samples', '0'])
+    args = parse_args()
+    runtime = dict(retrieval_schema_version=args.retrieval_schema_version,
+                   candidate_policy_version=prepare_dataset_module.CANDIDATE_POLICY,
+                   context_policy_version='ast-context-v7-verified-signature-evidence')
+    prepare_dataset_module.write_json(tmp_path / 'runtime_manifest.json', runtime)
+    status = dict(runtime, project='owner/repository', annotations=1, exported=1,
+                  export_summary={'exceptions_by_type': exceptions})
+    status_path = tmp_path / 'project_status/owner__repository.json'
+    prepare_dataset_module.write_json(status_path, status)
+    raw = tmp_path / 'raw_slices/owner__repository.jsonl'
+    raw.parent.mkdir()
+    raw.write_text('{"id": "preserved"}\n', encoding='utf-8')
+    kb = tmp_path / 'project_kb/owner__repository/knowledge_base.json'
+    prepare_dataset_module.write_json(kb, {'records': []})
+    monkeypatch.setattr(prepare_dataset_module, 'load_prepared_annotations', lambda _: [row('owner/repository', 1)])
+    calls = []
+    def clone(*values, **kwargs):
+        calls.append(values[0])
+        raise RuntimeError('stop before any network or export')
+    monkeypatch.setattr(prepare_dataset_module, 'clone_project', clone)
+    counts = prepare_dataset_module.slice_projects(args, tmp_path, Path(__file__).resolve().parents[1])
+    assert calls == (['owner/repository'] if retry else [])
+    assert counts.get('skipped_complete', 0) == (0 if retry else 1)
+    assert raw.read_text(encoding='utf-8') == '{"id": "preserved"}\n'
+    if not retry:
+        assert json.loads(status_path.read_text(encoding='utf-8')) == status
+
+
 def test_export_summary_survives_log_tail_noise():
     summary = dict(eligible=4, written=1, failed=3, timed_out=1,
                    empty_slices=1, exceptions_by_type={'KeyError': 1})
