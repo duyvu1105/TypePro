@@ -1,6 +1,6 @@
 # TypePro: process data → finetune → inference
 
-Luồng chính: build 19 partition trên Kaggle → merge và publish Dataset → tải về
+Luồng chính: build 21 partition trên Kaggle → merge và publish Dataset → tải về
 server GPU → finetune Qwen bằng QLoRA → infer trên tập test. Các lệnh dưới đây
 chạy theo thứ tự; phần giải thích và điều kiện chuyển bước nằm phía sau.
 
@@ -9,7 +9,7 @@ chạy theo thứ tự; phần giải thích và điều kiện chuyển bước
 Sau khi đã cài môi trường và đặt ba credential, chỉ cần:
 
 ```powershell
-# Chuẩn bị và xem trước 19 job; tự chọn code mới nhất trên GitHub cho lần đầu.
+# Chuẩn bị và xem trước 21 job; tự chọn code mới nhất trên GitHub cho lần đầu.
 python kaggle_notebooks/schedule_shards.py
 
 # Submit kế hoạch đã chuẩn bị, tối đa 5 job đang chạy/account.
@@ -39,14 +39,14 @@ python -m pip install -e . --no-deps
 python -m pip install -r requirements/build.txt pytest uv
 python -m typepro --help
 
-# 2. Sinh notebook theo kế hoạch hiện tại: 19 job, 3 account.
+# 2. Sinh notebook theo kế hoạch hiện tại: 21 job, 3 account.
 python kaggle_notebooks/generate_notebooks.py --shards 10 --runner-accounts duyvu1105 duymign vdduy1105 --dataset-owner duyvu1105
 
 # 3. Chạy kiểm thử và render thử; phải thành công trước khi push.
 python -m pytest tests ssh_notebooks/test_infer_deepseek.py -q -p no:cacheprovider
 python kaggle_notebooks/commit_shard_versions.py
 
-# 4–6. Dry-run: tự chọn revision và ledger; kiểm tra đủ 19 job.
+# 4–6. Dry-run: tự chọn revision và ledger; kiểm tra đủ 21 job.
 # Thêm --new-run nếu chủ động bắt đầu một đợt mới, thay vì tiếp tục đợt cũ.
 python kaggle_notebooks/schedule_shards.py
 
@@ -58,7 +58,7 @@ uv run --with kaggle==1.7.4.2 python kaggle_notebooks/schedule_shards.py --push 
 uv run --with kaggle==1.7.4.2 python kaggle_notebooks/commit_shard_versions.py --check-status
 uv run --with kaggle==1.7.4.2 python kaggle_notebooks/commit_merge_finalize.py --check-inputs
 
-# 9. Khi 19 shard đã sẵn sàng: dry-run merge rồi mới push.
+# 9. Khi 21 shard đã sẵn sàng: dry-run merge rồi mới push.
 uv run --with kaggle==1.7.4.2 python kaggle_notebooks/commit_merge_finalize.py
 uv run --with kaggle==1.7.4.2 python kaggle_notebooks/commit_merge_finalize.py --push
 
@@ -170,18 +170,18 @@ theo chính sách cache của notebook. Nó không tự buộc rebuild toàn b�
 Git push cập nhật code trên GitHub; Kaggle `--push` tạo version kernel và submit job.
 
 **Bước 6–7 — Process data trên Kaggle.** Scheduler pin code bằng SHA 40 ký tự,
-đọc `shard_account_plan.json` và điều phối 19 partition:
+đọc `shard_account_plan.json` và điều phối 21 partition:
 
 | Account | Số job | Shard Dataset |
 | --- | ---: | --- |
 | `duyvu1105` | 7 | private |
-| `duymign` | 6 | public |
-| `vdduy1105` | 6 | public |
+| `duymign` | 7 | public |
+| `vdduy1105` | 7 | public |
 
 Mỗi job chuẩn bị metadata, checkout project theo `configs/project_revision_lock.json`,
 build một KB cho mỗi project, export slice/candidates với target đã mask, audit
 và publish shard. Các physical coordinate lấy nguyên từ plan, gồm các partition
-`/20`, `/30`, `/40`, `/90`; không tự chia lại thành 19 shard bằng nhau.
+`/20`, `/30`, `/40`, `/90`; không tự chia lại thành 21 shard bằng nhau.
 
 `--watch` đợi slot trống để submit phần còn lại, tối đa 5 job/account. Nó kết thúc
 khi đã submit đủ, **không đợi tất cả Dataset hoàn tất**. Giữ cùng SHA và ledger
@@ -203,7 +203,7 @@ code hiện tại. Payload cần có `metadata`, `raw_slices`, `project_status`,
 `project_kb` và các manifest. Shard lỗi thì sửa/retry đúng partition, chưa merge.
 
 **Bước 9–10 — Merge và publish final Dataset.** Chạy dưới `duyvu1105`, lấy đúng
-19 inputs từ `shard_merge_plan.json`. Notebook kiểm tra manifest/schema, merge,
+21 inputs từ `shard_merge_plan.json`. Notebook kiểm tra manifest/schema, merge,
 preprocess thành `train.jsonl`, `validation.jsonl`, `test.jsonl`, kiểm tra output
 và publish private Dataset `duyvu1105/typepro-python-generative`.
 `configs/test_projects.txt` là danh sách ưu tiên; `test_projects.txt` và
@@ -270,13 +270,15 @@ Hai số dòng ở bước 19 phải bằng nhau sau một lượt inference th�
 | --- | --- |
 | `typepro/analysis/` | AST, slicing, masking, project KB và retrieval |
 | `typepro/data/` | Prepare, preprocess, split, merge và verify |
-| `typepro/training/` | Generative QLoRA và contrastive ranker |
-| `typepro/inference/` | Generative model, ranker và DeepSeek API |
+| `typepro/training/` | Generative QLoRA |
+| `typepro/inference/` | Generative model và DeepSeek API |
 | `typepro/publishing/` | Đóng gói/publish shard và final Dataset |
 | `typepro/shared/` | Dữ liệu, nhãn kiểu và định dạng chat dùng chung |
 | `typepro/audit/` | Kiểm tra bằng chứng và context |
 | `tests/`, `configs/`, `requirements/` | Kiểm thử, cấu hình và dependencies |
 | Các thư mục `*_notebooks/` | Generator, notebook và launcher theo môi trường |
+
+Giải thích process data từ đầu đến cuối: [docs/data_pipeline.md](docs/data_pipeline.md).
 
 CLI `python -m typepro ...` ghi `outputs/audit/<run>/run.json` và `console.log`;
 đổi nơi lưu bằng `TYPEPRO_AUDIT_DIR`. Training qua `accelerate -m typepro` cũng

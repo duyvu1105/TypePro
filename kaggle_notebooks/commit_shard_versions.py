@@ -9,7 +9,7 @@ import os
 import re
 import subprocess
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +42,19 @@ class AccountPlan:
     assigned_shards: tuple[int, ...]
     part_count: int = 1
     independent_parts: bool = False
+    part_runner_accounts: tuple[str, ...] = ()
+    final_dataset_owner: str = ""
+
+
+def plan_for_part(plan: AccountPlan, part_index: int) -> AccountPlan:
+    """Resolve the runner/publisher before rendering, authentication or scheduling."""
+    if not 0 <= part_index < plan.part_count:
+        raise ValueError(f"Invalid part index: {part_index}")
+    if not plan.part_runner_accounts:
+        return plan
+    owner = plan.part_runner_accounts[part_index]
+    return replace(plan, runner_account=owner, dataset_owner=owner,
+                   public_dataset=owner.casefold() != plan.final_dataset_owner.casefold())
 
 
 def load_plan(path: Path) -> tuple[str, int, list[AccountPlan]]:
@@ -92,6 +105,12 @@ def load_plan(path: Path) -> tuple[str, int, list[AccountPlan]]:
                 f"Shard {shard_index:02d} must have {expected_parts} part(s), "
                 f"found {part_count!r}"
             )
+        part_runners = item.get('part_runner_accounts', [])
+        if (not isinstance(part_runners, list)
+                or (part_runners and (len(part_runners) != part_count
+                    or not all(isinstance(runner, str) and OWNER_RE.fullmatch(runner) for runner in part_runners)
+                    or not item.get('independent_parts')))):
+            raise RuntimeError(f'Invalid part runner accounts for shard {shard_index}')
         plans.append(
             AccountPlan(
                 runner_account=account,
@@ -102,6 +121,8 @@ def load_plan(path: Path) -> tuple[str, int, list[AccountPlan]]:
                 assigned_shards=(shard_index,),
                 part_count=part_count,
                 independent_parts=bool(item.get('independent_parts', False)),
+                part_runner_accounts=tuple(part_runners),
+                final_dataset_owner=final_dataset_owner,
             )
         )
     if len(plans) != shard_count:
@@ -130,12 +151,18 @@ def load_plan(path: Path) -> tuple[str, int, list[AccountPlan]]:
             )
     independent = all(plan.independent_parts for plan in plans)
     if independent:
-        physical_counts = {
-            account: sum(plan.part_count for plan in plans if plan.runner_account.casefold() == account)
-            for account in account_counts
-        }
-        if physical_counts != {'duyvu1105': 7, 'duymign': 6, 'vdduy1105': 6}:
-            raise RuntimeError(f'Three-account partition counts must be 7/6/6: {physical_counts}')
+        physical_counts = dict.fromkeys(account_counts, 0)
+        for plan in plans:
+            for part in range(plan.part_count):
+                account = plan_for_part(plan, part).runner_account.casefold()
+                if account not in physical_counts:
+                    raise RuntimeError(f'Unknown partition runner: {account}')
+                physical_counts[account] += 1
+        shard_one = next(plan for plan in plans if plan.assigned_shards == (1,))
+        if len(set(shard_one.part_runner_accounts)) != 3:
+            raise RuntimeError('Shard 1 must assign one part to each account')
+        if physical_counts != {'duyvu1105': 7, 'duymign': 7, 'vdduy1105': 7}:
+            raise RuntimeError(f'Three-account partition counts must be 7/7/7: {physical_counts}')
     elif sorted(account_counts.values()) != [5, 5]:
         raise RuntimeError(
             f"Exactly two runner accounts must own five shards each: {account_counts}"
@@ -233,9 +260,32 @@ def render_shard_version(
     return rendered
 
 
+def render_part_version(template: dict[str, Any], plan: AccountPlan, part_index: int) -> dict[str, Any]:
+    """Apply an explicit part publisher while preserving template ownership checks."""
+    effective = plan_for_part(plan, part_index)
+    template = copy.deepcopy(template)
+    metadata = template['metadata']['typepro']
+    if (metadata.get('expected_dataset_owner') != plan.dataset_owner
+            or bool(metadata.get('public_dataset')) != plan.public_dataset):
+        raise RuntimeError('Template publisher does not match the logical shard plan')
+    config = next(cell for cell in template['cells'] if CONFIG_TAG in cell.get('metadata', {}).get('tags', []))
+    for name, value in (('EXPECTED_DATASET_OWNER', effective.dataset_owner),
+                        ('PUBLISH_PUBLIC', effective.public_dataset)):
+        config['source'], count = re.subn(r'^' + name + r' = .+$',
+                                         f'{name} = {value!r}', config['source'], flags=re.MULTILINE)
+        if count != 1:
+            raise RuntimeError(f'Expected exactly one {name} assignment')
+    metadata.update(expected_dataset_owner=effective.dataset_owner, public_dataset=effective.public_dataset)
+    index, count = physical_partitions(plan.assigned_shards[0])[part_index]
+    return render_shard_version(template, plan.assigned_shards[0], plan.assigned_shards,
+                                effective.dataset_owner, effective.public_dataset,
+                                physical_shard_index=index, physical_shard_count=count)
+
+
 def kernel_metadata(
     plan: AccountPlan, code_file: str, *, part_index: int = 0
 ) -> dict[str, Any]:
+    plan = plan_for_part(plan, part_index)
     shard_index = plan.assigned_shards[0]
     kernel_slug = partition_kernel_slug(plan, part_index)
     title = f"TypePro Python Shard {shard_index:02d}"
@@ -425,8 +475,6 @@ def main(argv: list[str] | None = None) -> None:
     summaries = []
     for plan in plans:
         template = json.loads(plan.notebook_path.read_text(encoding="utf-8"))
-        credential_path = credential_paths[plan.runner_account.casefold()]
-        credential = load_credential(credential_path, plan.runner_account)
         shard_index = plan.assigned_shards[0]
         if shard_index not in requested_shards:
             continue
@@ -434,27 +482,21 @@ def main(argv: list[str] | None = None) -> None:
         for part_index, (physical_shard_index, physical_shard_count) in enumerate(partitions):
             if args.part is not None and part_index != args.part - 1:
                 continue
-            rendered = render_shard_version(
-                template,
-                shard_index,
-                plan.assigned_shards,
-                plan.dataset_owner,
-                plan.public_dataset,
-                physical_shard_index=physical_shard_index,
-                physical_shard_count=physical_shard_count,
-            )
+            part_plan = plan_for_part(plan, part_index)
+            credential = load_credential(credential_paths[part_plan.runner_account.casefold()], part_plan.runner_account)
+            rendered = render_part_version(template, plan, part_index)
             kernel_slug = partition_kernel_slug(plan, part_index)
             summary = {
-                "runner_account": plan.runner_account,
-                "kernel": f"{plan.runner_account}/{kernel_slug}",
-                "notebook": plan.notebook_path.name,
+                "runner_account": part_plan.runner_account,
+                "kernel": f"{part_plan.runner_account}/{kernel_slug}",
+                "notebook": part_plan.notebook_path.name,
                 "logical_shard_index": shard_index,
                 "part_index": part_index,
-                "part_count": plan.part_count,
+                "part_count": part_plan.part_count,
                 "shard_index": physical_shard_index,
                 "shard_count": physical_shard_count,
                 "dataset_id": (
-                    f"{plan.dataset_owner}/"
+                    f"{part_plan.dataset_owner}/"
                     f"typepro-build-shard-{physical_shard_index:02d}"
                     + ("-of-40" if physical_shard_count == 40 else "")
                 ),
@@ -471,18 +513,18 @@ def main(argv: list[str] | None = None) -> None:
                     auth_dir = Path(temp) / "auth"
                     auth_dir.mkdir(parents=True)
                     write_version(
-                        push_dir, plan, rendered, part_index=part_index
+                        push_dir, part_plan, rendered, part_index=part_index
                     )
                     output = run_push(push_dir, credential, auth_dir)
                 summaries.append({**summary, "pushed": True, "cli_output": output})
             else:
                 destination = (
                     args.output_dir.resolve()
-                    / plan.runner_account
+                    / part_plan.runner_account
                     / f"shard_{shard_index:02d}_part_{part_index + 1:02d}"
                 )
                 write_version(
-                    destination, plan, rendered, part_index=part_index
+                    destination, part_plan, rendered, part_index=part_index
                 )
                 summaries.append({
                     **summary, "pushed": False, "rendered_to": str(destination),

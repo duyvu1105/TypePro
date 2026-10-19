@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -19,6 +20,17 @@ KERNEL_SLUG = "typepro-python-data-token-analysis"
 NOTEBOOK_PATH = ROOT / "13_data_analysis.ipynb"
 DATASET_SOURCES = ["duyvu1105/typepro-python-generative"]
 CREDENTIAL_PATH = REPO_ROOT / "kaggle.json"
+REVISION_MARKER = "__TYPEPRO_ANALYSIS_REVISION__"
+
+
+def resolve_revision(value: str) -> str:
+    revision = subprocess.check_output(
+        ["git", "rev-parse", "--verify", f"{value}^{{commit}}"],
+        cwd=REPO_ROOT, text=True,
+    ).strip()
+    if not re.fullmatch(r"[0-9a-f]{40}", revision):
+        raise RuntimeError(f"Expected a full Git revision, found {revision!r}")
+    return revision
 
 
 def kernel_metadata(code_file: str) -> dict:
@@ -39,10 +51,15 @@ def kernel_metadata(code_file: str) -> dict:
     }
 
 
-def write_payload(destination: Path) -> None:
+def write_payload(destination: Path, revision: str) -> None:
+    if not re.fullmatch(r"[0-9a-f]{40}", revision):
+        raise ValueError("Analysis source revision must be a full Git SHA")
     destination.mkdir(parents=True, exist_ok=True)
     notebook = json.loads(NOTEBOOK_PATH.read_text(encoding="utf-8"))
     serialized = json.dumps(notebook)
+    if serialized.count(REVISION_MARKER) != 1:
+        raise RuntimeError("Analysis notebook must contain exactly one revision marker")
+    notebook = json.loads(serialized.replace(REVISION_MARKER, revision))
     required_markers = (
         "token-length analysis",
         "Qwen2.5-Coder-0.5B-Instruct",
@@ -90,6 +107,7 @@ def kernel_status(credential: dict[str, str], config_dir: Path) -> str:
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--revision", default="HEAD")
     parser.add_argument("--push", action="store_true")
     parser.add_argument("--check-status", action="store_true")
     parser.add_argument(
@@ -101,23 +119,26 @@ def main(argv: list[str] | None = None) -> None:
     if args.push and args.check_status:
         parser.error("--push and --check-status are mutually exclusive")
 
-    credential = load_credential(CREDENTIAL_PATH, OWNER)
     if args.check_status:
+        credential = load_credential(CREDENTIAL_PATH, OWNER)
         with tempfile.TemporaryDirectory(prefix="typepro_analysis_status_") as temp:
             status = kernel_status(credential, Path(temp))
         result = {"pushed": False, "status": status}
     elif args.push:
+        revision = resolve_revision(args.revision)
+        credential = load_credential(CREDENTIAL_PATH, OWNER)
         with tempfile.TemporaryDirectory(prefix="typepro_analysis_push_") as temp:
             payload = Path(temp) / "payload"
             auth = Path(temp) / "auth"
             auth.mkdir()
-            write_payload(payload)
+            write_payload(payload, revision)
             output = run_push(payload, credential, auth)
-        result = {"pushed": True, "cli_output": output}
+        result = {"pushed": True, "revision": revision, "cli_output": output}
     else:
+        revision = resolve_revision(args.revision)
         destination = args.output_dir.resolve()
-        write_payload(destination)
-        result = {"pushed": False, "rendered_to": str(destination)}
+        write_payload(destination, revision)
+        result = {"pushed": False, "revision": revision, "rendered_to": str(destination)}
 
     print(json.dumps({
         "kernel": f"{OWNER}/{KERNEL_SLUG}",

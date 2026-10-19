@@ -17,7 +17,7 @@ OWNER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{1,49}$")
 # Logical shards that exceeded Kaggle's runtime limit are committed as several
 # versions of the same existing kernel. Each version owns one disjoint physical
 # modulo partition, while unsplit shards retain their native index/10 coordinate.
-SHARD_PART_COUNTS = {2: 2, 3: 3, 7: 2, 9: 3}
+SHARD_PART_COUNTS = {1: 3, 2: 2, 3: 3, 7: 2, 9: 3}
 SHARD_PARTITIONS = {
     2: [(2, 20), (12, 40), (32, 40)],
     9: [(9, 30), (19, 30), (29, 90), (59, 90), (89, 90)],
@@ -392,6 +392,7 @@ def shard_notebook(
     assigned_shards: list[int] | None = None,
     expected_dataset_owner: str | None = None,
     public_dataset: bool = False,
+    force_projects: bool = True,
 ) -> dict:
     assigned_shards = list(assigned_shards or [index])
     if not assigned_shards or len(set(assigned_shards)) != len(assigned_shards):
@@ -436,6 +437,7 @@ def shard_notebook(
         SHARD_COUNT = {count}
         EXPECTED_DATASET_OWNER = {expected_dataset_owner!r}
         PUBLISH_PUBLIC = {public_dataset!r}
+        FORCE_PROJECTS = {force_projects!r}
         REPOSITORY = {repository!r}
         BRANCH = {branch!r}
         SEED = 13
@@ -731,9 +733,8 @@ def shard_notebook(
             "--slice-index-timeout-seconds", SLICE_INDEX_TIMEOUT_SECONDS,
             "--clone-timeout-seconds", CLONE_TIMEOUT_SECONDS,
             "--retrieval-schema-version", RETRIEVAL_SCHEMA_VERSION,
-            # The class-qualified slice implementation invalidates every
-            # existing raw_slices file, even when metadata/KBs can be reused.
-            "--force-projects",
+            # Repair runs can reuse compatible successful project outputs.
+            *(["--force-projects"] if FORCE_PROJECTS else []),
             "--build-import-kb",
             "--download-missing-imports",
             "--kb-max-files-per-package", 3000,
@@ -826,9 +827,11 @@ def canonical_merge_datasets(shard_accounts: list[dict]) -> list[dict]:
         for index in account["assigned_shards"]:
             partitions = physical_partitions(index)
             for part_index, (physical_index, physical_count) in enumerate(partitions):
+                publisher = (shard_accounts[part_index]
+                             if index == 1 and len(shard_accounts) == 3 else account)
                 datasets.append({
                     "dataset_id": (
-                        f"{account['dataset_owner']}/"
+                        f"{publisher['dataset_owner']}/"
                         f"typepro-build-shard-{physical_index:02d}"
                         + ("-of-40" if physical_count == 40 else "")
                     ),
@@ -837,7 +840,7 @@ def canonical_merge_datasets(shard_accounts: list[dict]) -> list[dict]:
                     "part_count": len(partitions),
                     "shard_index": physical_index,
                     "shard_count": physical_count,
-                    "public_dataset": bool(account["public_dataset"]),
+                    "public_dataset": bool(publisher["public_dataset"]),
                 })
     return datasets
 
@@ -1710,6 +1713,7 @@ def data_analysis_notebook(repository: str, branch: str) -> dict:
         BRANCH = {branch!r}
         MODEL_NAME = "Qwen/Qwen2.5-Coder-0.5B-Instruct"
         DATASET_SLUG = "duyvu1105/typepro-python-generative"
+        REVISION = "__TYPEPRO_ANALYSIS_REVISION__"
         LABEL_LENGTH = 128
         LIMITS = [8192, 12288, 16384, 32768]
 
@@ -1725,10 +1729,18 @@ def data_analysis_notebook(repository: str, branch: str) -> dict:
             print("+", " ".join(map(str, command)), flush=True)
             subprocess.run([str(value) for value in command], cwd=cwd, check=True)
 
+        if REVISION.startswith("__TYPEPRO_"):
+            raise RuntimeError("Render this notebook with commit_data_analysis.py before running")
         if not REPO_DIR.exists():
-            run(["git", "clone", "--branch", BRANCH, "--single-branch", REPOSITORY, REPO_DIR])
-        else:
-            run(["git", "-C", REPO_DIR, "pull", "--ff-only", "origin", BRANCH])
+            run(["git", "clone", "--no-checkout", REPOSITORY, REPO_DIR])
+        run(["git", "-C", REPO_DIR, "fetch", "origin", REVISION, "--depth", "1"])
+        run(["git", "-C", REPO_DIR, "checkout", "--detach", REVISION])
+        actual_revision = subprocess.check_output(
+            ["git", "-C", str(REPO_DIR), "rev-parse", "HEAD"], text=True
+        ).strip()
+        if actual_revision != REVISION:
+            raise RuntimeError(f"Source revision mismatch: {{actual_revision}} != {{REVISION}}")
+        print("TypePro source revision:", actual_revision)
         PIPELINE_DIR = REPO_DIR / "typepro"
         run([sys.executable, "-m", "pip", "install", "-q", "transformers>=4.44,<5", "sentencepiece"])
         if str(REPO_DIR) not in sys.path:
@@ -1955,6 +1967,9 @@ def data_analysis_notebook(repository: str, branch: str) -> dict:
         (OUTPUT_DIR / "analysis_config.json").write_text(
             json.dumps({
                 "model_name": MODEL_NAME,
+                "repository": REPOSITORY,
+                "revision": actual_revision,
+                "dataset_manifest": MANIFEST,
                 "label_length": LABEL_LENGTH,
                 "input_limits": LIMITS,
                 "template": "typepro.shared.generative_chat.chat_token_ids",
@@ -2242,6 +2257,8 @@ def main(argv: list[str] | None = None) -> None:
                 "notebook": path.name,
                 "kernel_slug": f"typepro-python-shard-{shard_index:02d}",
                 "independent_parts": len(args.runner_accounts) == 3,
+                **({"part_runner_accounts": args.runner_accounts}
+                   if shard_index == 1 and len(args.runner_accounts) == 3 else {}),
             })
     merge_datasets = canonical_merge_datasets(shard_accounts)
     merge_plan_path = ROOT / "shard_merge_plan.json"

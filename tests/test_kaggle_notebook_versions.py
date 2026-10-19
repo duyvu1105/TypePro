@@ -27,6 +27,25 @@ def source_with_tag(notebook, tag):
     return cells[0]["source"]
 
 
+@pytest.mark.parametrize('force', [True, False])
+def test_generated_repair_run_controls_force_projects(force):
+    notebook = generate_notebooks.shard_notebook(
+        0, 10, 'https://github.com/duyvu1105/TypePro.git', 'main',
+        expected_dataset_owner='duyvu1105', force_projects=force)
+    config = source_with_tag(notebook, commit_shard_versions.CONFIG_TAG)
+    assert f'FORCE_PROJECTS = {force!r}' in config
+    source = next(c['source'] for c in notebook['cells']
+                  if c['cell_type'] == 'code' and '"--stage", "slice"' in c['source'])
+    commands = []
+    from collections import defaultdict
+    namespace = defaultdict(lambda: 0, FORCE_PROJECTS=force,
+                            run=lambda command: commands.append(command),
+                            sys=type('Python', (), {'executable': 'python'}),
+                            common=[], SKIP_PROJECTS=[])
+    exec(source, namespace)
+    assert ('--force-projects' in commands[0]) is force
+
+
 def test_optional_resume_download_failure_starts_fresh(tmp_path, monkeypatch, capsys):
     from types import SimpleNamespace
     notebook = generate_notebooks.shard_notebook(0, 10, 'https://github.com/duyvu1105/TypePro.git', 'main', assigned_shards=[0], expected_dataset_owner='duyvu1105')
@@ -134,10 +153,10 @@ def test_scheduler_defaults_to_remote_main_and_resumes_saved_revision(tmp_path, 
     schedule_shards.main()
     rendered = json.loads(capsys.readouterr().out)
     assert rendered['revision'] == 'a' * 40
-    assert len(rendered['jobs']) == 19
+    assert len(rendered['jobs']) == 21
     assert {account: sum(job['account'] == account for job in rendered['jobs'])
             for account in ('duyvu1105', 'duymign', 'vdduy1105')} == {
-                'duyvu1105': 7, 'duymign': 6, 'vdduy1105': 6}
+                'duyvu1105': 7, 'duymign': 7, 'vdduy1105': 7}
     payload = Path(rendered['jobs'][0]['payload'])
     metadata = json.loads((payload / 'kernel-metadata.json').read_text())
     notebook = json.loads((payload / metadata['code_file']).read_text(encoding='utf-8'))
@@ -231,7 +250,9 @@ def test_scheduler_can_select_physical_jobs_after_first_five_per_account(tmp_pat
     ] == [
         ("duyvu1105", 4, 10),
         ("duyvu1105", 5, 10),
+        ("duymign", 7, 20),
         ("duymign", 17, 20),
+        ("vdduy1105", 59, 90),
         ("vdduy1105", 89, 90),
     ]
 
@@ -327,7 +348,7 @@ def test_generated_artifacts_are_ten_standalone_notebooks_and_partitioned_merge(
         for index in range(10)
     ]
     assert len({plan.kernel_slug for plan in plans}) == 10
-    assert [plan.part_count for plan in plans] == [1, 1, 3, 3, 1, 1, 1, 2, 1, 5]
+    assert [plan.part_count for plan in plans] == [1, 3, 3, 3, 1, 1, 1, 2, 1, 5]
     from collections import Counter
     physical_counts = Counter()
     kernel_ids = set()
@@ -337,10 +358,10 @@ def test_generated_artifacts_are_ten_standalone_notebooks_and_partitioned_merge(
             assert metadata['id'] not in kernel_ids
             kernel_ids.add(metadata['id'])
             assert metadata['id'].split('/')[1] == metadata['title'].lower().replace(' ', '-')
-            physical_counts[plan.runner_account] += 1
+            physical_counts[metadata['id'].split('/')[0]] += 1
             assert plan.public_dataset == (plan.runner_account != owner)
-    assert sorted(physical_counts.values()) == [6, 6, 7]
-    assert len(kernel_ids) == 19
+    assert sorted(physical_counts.values()) == [7, 7, 7]
+    assert len(kernel_ids) == 21
     for index, plan in enumerate(plans):
         notebook = json.loads(plan.notebook_path.read_text(encoding="utf-8"))
         config = source_with_tag(notebook, "typepro-shard-config")
@@ -475,8 +496,8 @@ def test_merge_kernel_metadata_attaches_exact_merge_plan_inputs():
     dataset_ids = commit_merge_finalize.merge_dataset_ids()
     metadata = commit_merge_finalize.kernel_metadata("typepro_merge_finalize.ipynb")
 
-    assert len(dataset_ids) == 19
-    assert len(set(dataset_ids)) == 19
+    assert len(dataset_ids) == 21
+    assert len(set(dataset_ids)) == 21
     assert metadata["id"] == "duyvu1105/merge-dataset"
     assert metadata["dataset_sources"] == dataset_ids
 
@@ -593,13 +614,42 @@ def test_merge_plan_covers_all_logical_shards_without_overlap():
         plan["datasets"], 10, "duyvu1105"
     )
 
-    assert len(datasets) == 19
+    assert len(datasets) == 21
     assert {(item["shard_index"], item["shard_count"]) for item in datasets} == {
-        (0, 10), (1, 10), (2, 20), (12, 40), (32, 40),
+        (0, 10), (1, 30), (11, 30), (21, 30), (2, 20), (12, 40), (32, 40),
         (3, 30), (13, 30), (23, 30), (4, 10),
         (5, 10), (6, 10), (7, 20), (17, 20), (8, 10),
         (9, 30), (19, 30), (29, 90), (59, 90), (89, 90),
     }
+
+
+def test_shard_one_three_account_render_and_merge_contract(tmp_path, monkeypatch, capsys):
+    seen_accounts = []
+
+    def credential(path, expected_username):
+        seen_accounts.append(expected_username)
+        return {'username': expected_username, 'key': 'test-only'}
+
+    monkeypatch.setattr(commit_shard_versions, 'load_credential', credential)
+    commit_shard_versions.main(['--shard', '1', '--output-dir', str(tmp_path)])
+    jobs = json.loads(capsys.readouterr().out)['notebooks']
+    assert seen_accounts == ['duyvu1105', 'duymign', 'vdduy1105']
+    assert [(j['shard_index'], j['shard_count']) for j in jobs] == [(1, 30), (11, 30), (21, 30)]
+    merge = json.loads((NOTEBOOK_DIR / 'shard_merge_plan.json').read_text())['datasets']
+    expected = [j for j in merge if j['logical_shard_index'] == 1]
+    assert [j['dataset_id'] for j in jobs] == [j['dataset_id'] for j in expected]
+    for job, item in zip(jobs, expected):
+        directory = Path(job['rendered_to'])
+        metadata = json.loads((directory / 'kernel-metadata.json').read_text())
+        assert metadata['id'] == job['kernel']
+        notebook = json.loads((directory / metadata['code_file']).read_text())
+        config = source_with_tag(notebook, 'typepro-shard-config')
+        namespace = {}
+        exec(config.split('from pathlib import Path')[0], namespace)
+        assert namespace['EXPECTED_DATASET_OWNER'] == job['runner_account']
+        assert namespace['PUBLISH_PUBLIC'] == item['public_dataset']
+    for value in range(30000):
+        assert sum(value % j['shard_count'] == j['shard_index'] for j in jobs) == int(value % 10 == 1)
 
 
 def test_shard_12_children_exactly_replace_parent_without_dataset_collision():

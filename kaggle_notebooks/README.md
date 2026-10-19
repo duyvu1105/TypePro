@@ -1,18 +1,37 @@
 # TypePro Kaggle workflow: target masking rerun
 
-Current workflow (2026-09-07): **19 independent physical partitions**, generated
+Current workflow (2026-10-18): **21 independent physical partitions**, generated
 from 10 logical shard templates, on three accounts. The table below supersedes
 the historical two-account workflow documented later in this file.
 
 | Runner / Dataset owner | Logical shards | Physical jobs | Visibility |
 | --- | --- | ---: | --- |
-| duyvu1105 | 00, 01, 02 (3 parts), 04, 05 | 7 | private |
-| duymign | 03 (3 parts), 06, 07 (2 parts) | 6 | public |
-| vdduy1105 | 08, 09 (5 parts) | 6 | public |
+| duyvu1105 | 00, 01 part 1, 02 (3 parts), 04, 05 | 7 | private |
+| duymign | 01 part 2, 03 (3 parts), 06, 07 (2 parts) | 7 | public |
+| vdduy1105 | 01 part 3, 08, 09 (5 parts) | 7 | public |
 
-Final merge remains under `duyvu1105`. The authoritative inputs are the 19
+Final merge remains under `duyvu1105`. The authoritative inputs are the 21
 entries in `shard_merge_plan.json`. Shard 2 retains 2/20, while 12/20 is replaced
-by 12/40 and 32/40. All other physical coordinates are preserved.
+by 12/40 and 32/40. Physical coordinates outside shard 1 and that shard 2 subdivision are preserved.
+
+Shard 1 replaces its old `1/10` input with three disjoint coordinates:
+
+| Part | Coordinate | Runner / Dataset owner | Kernel suffix | Visibility |
+| --- | --- | --- | --- | --- |
+| 1 | `1/30` | duyvu1105 | `shard-01-part-01` | private |
+| 2 | `11/30` | duymign | `shard-01-part-02` | public |
+| 3 | `21/30` | vdduy1105 | `shard-01-part-03` | public |
+
+This divides projects by the existing hash, not by annotation or row. The union
+equals the original shard, with no duplicate projects; project counts and runtimes
+need not be identical. Candidate policy, revision lock and other shards are unchanged.
+Each part authenticates as its own runner. Render only these three jobs with
+`python kaggle_notebooks/commit_shard_versions.py --shard 1`; select one with
+`--part 1`, `--part 2` or `--part 3`. Add `--push` only when authorized to run.
+The old unsplit kernel is retired; do not schedule it alongside the three parts.
+Old scheduler ledgers have a different job list: use a fresh `--state` or dry-run
+`--new-run` rather than overwriting submission history. Do not push a full rerun
+merely to start these three parts.
 
 Final publication packages KBs with explicit full paths. Projects whose names
 collide case-insensitively receive distinct hash suffixes in the archive; all
@@ -64,7 +83,7 @@ GitHub main, dry-run with `--new-run`, then submit without that flag. The old
 ledger is archived. Explicit `--revision SHA` (or `latest`) and `--state PATH`
 remain supported, including resuming historical `rerun_state.json` ledgers.
 An interrupted `submitting` entry requires inspecting the
-remote version before any retry. The watcher exits after all 19 submissions;
+remote version before any retry. The watcher exits after all 21 submissions;
 submission is not proof of completed datasets. Verify manifests/file listings
 before merge. Do not publish or train the final dataset automatically.
 
@@ -145,7 +164,7 @@ accuracy measurements or a verification of every row in an existing Dataset.
 For a first batch of exactly five physical jobs per account, use a fresh
 ledger and pass `--jobs-per-account 5` to both scheduler dry-run and push.
 Do not run the unrestricted watcher while waiting for user authorization for
-the remaining jobs. This selects 15 of the 19 partitions, preserving the plan.
+the remaining jobs. This selects 15 of the 21 partitions, preserving the plan.
 The continuation uses `--skip-jobs-per-account 5` and a separate ledger only
 after the user requests it.
 
@@ -322,6 +341,11 @@ Render the token-analysis kernel locally without contacting Kaggle:
 python kaggle_notebooks/commit_data_analysis.py
 ```
 
+The analysis submission pins the local `HEAD` commit (override with
+`--revision SHA`). That commit must be available on GitHub. The notebook
+checks out the exact revision and records it and the input Dataset manifest
+in `analysis_config.json`. Dry-run rendering does not read credentials.
+
 Push it after reviewing the rendered payload:
 
 ```bash
@@ -413,7 +437,7 @@ version. Recovery only republishes verified completed output; it does not
 rebuild recommendations.
 
 The obsolete five-shard recovery utilities were removed. For the current
-19-partition plan use `recover_shard_version.py` or rerun the exact partition
+21-partition plan use `recover_shard_version.py` or rerun the exact partition
 with `schedule_shards.py`; never mix historical `shard_count=5` outputs.
 
 ## Completion order

@@ -1,21 +1,32 @@
 # TypePro agent runbook
 
-## Current authorized workflow (2026-09-07)
+## Quy tắc Git: chỉ dùng nhánh main (2026-10-19)
+
+- Chỉ làm việc, commit và push trên một nhánh duy nhất: `main`.
+- Không tự tạo hoặc chuyển sang nhánh khác, kể cả nhánh tạm, nhánh sửa lỗi,
+  nhánh tối ưu hoặc nhánh dùng riêng để chạy Kaggle. Không dùng worktree hay
+  detached HEAD để lách quy tắc này.
+- Các job Kaggle phải pin commit đã có trên `main`, không dùng commit chỉ có
+  trên nhánh khác.
+- Chỉ được dùng nhánh khác khi người dùng yêu cầu rõ ràng cho công việc đó.
+
+## Current authorized workflow (2026-10-18)
 
 The user authorized replacing the historical two-account workflow below with
-19 independent physical jobs across three accounts. For current generate,
+21 independent physical jobs across three accounts. For current generate,
 validate and scheduling commands, read `kaggle_notebooks/README.md` and
 `kaggle_notebooks/shard_account_plan.json`.
 
-- duyvu1105 (`kaggle.json`): logical shards 0, 1, 2 (3 parts), 4, 5; private.
-- duymign (`kaggle2.json`): logical shards 3 (3 parts), 6, 7 (2 parts); public.
-- vdduy1105 (`kaggle3.json`): logical shards 8, 9 (5 parts); public.
-- Physical jobs per account: 7/6/6, at most five active jobs per account.
+- duyvu1105 (`kaggle.json`): logical shards 0, 1 part 1 (`1/30`), 2 (3 parts), 4, 5; private.
+- duymign (`kaggle2.json`): shard 1 part 2 (`11/30`), logical shards 3 (3 parts), 6, 7 (2 parts); public.
+- vdduy1105 (`kaggle3.json`): shard 1 part 3 (`21/30`), logical shards 8, 9 (5 parts); public.
+- Physical jobs per account: 7/7/7, at most five active jobs per account.
 - Shard 2 retains 2/20; old 12/20 is replaced by 12/40 and 32/40.
   New kernels use part-02-subpart-01/02; new Dataset slugs end in -of-40.
-- Split parts use distinct kernels. Preserve all 19 physical coordinates in the
+- Shard 1 replaces `1/10` with `1/30`, `11/30`, `21/30`, one part per account.
+- Split parts use distinct kernels. Preserve all 21 physical coordinates in the
   plans, including shard 9's hierarchical /30 and /90 partitions.
-- Final merge uses the exact 19 plan inputs and publishes privately as duyvu1105.
+- Final merge uses the exact 21 plan inputs and publishes privately as duyvu1105.
 - Use `schedule_shards.py` for the complete rerun; dry-run before `--push`.
 - Never read/print credential contents for inspection. Programs may load keys
   solely to authenticate and must validate the expected username.
@@ -214,7 +225,7 @@ ERROR rỗng thì session đã đóng không recover được; retry đúng shar
 `commit_shard_versions.py --shard N --push`.
 
 Các tiện ích recovery của workflow năm shard đã được loại bỏ sau refactor.
-Dùng `recover_shard_version.py` hoặc scheduler theo plan 19 partition hiện tại.
+Dùng `recover_shard_version.py` hoặc scheduler theo plan 21 partition hiện tại.
 Output có `shard_count=5` không được trộn với workflow hiện tại.
 
 ## Trình tự hoàn tất

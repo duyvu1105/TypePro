@@ -1,11 +1,13 @@
 # Kiến trúc TypePro
 
+Luồng process data từ đầu đến cuối: [data_pipeline.md](data_pipeline.md).
+
 | Phần | Nguồn chính | Trách nhiệm |
 | --- | --- | --- |
 | Phân tích source | `typepro/analysis/` | AST, slicing, masking, project KB, truy hồi bằng chứng |
 | Process data | `typepro/data/` | Metadata, export, split, preprocess, merge, verify |
-| Finetune | `typepro/training/` | Generative QLoRA và contrastive ranker |
-| Inference | `typepro/inference/` | Model local, ranker, API DeepSeek có resume SQLite |
+| Finetune | `typepro/training/` | Generative QLoRA |
+| Inference | `typepro/inference/` | Model local, API DeepSeek có resume SQLite |
 | Publish | `typepro/publishing/` | Đóng gói và publish shard/final Dataset |
 | Dùng chung | `typepro/shared/` | Đọc dữ liệu, chuẩn hóa nhãn, định dạng chat |
 | Kiểm tra bằng chứng | `typepro/audit/` | Regression, inventory và replay source |

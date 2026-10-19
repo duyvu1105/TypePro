@@ -11,7 +11,7 @@ import time
 
 from commit_shard_versions import (
     ROOT, REPO_ROOT, load_plan, parse_credentials, load_credential,
-    physical_partitions, partition_kernel_slug, render_shard_version,
+    physical_partitions, partition_kernel_slug, render_shard_version, plan_for_part, render_part_version,
     write_version, run_push,
 )
 
@@ -96,15 +96,15 @@ def main():
     for plan in plans:
         template = json.loads(plan.notebook_path.read_text(encoding='utf-8'))
         for part, (index, count) in enumerate(physical_partitions(plan.assigned_shards[0])):
-            seen_jobs = seen_by_account.get(plan.runner_account, 0)
-            seen_by_account[plan.runner_account] = seen_jobs + 1
+            part_plan = plan_for_part(plan, part)
+            seen_jobs = seen_by_account.get(part_plan.runner_account, 0)
+            seen_by_account[part_plan.runner_account] = seen_jobs + 1
             if seen_jobs < args.skip_jobs_per_account:
                 continue
-            account_jobs = jobs_by_account.get(plan.runner_account, 0)
+            account_jobs = jobs_by_account.get(part_plan.runner_account, 0)
             if args.jobs_per_account is not None and account_jobs >= args.jobs_per_account:
                 continue
-            rendered = render_shard_version(template, plan.assigned_shards[0], plan.assigned_shards,
-                plan.dataset_owner, plan.public_dataset, physical_shard_index=index, physical_shard_count=count)
+            rendered = render_part_version(template, plan, part)
             clone_cells = [cell for cell in rendered['cells'] if '"git", "clone"' in ''.join(cell.get('source', []))]
             if len(clone_cells) != 1:
                 raise ValueError('Expected exactly one clone cell')
@@ -117,12 +117,12 @@ def main():
                 'run(["git", "-C", REPO_DIR, "checkout", "--detach", ' + repr(args.revision) + '])\n'
             )
             clone_cells[0]['source'] = source.replace(marker, checkout + marker, 1)
-            directory = args.state.parent / 'scheduled' / plan.runner_account / f'{index:02d}'
-            write_version(directory, plan, rendered, part_index=part)
-            jobs.append({'account': plan.runner_account, 'kernel': f'{plan.runner_account}/{partition_kernel_slug(plan, part)}',
-                         'shard_index': index, 'shard_count': count, 'dataset': f'{plan.dataset_owner}/typepro-build-shard-{index:02d}' + ('-of-40' if count == 40 else ''),
+            directory = args.state.parent / 'scheduled' / part_plan.runner_account / f'{index:02d}'
+            write_version(directory, part_plan, rendered, part_index=part)
+            jobs.append({'account': part_plan.runner_account, 'kernel': f'{part_plan.runner_account}/{partition_kernel_slug(part_plan, part)}',
+                         'shard_index': index, 'shard_count': count, 'dataset': f'{part_plan.dataset_owner}/typepro-build-shard-{index:02d}' + ('-of-40' if count == 40 else ''),
                          'payload': str(directory), 'status': 'pending'})
-            jobs_by_account[plan.runner_account] = account_jobs + 1
+            jobs_by_account[part_plan.runner_account] = account_jobs + 1
     state = previous if previous is not None and not args.new_run else {'revision': args.revision, 'jobs': jobs}
     if state['revision'] != args.revision or [j['kernel'] for j in state['jobs']] != [j['kernel'] for j in jobs]:
         raise ValueError('Ledger does not match this revision/plan; use --new-run or a new --state file')
