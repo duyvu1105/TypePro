@@ -1,25 +1,13 @@
 from __future__ import annotations
 
 
-import hashlib
 import json
 import os
 import random
 import re
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
-
-SPECIAL_TOKENS = [
-    "[LANGUAGE]",
-    "[TARGET_KIND]",
-    "[TARGET_NAME]",
-    "[INTERPROCEDURAL_SLICE]",
-    "[RECOMMENDATION_TYPE]",
-    "[TYPE_NAME]",
-    "[TYPE_DEFINITION]",
-]
 
 PROMPT_START_MARKERS = (
     "The possible types analyzed from the import information are:",
@@ -235,43 +223,6 @@ def get_project(record: dict[str, Any]) -> str:
     return parts[0] if parts else "unknown"
 
 
-def deterministic_split(project: str, train_ratio: float, validation_ratio: float) -> str:
-    bucket = int(hashlib.sha1(project.encode("utf-8")).hexdigest()[:8], 16) / 0xFFFFFFFF
-    if bucket < train_ratio:
-        return "train"
-    if bucket < train_ratio + validation_ratio:
-        return "validation"
-    return "test"
-
-
-def format_query(record: dict[str, Any], code_slice: str) -> str:
-    language = str(record.get("language") or ("typescript" if str(record.get("file", "")).endswith((".ts", ".tsx")) else "python"))
-    return (
-        f"[LANGUAGE] {language}\n"
-        f"[TARGET_KIND] {record.get('scope', 'unknown')}\n"
-        f"[TARGET_NAME] {record.get('name', 'unknown')}\n"
-        f"[INTERPROCEDURAL_SLICE]\n{code_slice}"
-    )
-
-
-def format_candidate(name: str, definition: str) -> str:
-    return (
-        f"[RECOMMENDATION_TYPE]\n[TYPE_NAME] {name}\n"
-        f"[TYPE_DEFINITION]\n{definition or name}"
-    )
-
-
-@dataclass
-class RetrievalDataset:
-    rows: list[dict[str, Any]]
-
-    def __len__(self) -> int:
-        return len(self.rows)
-
-    def __getitem__(self, index: int) -> dict[str, Any]:
-        return self.rows[index]
-
-
 class JsonlDataset:
     """Random-access JSONL without loading slices into RAM."""
 
@@ -330,46 +281,3 @@ def select_training_samples(dataset: Any, sample_count: int | None, seed: int) -
         )
     indices = sorted(random.Random(seed).sample(range(len(dataset)), sample_count))
     return DatasetSubset(dataset, indices)
-
-
-class ContrastiveCollator:
-    def __init__(self, tokenizer: Any, query_length: int, candidate_length: int, training: bool):
-        self.tokenizer = tokenizer
-        self.query_length = query_length
-        self.candidate_length = candidate_length
-        self.training = training
-
-    def __call__(self, rows: list[dict[str, Any]]) -> dict[str, Any]:
-        candidates = [list(row["candidates"]) for row in rows]
-        if self.training:
-            for value in candidates:
-                random.shuffle(value)
-        max_candidates = max(len(value) for value in candidates)
-        labels, candidate_mask, flat_candidates = [], [], []
-        for value in candidates:
-            positive = next(i for i, candidate in enumerate(value) if candidate["is_positive"])
-            labels.append(positive)
-            candidate_mask.append([True] * len(value) + [False] * (max_candidates - len(value)))
-            padded = value + [{"text": "", "is_positive": False}] * (max_candidates - len(value))
-            flat_candidates.extend(candidate["text"] for candidate in padded)
-
-        query_tokens = self.tokenizer(
-            [row["query"] for row in rows], padding=True, truncation=True,
-            max_length=self.query_length, return_tensors="pt",
-        )
-        candidate_tokens = self.tokenizer(
-            flat_candidates, padding=True, truncation=True,
-            max_length=self.candidate_length, return_tensors="pt",
-        )
-        import torch
-
-        return {
-            "query_input_ids": query_tokens["input_ids"],
-            "query_attention_mask": query_tokens["attention_mask"],
-            "candidate_input_ids": candidate_tokens["input_ids"],
-            "candidate_attention_mask": candidate_tokens["attention_mask"],
-            "candidate_mask": torch.tensor(candidate_mask, dtype=torch.bool),
-            "labels": torch.tensor(labels, dtype=torch.long),
-            "candidate_names": [[candidate["name"] for candidate in value] for value in candidates],
-            "gold": [row["label"] for row in rows],
-        }

@@ -77,7 +77,7 @@ def annotation_deadline(seconds: int):
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Create TypePro contrastive-training records")
+    parser = argparse.ArgumentParser(description="Create TypePro raw slices for generative training")
     parser.add_argument("--dataset", required=True, help="ManyTypes4Py/TypeGen-style JSON or JSONL")
     parser.add_argument("--repos-root", required=True, help="Root containing checked-out repositories")
     parser.add_argument("--output", required=True, help="Output JSONL")

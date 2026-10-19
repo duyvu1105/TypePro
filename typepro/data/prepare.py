@@ -50,11 +50,11 @@ PIPE_CLOSE_GRACE_SECONDS = 30
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Build and cache TypePro contrastive data")
+    parser = argparse.ArgumentParser(description="Build and cache TypePro generative data")
     parser.add_argument("--stage", choices=("all", "metadata", "slice", "finalize"), default="all")
     parser.add_argument("--typepro-root", default=str(Path(__file__).resolve().parents[2]))
     parser.add_argument("--work-dir", default="/kaggle/working/typepro_build")
-    parser.add_argument("--output-dir", default="/kaggle/working/typepro_contrastive_dataset")
+    parser.add_argument("--output-dir", default="/kaggle/working/typepro_python_generative")
     parser.add_argument("--archive", help="Use an existing TypeGen data.zip instead of downloading")
     parser.add_argument("--split-profile", choices=("paper_project", "typegen_release"), default="paper_project")
     parser.add_argument("--validation-project-ratio", type=float, default=0.10)
@@ -125,8 +125,6 @@ def parse_args() -> argparse.Namespace:
         "--include-returns", action="store_true",
         help="Include function return annotations in addition to parameters",
     )
-    parser.add_argument("--max-negatives", type=int, default=7)
-    parser.add_argument("--missing-positive", choices=("drop", "append"), default="drop")
     parser.add_argument("--skip-sha256", action="store_true")
     parser.add_argument("--allow-partial", action="store_true", help="Allow finalization with missing/failed repositories")
     parser.add_argument("--strict-projects", action="store_true", help="Fail finalization if any repository could not be processed")
@@ -1282,7 +1280,7 @@ def finalize_dataset(args: argparse.Namespace, work_dir: Path, output_dir: Path,
     )
     card = f"""# TypePro CodeT5+ generative dataset
 
-Generated once by `prepare_dataset.py`; fine-tuning must consume these immutable files directly.
+Generated once by `python -m typepro process-data`; fine-tuning must consume these immutable files directly.
 
 - schema: `{SCHEMA_VERSION}`
 - language: Python

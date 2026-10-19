@@ -58,8 +58,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Create or version a Kaggle Dataset")
     parser.add_argument("--data-dir", required=True)
     parser.add_argument("--dataset-id", required=True, help="Kaggle id: username/dataset-slug")
-    parser.add_argument("--title", default="TypePro CodeT5+ Contrastive Dataset")
-    parser.add_argument("--message", default="Update processed TypePro contrastive dataset")
+    parser.add_argument("--title", default="TypePro Generative Project-KB Dataset")
+    parser.add_argument("--message", default="Update processed TypePro generative dataset")
     parser.add_argument("--public", action="store_true", help="Default is private")
     return parser.parse_args()
 
