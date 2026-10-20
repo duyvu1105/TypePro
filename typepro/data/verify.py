@@ -10,7 +10,7 @@ import hashlib
 import json
 from pathlib import Path
 from typepro.analysis.candidate_policy import (
-    POLICY as CANDIDATE_POLICY, DEFINITION_CHARS, MIN_SCORE, TOTAL_CHARS, candidate_section,
+    SUPPORTED_POLICIES, DEFINITION_CHARS, MIN_SCORE, TOTAL_CHARS, candidate_section,
 )
 
 
@@ -84,7 +84,7 @@ def main() -> None:
                 ):
                     errors.append(f"{split}:{line_number}: candidate definition exceeds 8000 characters")
                     break
-                if row.get('candidate_policy_version') == CANDIDATE_POLICY:
+                if row.get('candidate_policy_version') in SUPPORTED_POLICIES:
                     if any(len(c['definition']) > DEFINITION_CHARS or
                            ('score' in c and c['score'] < MIN_SCORE) for c in candidates):
                         errors.append(f'{split}:{line_number}: invalid weighted candidate')

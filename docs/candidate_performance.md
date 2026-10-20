@@ -1,3 +1,7 @@
+> Tài liệu lịch sử cho tối ưu policy v1. Policy mặc định mới là
+> `candidate-symbol-v2`; xem `candidate_scoring.md`. Các differential tests
+> vẫn kiểm tra v1 bằng tham số policy tường minh.
+
 # Tối ưu candidate mà giữ nguyên kết quả
 
 Bản tham chiếu là commit `41b434e`, policy `candidate-weighted-v1`. Tối ưu không

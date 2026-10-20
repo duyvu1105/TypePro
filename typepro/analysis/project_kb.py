@@ -296,12 +296,17 @@ def top_project_types(
     seed_candidates: Iterable[dict[str, Any]] = (), limit: int = 10,
     *, target_function: str = "", target_scope: str = "",
     target_members: dict[str, list[str]] | None = None,
-    evidence: dict[str, set[str]] | None = None,
+    evidence: dict[str, Any] | None = None,
+    policy: str | None = None,
 ) -> list[dict[str, Any]]:
     """Rank project-KB records without reading the target annotation."""
     from typepro.analysis.candidate_policy import (
-        MIN_SCORE, MAX_CANDIDATES, allocate_characters, score_candidate, structural_text,
+        MIN_SCORE, MAX_CANDIDATES, POLICY, SUPPORTED_POLICIES,
+        allocate_characters, score_candidate, structural_text,
     )
+    policy = policy or POLICY
+    if policy not in SUPPORTED_POLICIES:
+        raise ValueError(f'Unknown candidate policy: {policy}')
     # Kept as a compatible argument; seed presence/order no longer earns points.
     ranked = []
     query_text = structural_text(code_slice)
@@ -312,6 +317,7 @@ def top_project_types(
         score, components = score_candidate(
             item, definition, target_name, code_slice, target_members, evidence or {},
             query_text=query_text,
+            policy=policy,
         )
         if score >= MIN_SCORE:
             ranked.append((-score, str(item.get('qualified_name') or item['name']).casefold(),

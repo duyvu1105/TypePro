@@ -17,8 +17,11 @@ from typepro.analysis.ast_context_slicer import (
 from typepro.analysis.BM25 import bm25_similarity
 from typepro.analysis.signature_contracts import imported_name, opaque
 
-POLICY = 'candidate-weighted-v1'
-WEIGHTS = {'direct': 5.0, 'usage': 3.0, 'bm25': 2.0, 'name': 1.0, 'import': 0.5}
+LEGACY_POLICY = 'candidate-weighted-v1'
+POLICY = 'candidate-symbol-v2'
+SUPPORTED_POLICIES = frozenset({LEGACY_POLICY, POLICY})
+LEGACY_WEIGHTS = {'direct': 5.0, 'usage': 3.0, 'bm25': 2.0, 'name': 1.0, 'import': 0.5}
+WEIGHTS = {'direct': 5.0, 'usage': 3.0, 'symbol': 2.0, 'bm25': 2.0, 'name': 1.0, 'import': 0.5}
 MIN_SCORE = 1.0
 MAX_CANDIDATES = 10
 TOTAL_CHARS = 16000
@@ -62,8 +65,11 @@ def _definition_members(definition):
 _cached_definition_members = lru_cache(maxsize=128)(_definition_members)
 
 
-def score_candidate(item, definition, target_name, code_slice, members, evidence, *, query_text=None):
-    """Five components in [0, 1]; seed position gives no points."""
+def score_candidate(item, definition, target_name, code_slice, members, evidence, *, query_text=None,
+                    policy=POLICY):
+    """Components in [0, 1]; seed position gives no points."""
+    if policy not in SUPPORTED_POLICIES:
+        raise ValueError(f'Unknown candidate policy: {policy}')
     qualified = str(item.get('qualified_name') or item['name'])
     wanted = set((members or {}).get('methods', ())) | set((members or {}).get('attributes', ()))
     available = set(item.get('members', ()))
@@ -82,17 +88,24 @@ def score_candidate(item, definition, target_name, code_slice, members, evidence
         'name': SequenceMatcher(None, left, right).ratio() if left and right else 0.0,
         'import': float(qualified in evidence.get('import', ())),
     }
-    score = sum(WEIGHTS[key] * value for key, value in components.items())
+    if policy != LEGACY_POLICY:
+        components['symbol'] = float(evidence.get('symbol', {}).get(qualified, 0.0))
+    weights = LEGACY_WEIGHTS if policy == LEGACY_POLICY else WEIGHTS
+    score = sum(weights[key] * components[key] for key in weights)
     return score, components
 
 
-def source_evidence(catalog, file_path, function, target_name, target_scope, records):
+def source_evidence(catalog, file_path, function, target_name, target_scope, records, *, policy=POLICY):
     """Resolve constructors at verified calls; annotations are never inspected.
 
     Ambiguous bindings, dynamic effects, local imports and unknown receivers do
     not receive direct/import points. They can still rank by BM25/name/usage.
     """
+    if policy not in SUPPORTED_POLICIES:
+        raise ValueError(f'Unknown candidate policy: {policy}')
     evidence = {'direct': set(), 'import': set()}
+    if policy != LEGACY_POLICY:
+        evidence['symbol'] = {}
     if catalog is None or function is None:
         return evidence
     from pathlib import Path
@@ -137,7 +150,50 @@ def source_evidence(catalog, file_path, function, target_name, target_scope, rec
                 return node.name if node.name in identities else None
         return None
 
-    # Only explicit, unshadowed module imports in the target's scope count.
+    def executable_nodes(node):
+        # Defaults, decorators, annotations and nested execution scopes are not
+        # references from the target body. Comprehension binding needs a
+        # separate resolver; do not resolve its names in the enclosing scope.
+        if isinstance(node, (*FUNCTIONS, ast.ClassDef, ast.Lambda,
+                             ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+            return
+        yield node
+        for field, value in ast.iter_fields(node):
+            if field in {'annotation', 'returns', 'type_comment'}:
+                continue
+            if isinstance(value, ast.AST):
+                yield from executable_nodes(value)
+            elif isinstance(value, list):
+                for child in value:
+                    if isinstance(child, ast.AST):
+                        yield from executable_nodes(child)
+
+    body_nodes = [n for s in function.body for n in executable_nodes(s)] if policy != LEGACY_POLICY else []
+    used_identities = {q for n in body_nodes
+                       if isinstance(n, (ast.Name, ast.Attribute)) and isinstance(n.ctx, ast.Load)
+                       if (q := identity(n, path, function))}
+
+    def explicit_import_available(statement, alias, local):
+        # Assigning self.value does not rebind a bare from-imported symbol.
+        # Keep conservative rejection of local/global rebinding and dynamic
+        # namespace effects, independently of receiver attribute writes.
+        if catalog.bindings(function, local):
+            return False
+        bindings = catalog.module_bindings(path, local)
+        if not bindings or len(bindings) != 1 or not isinstance(bindings[0], tuple):
+            return False
+        if bindings[0][0] is not statement or bindings[0][1].name != alias.name:
+            return False
+        nodes = list(lexical_nodes(function))
+        nodes.extend(n for s in static_body(catalog.trees[path].body)
+                     if not isinstance(s, (*FUNCTIONS, ast.ClassDef)) for n in lexical_nodes(s))
+        return not any(isinstance(n, (ast.Global, ast.Nonlocal)) or
+                       isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and
+                       n.func.id in {'exec', 'eval', 'setattr', 'delattr', 'globals', 'locals', 'vars'}
+                       for n in nodes)
+
+    # From-imports count even when unused or used only in an annotation.
+    # Module imports count only for identities actually accessed in the body.
     for statement in catalog.module_bodies[path]:
         if not isinstance(statement, (ast.Import, ast.ImportFrom)):
             continue
@@ -151,9 +207,15 @@ def source_evidence(catalog, file_path, function, target_name, target_scope, rec
                     module = catalog.import_module(path, statement)
                     if not module or qualified != f'{module}.{alias.name}':
                         continue
+                    if policy != LEGACY_POLICY:
+                        if explicit_import_available(statement, alias, local):
+                            evidence['import'].add(qualified)
+                        continue
                     spelling = local
                 else:
                     if not qualified.startswith(alias.name + '.'):
+                        continue
+                    if policy != LEGACY_POLICY and qualified not in used_identities:
                         continue
                     spelling = ((local + qualified[len(alias.name):]) if alias.asname else qualified)
                 try:
@@ -221,6 +283,52 @@ def source_evidence(catalog, file_path, function, target_name, target_scope, rec
                 qualified = construction(value, caller_path, caller, call.lineno)
                 if qualified:
                     evidence['direct'].add(qualified)
+    if policy == LEGACY_POLICY:
+        return evidence
+
+    def mark(expression, source_path, scope, strength, before_line, seen=frozenset()):
+        """Trace only single, unconditional assignments before the use.
+
+        Symbols anywhere in a value expression are references, not a proof of
+        the expression's final type. In particular, a fluent call is not direct.
+        """
+        if len(seen) >= 16:
+            return
+        for node in executable_nodes(expression):
+            if not isinstance(node, (ast.Name, ast.Attribute)) or not isinstance(node.ctx, ast.Load):
+                continue
+            qualified = identity(node, source_path, scope)
+            if qualified:
+                evidence['symbol'][qualified] = max(strength, evidence['symbol'].get(qualified, 0.0))
+            elif isinstance(node, ast.Name) and node.id not in seen:
+                bindings = (catalog.bindings(scope, node.id) if isinstance(scope, FUNCTIONS)
+                            else catalog.module_bindings(source_path, node.id))
+                if not bindings or len(bindings) != 1 or not isinstance(bindings[0], ast.Name):
+                    continue
+                assignments = [s for s in static_body(scope.body)
+                               if isinstance(s, (ast.Assign, ast.AnnAssign)) and s.lineno < before_line
+                               and any(n is bindings[0] for t in
+                                       (s.targets if isinstance(s, ast.Assign) else [s.target])
+                                       for n in ast.walk(t))]
+                if len(assignments) == 1 and assignments[0].value is not None:
+                    assignment = assignments[0]
+                    mark(assignment.value, source_path, scope, strength, assignment.lineno, seen | {node.id})
+
+    for qualified in used_identities:
+        evidence['symbol'][qualified] = .5
+    if target_scope == 'return':
+        for node in body_nodes:
+            if isinstance(node, ast.Return) and node.value is not None:
+                mark(node.value, path, function, 1.0, node.lineno)
+    elif target_scope == 'arg':
+        matches = [r for r in catalog.records if r[0] == path and r[2].lineno == function.lineno
+                   and r[2].name == function.name]
+        if len(matches) == 1:
+            for caller_path, caller, call in catalog.callers(matches[0][1]):
+                bound, _ = bind_arguments(function, call)
+                if bound is not None and (value := bound.get(target_name)) is not None:
+                    if any(n is value for n in ast.walk(call)):
+                        mark(value, caller_path, caller, 1.0, call.lineno)
     return evidence
 
 

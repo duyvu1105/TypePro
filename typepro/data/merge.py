@@ -48,11 +48,22 @@ def locate_build_dir(path: Path) -> Path:
 
 def main() -> None:
     from typepro.analysis.candidate_policy import (
-        POLICY as CANDIDATE_POLICY, DEFINITION_CHARS, TOTAL_CHARS, candidate_section,
+        SUPPORTED_POLICIES, DEFINITION_CHARS, TOTAL_CHARS, candidate_section,
     )
     args = parse_args()
     destination = Path(args.work_dir).resolve()
     builds = [locate_build_dir(Path(value).resolve()) for value in args.shard_build_dirs]
+    policies = {json.loads((build / 'runtime_manifest.json').read_text(encoding='utf-8'))
+                .get('candidate_policy_version') for build in builds}
+    if len(policies) != 1:
+        raise ValueError('Shard candidate policies differ; rebuild with one policy before merging')
+    runtime_policy = next(iter(policies))
+    for build in builds:
+        for raw_file in (build / 'raw_slices').glob('*.jsonl'):
+            with raw_file.open(encoding='utf-8') as handle:
+                for line in handle:
+                    if line.strip() and json.loads(line).get('candidate_policy_version') != runtime_policy:
+                        raise ValueError(f'Candidate policy differs from runtime: {raw_file}')
     if args.expected_retrieval_schema:
         for build in builds:
             runtime = json.loads((build / 'runtime_manifest.json').read_text(encoding='utf-8'))
@@ -67,7 +78,7 @@ def main() -> None:
                             row = json.loads(line)
                             if row.get('target_masking_version') != 'typepro-shared-kb-masked-source-v7-resolved-bounded-context' or row.get('context_policy_version') != 'ast-context-v7-verified-signature-evidence':
                                 raise ValueError(f'Unmasked legacy record or incompatible context policy: {raw_file}')
-                            maximum = DEFINITION_CHARS if row.get('candidate_policy_version') == CANDIDATE_POLICY else 8000
+                            maximum = DEFINITION_CHARS if row.get('candidate_policy_version') in SUPPORTED_POLICIES else 8000
                             if row.get('candidate_definition_max_chars') != maximum or any(len(str(item.get('definition') or '')) > maximum for item in row.get('recommendation_types', [])):
                                 raise ValueError(f'Unbounded candidate definition: {raw_file}')
                             if maximum == DEFINITION_CHARS and len(candidate_section(row.get('recommendation_types', []))) > TOTAL_CHARS:

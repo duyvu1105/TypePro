@@ -1,6 +1,6 @@
 # Chấm điểm và chia ký tự cho candidate
 
-Chính sách `candidate-weighted-v1` áp dụng khi xuất candidate mới. Nguồn triển
+Chính sách `candidate-symbol-v2` áp dụng khi xuất candidate mới. Nguồn triển
 khai là `typepro/analysis/candidate_policy.py`; `project_kb.py` điều phối việc
 chấm điểm trên KB của chính project. Không tính token, không dùng tokenizer.
 
@@ -11,12 +11,13 @@ Mỗi đầu điểm nằm trong đoạn 0–1:
 ```text
 score = 5 × direct
       + 3 × usage
+      + 2 × symbol
       + 2 × bm25
       + 1 × name
       + 0,5 × import
 ```
 
-Điểm tối đa theo công thức là 11,5. Điểm không phải xác suất dự đoán đúng.
+Điểm tối đa theo công thức là 13,5. Điểm không phải xác suất dự đoán đúng.
 Chỉ nhận candidate có `score >= 1.0` (bao gồm đúng 1 điểm), lấy tối đa 10.
 Trọng số và threshold là cấu hình được yêu cầu, chưa phải kết quả tối ưu trên
 validation hoặc bằng chứng tăng accuracy.
@@ -25,19 +26,20 @@ validation hoặc bằng chứng tăng accuracy.
 | --- | --- | ---: |
 | `direct` | 1 nếu tìm được constructor gắn với đúng target bằng binding đã xác minh; ngược lại 0 | 5 |
 | `usage` | Số member target sử dụng mà candidate có / tổng số member target sử dụng; không có member truy vấn thì 0 | 3 |
+| `symbol` | 1 nếu symbol đã resolve nằm trong biểu thức tạo giá trị cho target; 0,5 nếu trong code thực thi khác của hàm target; còn lại 0 | 2 |
 | `bm25` | BM25 đối xứng chuẩn hóa `raw / (raw + 1)` giữa slice và definition đã mask | 2 |
 | `name` | `SequenceMatcher.ratio()` giữa tên target và tên ngắn candidate, sau khi chuyển chữ thường và bỏ ký tự ngoài ASCII chữ/số | 1 |
-| `import` | 1 nếu có import module tường minh, đúng qualified name, binding không bị che hoặc gán lại trong scope target; ngược lại 0 | 0,5 |
+| `import` | 1 nếu from-import tường minh đúng candidate (kể cả không dùng/chỉ để annotation), hoặc truy cập symbol thực tế qua module import trong thân hàm target; binding không bị che/gán lại; còn lại 0 | 0,5 |
 
 Các tín hiệu được cộng đồng thời; không có khoản thưởng 10.000 cho việc xuất hiện
 trong danh sách seed. Không có hai vị trí ưu tiên member bên ngoài công thức.
 Candidate bằng điểm được xếp theo qualified name không phân biệt hoa/thường.
 Loại trùng theo qualified name không phân biệt hoa/thường.
 
-Ví dụ: `direct=0`, `usage=0.5`, `bm25=0.4`, `name=0.6`, `import=1`:
+Ví dụ: `direct=0`, `usage=0.5`, `symbol=0`, `bm25=0.4`, `name=0.6`, `import=1`:
 
 ```text
-score = 0 + 1,5 + 0,8 + 0,6 + 0,5 = 3,4 → đủ điều kiện
+score = 0 + 1,5 + 0 + 0,8 + 0,6 + 0,5 = 3,4 → đủ điều kiện
 ```
 
 Chỉ import mà không có tín hiệu khác: 0,5 điểm, không đủ điều kiện. Tên giống
@@ -84,6 +86,25 @@ Nếu thiếu metadata member, đọc method và thuộc tính `self`/`cls` từ
 Đầu điểm này hiện dùng cho target parameter; target return không tự suy đoán
 receiver usage mới. Tên member trùng là tín hiệu cấu trúc, không chứng minh
 hai class có cùng ngữ nghĩa.
+
+### Symbol và import
+
+`symbol` resolve Name/Attribute tới đúng qualified name trong KB; không khớp
+bằng tên ngắn. Return expression và đối số bind vào đúng target parameter tại
+caller đã resolve nhận mức 1. Theo biến trung gian tối đa 16 tên, chỉ khi có
+một binding từ assignment vô điều kiện trước điểm dùng. Symbol ở phần executable
+khác của hàm target nhận 0,5. Lấy mức cao nhất, không cộng theo số lần xuất hiện.
+Không đi vào annotation, docstring, nested function/class/lambda hay comprehension.
+Không giả định fluent method trả về receiver; symbol không phải bằng chứng direct.
+
+`from argparse import Namespace as NS` cho candidate `argparse.Namespace`
+import=1 kể cả NS chỉ dùng để annotation hoặc hoàn toàn chưa dùng. Với
+`import pandas as pd`, chỉ candidate được tham chiếu và resolve thực tế như
+`pd.DataFrame` mới nhận import=1; không thưởng cho cả danh mục `pandas.*`.
+Gán receiver attribute như `self.value = value` không tự vô hiệu điểm của
+from-import chưa dùng; shadow/rebind và thao tác namespace động vẫn bị chặn.
+Giữ giới hạn resolver hiện có: import module-level, binding không bị che/gán
+lại, identity qualified chính xác; chưa resolve public re-export tổng quát.
 
 ### BM25
 
@@ -154,16 +175,22 @@ Candidate mới lưu `score`, `score_components`, `character_budget` và thông 
 ngân sách definition được cấp, độ dài đầu ra và việc có rút gọn hay không.
 Điểm luôn tính trước khi rút gọn; không chấm lại dựa trên bản summary.
 
-Exporter gắn `candidate_policy_version=candidate-weighted-v1`. Runtime/project
+Exporter gắn `candidate_policy_version=candidate-symbol-v2`. Runtime/project
 status cũng ghi policy; build có cache policy cũ phải xuất lại candidates.
 Preprocess, split eligibility, merge, audit và verify hỗ trợ candidate rỗng và
 giới hạn mới. Qualified name được hiển thị trong prompt để phân biệt tên ngắn
 trùng nhau. Nhãn đầu ra không bị đổi sang qualified name.
 
 Preprocess có thể giới hạn lại candidate của raw cũ nhưng không thể khôi phục
-bằng chứng từ source hoặc tính lại 5 đầu điểm nếu thiếu source/KB. Muốn có bộ
+bằng chứng từ source hoặc tính lại 6 đầu điểm nếu thiếu source/KB. Muốn có bộ
 điểm mới đầy đủ phải chạy exporter từ source đã khóa revision. Dataset v19 đã
 publish không được thay đổi bởi sửa code local này.
+
+Build mới invalidate cache policy v1 qua runtime/project status. Merge từ chối
+trộn policy giữa shard hoặc raw/runtime không khớp. Verify vẫn kiểm tra giới
+hạn ký tự cho v1 và v2. Preprocess giữ provenance policy cũ của raw, không tự
+coi dữ liệu cũ là v2. Hàm scoring/evidence/selector nhận `policy='candidate-weighted-v1'`
+để replay baseline, không thay đổi dataset v20/v22 đã có hoặc job đang chạy.
 
 ## 6. Kiểm thử
 
@@ -176,3 +203,8 @@ cập nhật theo hợp đồng mới. Chạy toàn bộ:
 ```powershell
 python -m pytest tests -q -p no:cacheprovider
 ```
+
+Kiểm thử symbol/import: `tests/test_candidate_symbol_policy.py`. Đo ablation
+trên validation bằng `python -m typepro.audit.candidate_symbol --help`; runner
+so v1, symbol-only, import-only và bản kết hợp. Hệ số symbol=2 là cấu hình
+được yêu cầu, chưa chứng minh cải thiện accuracy mô hình.

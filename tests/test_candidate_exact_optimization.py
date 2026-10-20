@@ -4,6 +4,7 @@ import importlib.util
 import json
 import random
 import sys
+from functools import partial
 from pathlib import Path
 
 import pytest
@@ -60,7 +61,7 @@ def test_entire_candidate_output_and_input_match_reference(count):
                   'evidence': {'direct': {'app.Client0'}, 'import': {'app.Client1'}}}
         expected = reference.top_project_types(kb, target, code, **kwargs)
         for _ in range(2):  # cold and warm cache must both be exact
-            actual = top_project_types(kb, target, code, **kwargs)
+            actual = top_project_types(kb, target, code, policy=policy.LEGACY_POLICY, **kwargs)
             assert actual == expected
             assert json.dumps(actual, ensure_ascii=False) == json.dumps(expected, ensure_ascii=False)
             def prompt(items, target=target, scope=scope, code=code):
@@ -106,7 +107,10 @@ def test_exported_source_evidence_matches_reference(case_id, tmp_path, monkeypat
     from typepro.audit.regressions import CASES, replay
 
     case = next(case for case in CASES if case['id'] == case_id)
-    expected = replay(case, tmp_path / 'source')
+    with monkeypatch.context() as legacy:
+        legacy.setattr(export_slices, 'top_project_types', partial(top_project_types, policy=policy.LEGACY_POLICY))
+        legacy.setattr(policy, 'source_evidence', partial(policy.source_evidence, policy=policy.LEGACY_POLICY))
+        expected = replay(case, tmp_path / 'source')
     # Reuse the same source paths so definition metadata is comparable.
     with monkeypatch.context() as guard:
         guard.setattr(export_slices, 'top_project_types', reference.top_project_types)
@@ -121,12 +125,13 @@ def test_old_and_optimized_shards_merge_with_identical_contract(tmp_path, monkey
 
     schema = 'typepro-project-kb-top10-generative-v17-catalog-fallback-audit'
     inputs = []
-    for name, function in [('completed', reference.top_project_types), ('optimized', top_project_types)]:
+    for name, function in [('completed', reference.top_project_types),
+                           ('optimized', partial(top_project_types, policy=policy.LEGACY_POLICY))]:
         build = tmp_path / name
         inputs.append(str(build))
         (build / 'metadata').mkdir(parents=True)
         (build / 'metadata/split_manifest.json').write_text('{"split_profile":"paper_project"}')
-        runtime = {'retrieval_schema_version': schema, 'candidate_policy_version': policy.POLICY,
+        runtime = {'retrieval_schema_version': schema, 'candidate_policy_version': policy.LEGACY_POLICY,
                    'context_policy_version': 'ast-context-v7-verified-signature-evidence',
                    'project_revision_lock_sha256': 'same-locked-project-revisions',
                    'revision_lock_source': {'version': 13}, 'revision_lock_policy': 'exact',
@@ -135,7 +140,7 @@ def test_old_and_optimized_shards_merge_with_identical_contract(tmp_path, monkey
         (build / 'raw_slices').mkdir()
         candidates = function({'records': records(20)}, 'client', 'client.get(url)',
                               target_members={'methods': ['get']})
-        row = {'recommendation_types': candidates, 'candidate_policy_version': policy.POLICY,
+        row = {'recommendation_types': candidates, 'candidate_policy_version': policy.LEGACY_POLICY,
                'candidate_definition_max_chars': policy.DEFINITION_CHARS,
                'context_policy_version': runtime['context_policy_version'],
                'target_masking_version': 'typepro-shared-kb-masked-source-v7-resolved-bounded-context'}

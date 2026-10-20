@@ -13,7 +13,8 @@ from typepro.analysis.candidate_policy import (
     allocate_characters,
     candidate_section,
     score_candidate,
-    source_evidence,
+    source_evidence as current_source_evidence,
+    LEGACY_POLICY,
 )
 from typepro.analysis.function_methods import Function_methods
 from typepro.analysis.export_slices import export_one
@@ -25,6 +26,11 @@ from typepro.data.preprocess import (
     record_fields,
 )
 
+
+
+def source_evidence(*args, **kwargs):
+    # Historical evidence fixtures remain differential checks for v1.
+    return current_source_evidence(*args, policy=LEGACY_POLICY, **kwargs)
 
 def candidate(name='Client', score=1, definition=None):
     return {'name': name, 'qualified_name': f'app.{name}', 'kind': 'class',
@@ -199,6 +205,7 @@ def test_preprocess_and_verify_allow_empty_candidates(tmp_path, monkeypatch):
     preprocess.main()
     row = json.loads((output / 'train.jsonl').read_text(encoding='utf-8'))
     assert row['recommendation_types'] == [] and row['label'] == 'str'
+    assert row['candidate_policy_version'] is None  # Unknown raw provenance must stay unknown.
     manifest = {'schema_version': 'typepro-codet5p-generative-project-kb-v2', 'output': {}}
     for split in ('train', 'validation', 'test'):
         path = output / f'{split}.jsonl'

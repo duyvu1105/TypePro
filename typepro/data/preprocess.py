@@ -21,7 +21,7 @@ SPLITS = ("train", "validation", "test")
 from typepro.analysis.ast_context_slicer import limit_candidate_definition
 from typepro.analysis.ast_context_slicer import CANDIDATE_DEFINITION_MAX_CHARS as CANDIDATE_DEFINITION_MAX_CHARS
 from typepro.analysis.candidate_policy import (
-    POLICY as CANDIDATE_POLICY, DEFINITION_CHARS, MIN_SCORE, allocate_characters, candidate_section,
+    DEFINITION_CHARS, MIN_SCORE, allocate_characters, candidate_section,
 )
 
 
@@ -173,7 +173,7 @@ def main() -> None:
                 "label": label,
                 "source_commit": row.get("source_commit"),
                 "candidate_definition_max_chars": DEFINITION_CHARS,
-                "candidate_policy_version": row.get('candidate_policy_version', CANDIDATE_POLICY),
+                "candidate_policy_version": row.get('candidate_policy_version'),
                 **({"context_policy_version": row["context_policy_version"]}
                    if row.get("context_policy_version") else {}),
             }
