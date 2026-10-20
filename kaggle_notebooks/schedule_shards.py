@@ -1,5 +1,6 @@
 """Submit independent partitions with a durable ledger and account slot limits."""
 import argparse
+import hashlib
 from datetime import datetime, timezone
 import json
 import os
@@ -14,6 +15,7 @@ from commit_shard_versions import (
     physical_partitions, partition_kernel_slug, render_shard_version, plan_for_part, render_part_version,
     write_version, run_push,
 )
+from generate_notebooks import pinned_checkout_source
 
 TERMINAL = {'COMPLETE', 'ERROR', 'CANCEL_ACKNOWLEDGED', 'CANCELLED', 'NO_RUNS'}
 
@@ -66,6 +68,7 @@ def main():
     parser.add_argument('--watch', action='store_true')
     parser.add_argument('--account', action='append', choices=['duyvu1105', 'duymign', 'vdduy1105'], default=[])
     parser.add_argument('--revision', help='Default: GitHub main for a new run, saved SHA when resuming; accepts latest or a full SHA')
+    parser.add_argument('--source-bundle', type=Path, help='Embed an incremental Git bundle advertising --revision; requires its base in the cloned repo')
     parser.add_argument('--state', type=Path, default=REPO_ROOT / 'typepro_kernel_versions' / 'latest_run.json')
     parser.add_argument('--new-run', action='store_true', help='Prepare a fresh dry-run and archive the previous ledger')
     parser.add_argument('--max-active', type=int, default=5)
@@ -86,6 +89,17 @@ def main():
         args.revision = select_revision(args.revision, None if args.new_run else previous)
     except ValueError as error:
         parser.error(str(error))
+    bundle = args.source_bundle.read_bytes() if args.source_bundle else None
+    bundle_sha256 = hashlib.sha256(bundle).hexdigest() if bundle is not None else None
+    if args.source_bundle:
+        heads = subprocess.run(['git', 'bundle', 'list-heads', str(args.source_bundle.resolve())],
+                               cwd=REPO_ROOT, capture_output=True, text=True, check=True)
+        if not any(line.split()[0] == args.revision for line in heads.stdout.splitlines()):
+            parser.error('Source bundle does not advertise the requested revision')
+        subprocess.run(['git', 'bundle', 'verify', str(args.source_bundle.resolve())],
+                       cwd=REPO_ROOT, capture_output=True, text=True, check=True)
+    if previous is not None and not args.new_run and previous.get('source_bundle_sha256') != bundle_sha256:
+        parser.error('Source bundle differs from saved ledger; supply the same bundle or use a new state')
     _, _, plans = load_plan(ROOT / 'shard_account_plan.json')
     if not all(plan.independent_parts for plan in plans):
         parser.error('Scheduling requires independent partition kernels')
@@ -112,18 +126,18 @@ def main():
             marker = '\nPIPELINE_DIR = '
             if marker not in source:
                 raise ValueError('Expected pipeline setup after repository checkout')
-            checkout = (
-                '\nrun(["git", "-C", REPO_DIR, "fetch", "origin", ' + repr(args.revision) + ', "--depth", "1"])\n'
-                'run(["git", "-C", REPO_DIR, "checkout", "--detach", ' + repr(args.revision) + '])\n'
-            )
+            checkout = pinned_checkout_source(args.revision, bundle)
             clone_cells[0]['source'] = source.replace(marker, checkout + marker, 1)
+            rendered.setdefault('metadata', {}).setdefault('typepro', {}).update(
+                source_revision=args.revision, source_bundle_sha256=bundle_sha256)
             directory = args.state.parent / 'scheduled' / part_plan.runner_account / f'{index:02d}'
             write_version(directory, part_plan, rendered, part_index=part)
             jobs.append({'account': part_plan.runner_account, 'kernel': f'{part_plan.runner_account}/{partition_kernel_slug(part_plan, part)}',
                          'shard_index': index, 'shard_count': count, 'dataset': f'{part_plan.dataset_owner}/typepro-build-shard-{index:02d}' + ('-of-40' if count == 40 else ''),
                          'payload': str(directory), 'status': 'pending'})
             jobs_by_account[part_plan.runner_account] = account_jobs + 1
-    state = previous if previous is not None and not args.new_run else {'revision': args.revision, 'jobs': jobs}
+    state = previous if previous is not None and not args.new_run else {
+        'revision': args.revision, 'source_bundle_sha256': bundle_sha256, 'jobs': jobs}
     if state['revision'] != args.revision or [j['kernel'] for j in state['jobs']] != [j['kernel'] for j in jobs]:
         raise ValueError('Ledger does not match this revision/plan; use --new-run or a new --state file')
     if any(job['status'] == 'submitting' for job in state['jobs']):

@@ -168,6 +168,22 @@ the remaining jobs. This selects 15 of the 21 partitions, preserving the plan.
 The continuation uses `--skip-jobs-per-account 5` and a separate ledger only
 after the user requests it.
 
+If the intended source commit is local and cannot be pushed to GitHub, the
+scheduler can embed an incremental Git bundle in the generated notebook. The
+clone must already contain the bundle's base commit. The notebook verifies the
+bundle SHA-256 and Git prerequisites, fetches it locally, then checks out the
+requested exact commit before installing/running the pipeline. Credentials and
+uncommitted files are never included by `git bundle`.
+
+```bash
+git bundle create /tmp/typepro-source.bundle HEAD ^BASE_COMMIT_SHA
+python kaggle_notebooks/schedule_shards.py --revision COMMIT_SHA --source-bundle /tmp/typepro-source.bundle --jobs-per-account 5 --state typepro_kernel_versions/new-first15.json
+```
+
+Dry-run before adding `--push --watch`. Pass the same bundle and job limit when
+resuming; its checksum is bound to the ledger. Notebook metadata records both
+the source commit and bundle checksum. Review the commit's files before upload.
+
 Retrieval schema: `typepro-project-kb-top10-generative-v16-verified-signature-evidence`.
 Build one KB per project and reuse it for every sample. The KB never reads a
 function return annotation: it creates neither a candidate nor `returned_by`

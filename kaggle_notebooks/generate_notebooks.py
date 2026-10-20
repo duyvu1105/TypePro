@@ -6,6 +6,8 @@ Kaggle host identity; optional explicit credentials come from Kaggle Secrets.
 from __future__ import annotations
 
 import argparse
+import base64
+import hashlib
 import json
 import math
 import re
@@ -22,6 +24,29 @@ SHARD_PARTITIONS = {
     2: [(2, 20), (12, 40), (32, 40)],
     9: [(9, 30), (19, 30), (29, 90), (59, 90), (89, 90)],
 }
+
+
+def pinned_checkout_source(revision: str, bundle: bytes | None = None) -> str:
+    """Generate a checkout from GitHub or an explicitly supplied Git bundle."""
+    if not re.fullmatch(r'[0-9a-f]{40}', revision):
+        raise ValueError('Checkout requires a full commit SHA')
+    if bundle is None:
+        fetch = '\nrun(["git", "-C", REPO_DIR, "fetch", "origin", ' + repr(revision) + ', "--depth", "1"])\n'
+    else:
+        encoded = base64.b64encode(bundle).decode('ascii')
+        digest = hashlib.sha256(bundle).hexdigest()
+        fetch = (
+            '\nimport base64 as _bundle_base64, hashlib as _bundle_hashlib\n'
+            'from pathlib import Path as _BundlePath\n'
+            '_bundle_bytes = _bundle_base64.b64decode(' + repr(encoded) + ', validate=True)\n'
+            'if _bundle_hashlib.sha256(_bundle_bytes).hexdigest() != ' + repr(digest) + ':\n'
+            '    raise RuntimeError("Source bundle checksum mismatch")\n'
+            '_bundle_path = _BundlePath(REPO_DIR).parent / "typepro-source.bundle"\n'
+            '_bundle_path.write_bytes(_bundle_bytes)\n'
+            'run(["git", "-C", REPO_DIR, "bundle", "verify", str(_bundle_path)])\n'
+            'run(["git", "-C", REPO_DIR, "fetch", str(_bundle_path), ' + repr(revision) + '])\n'
+        )
+    return fetch + 'run(["git", "-C", REPO_DIR, "checkout", "--detach", ' + repr(revision) + '])\n'
 
 
 def physical_partitions(shard_index: int) -> list[tuple[int, int]]:

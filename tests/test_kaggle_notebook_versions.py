@@ -17,6 +17,41 @@ import recover_shard_version
 import schedule_shards
 
 
+def test_embedded_bundle_checks_out_exact_commit_without_remote_push(tmp_path):
+    from generate_notebooks import pinned_checkout_source
+    def git(*args, cwd):
+        return subprocess.run(['git', *args], cwd=cwd, check=True, capture_output=True, text=True).stdout.strip()
+    source = tmp_path / 'source'
+    source.mkdir()
+    git('init', '-q', cwd=source)
+    (source / 'policy.py').write_text('POLICY = "old"\n')
+    git('add', 'policy.py', cwd=source)
+    git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-qm', 'base', cwd=source)
+    base = git('rev-parse', 'HEAD', cwd=source)
+    (source / 'policy.py').write_text('POLICY = "new"\n')
+    git('add', 'policy.py', cwd=source)
+    git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-qm', 'new policy', cwd=source)
+    revision = git('rev-parse', 'HEAD', cwd=source)
+    bundle = tmp_path / 'source.bundle'
+    git('bundle', 'create', str(bundle), 'HEAD', '^' + base, cwd=source)
+    consumer = tmp_path / 'consumer'
+    consumer.mkdir()
+    git('init', '-q', cwd=consumer)
+    git('fetch', str(source), base, cwd=consumer)
+    git('checkout', '--detach', base, cwd=consumer)
+    run = lambda args: subprocess.run([str(a) for a in args], check=True, capture_output=True, text=True)
+    code = pinned_checkout_source(revision, bundle.read_bytes())
+    exec(compile(code, '<bundle checkout>', 'exec'), {'REPO_DIR': consumer, 'run': run})
+    assert git('rev-parse', 'HEAD', cwd=consumer) == revision
+    assert (consumer / 'policy.py').read_text() == 'POLICY = "new"\n'
+    # Corruption must fail before Git can consume the bundle.
+    import base64
+    payload = base64.b64encode(bundle.read_bytes()).decode('ascii')
+    corrupted = code.replace(repr(payload), repr(base64.b64encode(b'corrupt').decode('ascii')))
+    with pytest.raises(RuntimeError, match='checksum mismatch'):
+        exec(compile(corrupted, '<corrupt bundle>', 'exec'), {'REPO_DIR': consumer, 'run': run})
+
+
 def source_with_tag(notebook, tag):
     cells = [
         cell
