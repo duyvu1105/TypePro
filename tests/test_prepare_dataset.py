@@ -62,7 +62,10 @@ def test_resume_retries_syntax_errors_but_keeps_other_completed_projects(tmp_pat
     counts = prepare_dataset_module.slice_projects(args, tmp_path, Path(__file__).resolve().parents[1])
     assert calls == (['owner/repository'] if retry else [])
     assert counts.get('skipped_complete', 0) == (0 if retry else 1)
-    assert raw.read_text(encoding='utf-8') == '{"id": "preserved"}\n'
+    if retry:
+        assert not raw.exists()
+    else:
+        assert raw.read_text(encoding='utf-8') == '{"id": "preserved"}\n'
     if not retry:
         assert json.loads(status_path.read_text(encoding='utf-8')) == status
 

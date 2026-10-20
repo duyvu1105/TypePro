@@ -933,6 +933,9 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
                 safe_remove_repo(repository_path, clone_root)
             continue
         tqdm.write(f"[{position}/{len(projects)}] {project} ({len(rows_by_project[project])} annotations)")
+        # A failed clone/export must not leave a previous policy's rows in the
+        # new shard. Compatible completed projects have already returned above.
+        output_path.unlink(missing_ok=True)
         try:
             phase_started = time.monotonic()
             tqdm.write(f"[project:clone:start] {project}")
@@ -1094,6 +1097,7 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
                 f"exported={counters['exported_records']:,}"
             )
         except Exception as error:
+            output_path.unlink(missing_ok=True)
             counters["failed_projects"] += 1
             write_json(status_path, {
                 "project": project,

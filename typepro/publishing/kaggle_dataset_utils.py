@@ -18,6 +18,7 @@ OWNER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{1,49}$")
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{2,49}$")
 MISSING_MARKERS = ("404", "not found", "could not find")
 FORBIDDEN_MARKERS = ("403", "forbidden")
+STATUS_AUTH_MARKERS = (*FORBIDDEN_MARKERS, "401", "unauthorized")
 PUBLISH_ERROR_MARKERS = (
     "dataset creation error:",
     "dataset version creation error:",
@@ -165,9 +166,9 @@ def _status(dataset_id: str) -> tuple[str, str]:
     if result.returncode:
         if any(marker in lowered for marker in MISSING_MARKERS):
             return "missing", output
-        if any(marker in lowered for marker in FORBIDDEN_MARKERS):
-            # Kaggle CLI 1.7.x can create a private Dataset successfully while
-            # its legacy /datasets/status endpoint returns 403. Fall back to
+        if any(marker in lowered for marker in STATUS_AUTH_MARKERS):
+            # The legacy /datasets/status endpoint can return 401/403 even
+            # after the authenticated owner's listing succeeds. Fall back to
             # file listing, which also proves that the uploaded payload exists.
             files_result = _run(
                 ["kaggle", "datasets", "files", dataset_id, "--page-size", "10"]

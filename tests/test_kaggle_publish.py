@@ -230,7 +230,8 @@ def test_publish_rejects_cli_semantic_error_with_zero_exit(tmp_path, monkeypatch
         )
 
 
-def test_status_falls_back_to_files_when_legacy_endpoint_is_forbidden(monkeypatch):
+@pytest.mark.parametrize("status_error", ["403 Client Error: Forbidden", "401 Client Error: Unauthorized"])
+def test_status_falls_back_to_files_when_legacy_endpoint_rejects_auth(monkeypatch, status_error):
     commands = []
 
     class Result:
@@ -239,7 +240,7 @@ def test_status_falls_back_to_files_when_legacy_endpoint_is_forbidden(monkeypatc
             self.stdout = stdout
 
     results = iter([
-        Result(1, "403 Client Error: Forbidden"),
+        Result(1, status_error),
         Result(0, "owner_test.json 221B"),
     ])
     monkeypatch.setattr(
@@ -254,6 +255,15 @@ def test_status_falls_back_to_files_when_legacy_endpoint_is_forbidden(monkeypatc
     assert state == "ready"
     assert "owner_test.json" in detail
     assert commands[1][:3] == ["kaggle", "datasets", "files"]
+
+
+def test_status_does_not_hide_invalid_credentials_on_file_listing(monkeypatch):
+    import subprocess
+
+    monkeypatch.setattr(kaggle_dataset_utils, "_run", lambda command:
+                        subprocess.CompletedProcess(command, 1, "401 Client Error: Unauthorized"))
+    with pytest.raises(RuntimeError, match="Cannot list Kaggle Dataset files"):
+        kaggle_dataset_utils._status("another-account/typepro-owner-test")
 
 
 @pytest.mark.parametrize(
