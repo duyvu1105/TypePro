@@ -62,6 +62,41 @@ def source_with_tag(notebook, tag):
     return cells[0]["source"]
 
 
+@pytest.mark.parametrize('accepted', [True, False])
+def test_shard_identity_requires_authenticated_dataset_read(monkeypatch, capsys, accepted):
+    import ast
+    from types import SimpleNamespace
+
+    notebook = generate_notebooks.shard_notebook(
+        0, 10, 'https://github.com/duyvu1105/TypePro.git', 'main',
+        expected_dataset_owner='duyvu1105')
+    source = next(c['source'] for c in notebook['cells']
+                  if c['cell_type'] == 'code' and 'identity_code =' in c['source'])
+    assignment = next(node for node in ast.parse(source).body
+                      if isinstance(node, ast.Assign)
+                      and any(isinstance(t, ast.Name) and t.id == 'identity_code' for t in node.targets))
+    namespace = {}
+    exec(compile(ast.Module(body=[assignment], type_ignores=[]), '<identity>', 'exec'), namespace)
+    calls = []
+    def dataset_list(**kwargs):
+        calls.append(kwargs)
+        if not accepted:
+            raise RuntimeError('401 Unauthorized')
+        return []
+    monkeypatch.setitem(sys.modules, 'kaggle', SimpleNamespace(api=SimpleNamespace(
+        config_values={'username': 'duyvu1105'}, dataset_list=dataset_list)))
+    if accepted:
+        exec(namespace['identity_code'], {})
+        output = capsys.readouterr().out
+        identity = json.loads(output.split('TYPEPRO_KAGGLE_IDENTITY=')[1])
+        assert identity['dataset_read_verified'] is True
+    else:
+        with pytest.raises(RuntimeError, match='401 Unauthorized'):
+            exec(namespace['identity_code'], {})
+        assert 'TYPEPRO_KAGGLE_IDENTITY=' not in capsys.readouterr().out
+    assert calls == [{'mine': True, 'page': 1}]
+
+
 @pytest.mark.parametrize('force', [True, False])
 def test_generated_repair_run_controls_force_projects(force):
     notebook = generate_notebooks.shard_notebook(

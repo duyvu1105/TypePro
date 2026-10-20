@@ -609,10 +609,12 @@ def shard_notebook(
         identity_code = "\\n".join([
             "import json",
             "import kaggle",
+            "kaggle.api.dataset_list(mine=True, page=1)",
             "values = getattr(kaggle.api, 'config_values', {})",
             "print('TYPEPRO_KAGGLE_IDENTITY=' + json.dumps({",
             "    'username': values.get('username'),",
             "    'auth_method': values.get('auth_method') or 'LEGACY_API_KEY',",
+            "    'dataset_read_verified': True,",
             "}))",
         ])
         identity_result = subprocess.run(
@@ -643,6 +645,7 @@ def shard_notebook(
         print({
             "authenticated_publish_owner": authenticated_username,
             "authentication_method": identity.get("auth_method"),
+            "dataset_read_verified": identity.get("dataset_read_verified"),
         })
         """),
         markdown("""
