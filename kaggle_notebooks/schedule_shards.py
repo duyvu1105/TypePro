@@ -66,6 +66,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--push', action='store_true')
     parser.add_argument('--watch', action='store_true')
+    parser.add_argument('--reuse-project-kb', action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument('--account', action='append', choices=['duyvu1105', 'duymign', 'vdduy1105'], default=[])
     parser.add_argument('--revision', help='Default: GitHub main for a new run, saved SHA when resuming; accepts latest or a full SHA')
     parser.add_argument('--source-bundle', type=Path, help='Embed an incremental Git bundle advertising --revision; requires its base in the cloned repo')
@@ -85,6 +86,9 @@ def main():
     if args.skip_jobs_per_account < 0:
         parser.error('--skip-jobs-per-account must be >= 0')
     previous = json.loads(args.state.read_text(encoding='utf-8')) if args.state.exists() else None
+    if (previous is not None and not args.new_run
+            and previous.get('reuse_project_kb', False) != args.reuse_project_kb):
+        parser.error('KB reuse differs from saved ledger; use a fresh --state')
     try:
         args.revision = select_revision(args.revision, None if args.new_run else previous)
     except ValueError as error:
@@ -118,7 +122,7 @@ def main():
             account_jobs = jobs_by_account.get(part_plan.runner_account, 0)
             if args.jobs_per_account is not None and account_jobs >= args.jobs_per_account:
                 continue
-            rendered = render_part_version(template, plan, part)
+            rendered = render_part_version(template, plan, part, reuse_project_kb=args.reuse_project_kb)
             clone_cells = [cell for cell in rendered['cells'] if '"git", "clone"' in ''.join(cell.get('source', []))]
             if len(clone_cells) != 1:
                 raise ValueError('Expected exactly one clone cell')
@@ -137,7 +141,8 @@ def main():
                          'payload': str(directory), 'status': 'pending'})
             jobs_by_account[part_plan.runner_account] = account_jobs + 1
     state = previous if previous is not None and not args.new_run else {
-        'revision': args.revision, 'source_bundle_sha256': bundle_sha256, 'jobs': jobs}
+        'revision': args.revision, 'source_bundle_sha256': bundle_sha256,
+        'reuse_project_kb': args.reuse_project_kb, 'jobs': jobs}
     if state['revision'] != args.revision or [j['kernel'] for j in state['jobs']] != [j['kernel'] for j in jobs]:
         raise ValueError('Ledger does not match this revision/plan; use --new-run or a new --state file')
     if any(job['status'] == 'submitting' for job in state['jobs']):

@@ -6,7 +6,7 @@ import sys
 
 import pytest
 
-from typepro.analysis.candidate_policy import POLICY, LEGACY_POLICY, source_evidence, score_candidate
+from typepro.analysis.candidate_policy import POLICY, SYMBOL_POLICY, LEGACY_POLICY, source_evidence, score_candidate
 from typepro.analysis.function_methods import Function_methods
 from typepro.analysis.project_index import scan_project
 from typepro.analysis.project_kb import top_project_types
@@ -118,7 +118,8 @@ def test_six_component_formula_and_no_repeated_reference_accumulation(tmp_path):
     item = record('external.Chart')
     evidence = {'direct': {'external.Chart'}, 'import': {'external.Chart'}, 'symbol': {'external.Chart': 1}}
     score, parts = score_candidate(dict(item, members=['plot']), item['definition'], 'Chart',
-                                   'Chart Chart Chart', {'methods': ['plot', 'missing']}, evidence)
+                                   'Chart Chart Chart', {'methods': ['plot', 'missing']}, evidence,
+                                   policy=SYMBOL_POLICY)
     assert score == pytest.approx(5 + 1.5 + 2 + 2 * parts['bm25'] + 1 + .5)
     assert 0 <= score <= 13.5
     old_score, old_parts = score_candidate(item, item['definition'], 'Chart', 'Chart', {}, evidence,
@@ -145,10 +146,11 @@ def test_export_masks_labels_and_sets_new_policy(tmp_path):
     assert results[0] == results[1] and kb == before
 
 
-def test_merge_rejects_mixed_candidate_policies_before_copying(tmp_path, monkeypatch):
+@pytest.mark.parametrize('old_policy', [LEGACY_POLICY, SYMBOL_POLICY])
+def test_merge_rejects_mixed_candidate_policies_before_copying(tmp_path, monkeypatch, old_policy):
     from typepro.data import merge
     builds = []
-    for policy in (LEGACY_POLICY, POLICY):
+    for policy in (old_policy, POLICY):
         build = tmp_path / policy
         (build / 'metadata').mkdir(parents=True)
         (build / 'metadata/split_manifest.json').write_text('{}')

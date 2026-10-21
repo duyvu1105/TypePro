@@ -302,21 +302,25 @@ def top_project_types(
     """Rank project-KB records without reading the target annotation."""
     from typepro.analysis.candidate_policy import (
         MIN_SCORE, MAX_CANDIDATES, POLICY, SUPPORTED_POLICIES,
-        allocate_characters, score_candidate, structural_text,
+        allocate_characters, score_candidate, structural_text, prepare_scoring_query,
     )
     policy = policy or POLICY
     if policy not in SUPPORTED_POLICIES:
         raise ValueError(f'Unknown candidate policy: {policy}')
     # Kept as a compatible argument; seed presence/order no longer earns points.
     ranked = []
-    query_text = structural_text(code_slice)
+    if policy == POLICY:
+        query_context = prepare_scoring_query(target_name, code_slice, target_members)
+        query_text = query_context.text
+    else:
+        query_text, query_context = structural_text(code_slice), None
     for item in candidate_records(kb):
         definition = str(item.get("definition") or item["name"])
         if target_function and target_scope:
             definition = mask_definition(definition, target_function, target_name, target_scope)
         score, components = score_candidate(
             item, definition, target_name, code_slice, target_members, evidence or {},
-            query_text=query_text,
+            query_text=query_text, query_context=query_context,
             policy=policy,
         )
         if score >= MIN_SCORE:

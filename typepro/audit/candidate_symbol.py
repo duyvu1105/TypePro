@@ -16,7 +16,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from typepro.analysis.ast_context_slicer import FunctionCatalog, FUNCTIONS
-from typepro.analysis.candidate_policy import LEGACY_POLICY, POLICY, MIN_SCORE, source_evidence, score_candidate
+from typepro.analysis.candidate_policy import LEGACY_POLICY, SYMBOL_POLICY as POLICY, MIN_SCORE, source_evidence, score_candidate
 from typepro.analysis.export_slices import add_parent_links, enclosing_class_path
 from typepro.analysis.project_index import scan_project
 from typepro.analysis.project_kb import top_project_types, target_member_query

@@ -79,6 +79,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-projects", type=int, default=0, help="Smoke test only; 0 processes all")
     parser.add_argument("--repos-root", help="Optional existing repos root containing owner/repository")
     parser.add_argument("--third-party-kb", help="Optional TypePro third-party JSON knowledge-base directory")
+    parser.add_argument("--reuse-project-kb-from", type=Path,
+                        help="Reuse compatible frozen KBs from a prior shard build; source/slices are still rebuilt")
     parser.add_argument(
         "--build-import-kb", action=argparse.BooleanOptionalAction, default=True,
         help="Build third-party class JSON from packages imported by each cloned project",
@@ -862,6 +864,7 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
         "context_policy_version": "ast-context-v7-verified-signature-evidence",
         "candidate_definition_max_chars": DEFINITION_CHARS,
         "candidate_policy_version": CANDIDATE_POLICY,
+        "reuse_project_kb_from": str(args.reuse_project_kb_from.resolve()) if args.reuse_project_kb_from else None,
         "project_revision_lock": str(args.project_revision_lock.resolve()) if args.project_revision_lock else None,
         "project_revision_lock_sha256": sha256_file(args.project_revision_lock) if args.project_revision_lock else None,
         "project_revision_lock_projects": len(revision_lock),
@@ -949,7 +952,13 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
                 f"[project:clone:done] {project} seconds={time.monotonic() - phase_started:.1f}"
             )
             kb_summary = None
-            if args.build_import_kb:
+            from typepro.data.kb_reuse import reuse_project_kb
+            kb_reuse = reuse_project_kb(args.reuse_project_kb_from, project, commit,
+                                        project_kb_dir, args.retrieval_schema_version)
+            if kb_reuse:
+                tqdm.write(f"[project:kb:reused] {project} sha256={kb_reuse['sha256']}")
+                kb_summary = kb_reuse
+            if args.build_import_kb and not kb_reuse:
                 phase_started = time.monotonic()
                 tqdm.write(f"[project:kb:start] {project}")
                 kb_summary_path = status_dir / f"{slug}.kb-summary"
@@ -996,12 +1005,13 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
             ]
             if args.build_import_kb:
                 project_kb_command.extend(["--imports-dir", str(imports_kb_dir)])
-            run_logged(
-                project_kb_command,
-                python_dir,
-                status_dir / f"{slug}.project-kb.log",
-                timeout_seconds=args.project_analysis_timeout_seconds,
-            )
+            if not kb_reuse:
+                run_logged(
+                    project_kb_command,
+                    python_dir,
+                    status_dir / f"{slug}.project-kb.log",
+                    timeout_seconds=args.project_analysis_timeout_seconds,
+                )
             # Import retrieval must see only this project's package records.
             isolated_paths = [imports_kb_dir]
             if args.third_party_kb:
@@ -1071,9 +1081,11 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
                 "failed_annotations": len(project_rows) - exported,
                 "annotation_timeout_seconds": annotation_timeout,
                 "third_party_kb": kb_summary,
+                "kb_reuse": kb_reuse,
                 "project_kb": {
                     "path": str(project_kb_path.relative_to(work_dir)),
                     "bytes": project_kb_path.stat().st_size,
+                    "sha256": sha256_file(project_kb_path),
                 },
                 "completed_at": datetime.now(timezone.utc).isoformat(),
                 "exporter_tail": exporter_tail,

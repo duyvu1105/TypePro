@@ -463,6 +463,9 @@ def shard_notebook(
         EXPECTED_DATASET_OWNER = {expected_dataset_owner!r}
         PUBLISH_PUBLIC = {public_dataset!r}
         FORCE_PROJECTS = {force_projects!r}
+        # Reuse frozen KBs from this partition's attached previous Dataset.
+        # Slices, source catalogs and candidate scores are always regenerated.
+        REUSE_PROJECT_KB = True
         REPOSITORY = {repository!r}
         BRANCH = {branch!r}
         SEED = 13
@@ -658,10 +661,28 @@ def shard_notebook(
         code("""
         import json
         import zipfile
+        import sys
+        if str(REPO_DIR) not in sys.path:
+            sys.path.insert(0, str(REPO_DIR))
+        from typepro.data.kb_reuse import attached_build
 
         dataset_id = f"{publish_username}/typepro-build-shard-{SHARD_INDEX:02d}"
         if SHARD_COUNT == 40:
             dataset_id += "-of-40"
+        REUSE_KB_BUILD = None
+        if REUSE_PROJECT_KB:
+            input_slug = dataset_id.split("/", 1)[1]
+            input_roots = [Path("/kaggle/input") / input_slug,
+                           Path("/kaggle/input/datasets") / publish_username / input_slug]
+            for input_root in input_roots:
+                if input_root.exists():
+                    REUSE_KB_BUILD = attached_build(
+                        input_root, Path(f"/kaggle/working/reuse_kb_{SHARD_INDEX:02d}"),
+                        SHARD_INDEX, SHARD_COUNT,
+                    )
+                    if REUSE_KB_BUILD is not None:
+                        break
+            print("Frozen KB input:", REUSE_KB_BUILD or "unavailable; rebuild normally")
         resume_dir = Path(f"/kaggle/working/resume_shard_{SHARD_INDEX:02d}")
         resume_dir.mkdir(parents=True, exist_ok=True)
         probe = subprocess.run(
@@ -674,7 +695,7 @@ def shard_notebook(
             or any((WORK_DIR / "raw_slices").glob("*.jsonl"))
             or any((WORK_DIR / "project_status").glob("*.json"))
         )
-        if probe.returncode == 0 and not has_work:
+        if probe.returncode == 0 and not has_work and not REUSE_PROJECT_KB:
             download = subprocess.run(["kaggle", "datasets", "download", "-d", dataset_id, "-p", str(resume_dir), "--unzip"])
             if download.returncode != 0:
                 # Resume is optional. An existing listing may still have no
@@ -761,6 +782,7 @@ def shard_notebook(
             "--slice-index-timeout-seconds", SLICE_INDEX_TIMEOUT_SECONDS,
             "--clone-timeout-seconds", CLONE_TIMEOUT_SECONDS,
             "--retrieval-schema-version", RETRIEVAL_SCHEMA_VERSION,
+            *(["--reuse-project-kb-from", REUSE_KB_BUILD] if REUSE_KB_BUILD else []),
             # Repair runs can reuse compatible successful project outputs.
             *(["--force-projects"] if FORCE_PROJECTS else []),
             "--build-import-kb",
@@ -845,6 +867,7 @@ def shard_notebook(
         "initial_shard_index": index,
         "expected_dataset_owner": expected_dataset_owner or None,
         "public_dataset": public_dataset,
+        "reuse_project_kb": True,
     }
     return result
 

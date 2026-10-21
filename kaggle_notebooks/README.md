@@ -89,6 +89,47 @@ before merge. Do not publish or train the final dataset automatically.
 
 ## Shared project KB and masked source
 
+Candidate ranking now defaults to `candidate-lexical-v3`:
+
+```text
+5*direct + 3*usage + 2*symbol + 2*bm25 + name + 0.5*import
+    + 2*name_visible + lexical_overlap
+```
+
+`name_visible` is a single whole-token, case-insensitive match of the candidate
+short name anywhere in the complete masked slice, including imports/docstrings.
+`lexical_overlap` is `min(25, distinct shared tokens)/25`, comparing that slice
+with candidate name, qualified name and the complete masked definition.
+These are lexical evidence, independently of symbol resolution. Explicit
+unused imports retain their existing import points. Target annotations remain
+masked before scoring; gold labels are not inputs to the selector.
+
+Slice features are prepared once per selection. Definition features share the
+BM25 token scan and reuse a content-keyed LRU across annotations, capped at
+16,384 entries and 64 MiB of accounted retained data. Inputs over 32,768
+characters bypass the cache. Name similarities are cached only within one
+selection. These caches retain immutable text features, not ASTs or KB objects.
+Historical `candidate-weighted-v1` and `candidate-symbol-v2` remain selectable
+for comparison. A changed candidate policy forces project outputs to rebuild;
+merge rejects mixed policies. Regenerate/rerun shards to publish this policy;
+changing local code does not update existing datasets.
+
+Shard notebooks attach their own previous Dataset as a frozen KB input (one
+input per physical partition, under the same runner account). `REUSE_PROJECT_KB`
+defaults to `True`; scheduler and shard publisher accept `--no-reuse-project-kb`
+to disable both the attachment and reuse. The saved scheduler ledger binds this
+setting; use a fresh state when changing it.
+
+The slicing stage accepts `--reuse-project-kb-from BUILD_DIRECTORY`. Reuse
+requires the same source commit, current project-KB schema, retrieval schema,
+and context policy. The KB is copied byte-for-byte and its SHA256 is recorded
+in project status. Package import indexes are reconstructed from the stored
+external records because published shard archives omit transient import JSONs.
+Missing/incompatible projects build normally; malformed KBs fail rather than
+being trusted. Source is cloned at the pinned commit and analyzed again; raw
+slices, AST catalogs and candidate scores are regenerated using v3. Reuse freezes
+the previous dependency KB; a fresh unpinned dependency download can differ.
+
 The resolved-context rerun uses
 `context_policy_version=ast-context-v7-verified-signature-evidence`
 and masking stamp `typepro-shared-kb-masked-source-v7-resolved-bounded-context`.

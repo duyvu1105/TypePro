@@ -260,7 +260,8 @@ def render_shard_version(
     return rendered
 
 
-def render_part_version(template: dict[str, Any], plan: AccountPlan, part_index: int) -> dict[str, Any]:
+def render_part_version(template: dict[str, Any], plan: AccountPlan, part_index: int,
+                        *, reuse_project_kb: bool | None = None) -> dict[str, Any]:
     """Apply an explicit part publisher while preserving template ownership checks."""
     effective = plan_for_part(plan, part_index)
     template = copy.deepcopy(template)
@@ -269,6 +270,12 @@ def render_part_version(template: dict[str, Any], plan: AccountPlan, part_index:
             or bool(metadata.get('public_dataset')) != plan.public_dataset):
         raise RuntimeError('Template publisher does not match the logical shard plan')
     config = next(cell for cell in template['cells'] if CONFIG_TAG in cell.get('metadata', {}).get('tags', []))
+    if reuse_project_kb is not None:
+        config['source'], found = re.subn(r'^REUSE_PROJECT_KB = .+$',
+            f'REUSE_PROJECT_KB = {reuse_project_kb!r}', config['source'], flags=re.MULTILINE)
+        if found != 1:
+            raise RuntimeError('Expected one REUSE_PROJECT_KB assignment; regenerate notebooks')
+        metadata['reuse_project_kb'] = reuse_project_kb
     for name, value in (('EXPECTED_DATASET_OWNER', effective.dataset_owner),
                         ('PUBLISH_PUBLIC', effective.public_dataset)):
         config['source'], count = re.subn(r'^' + name + r' = .+$',
@@ -283,11 +290,14 @@ def render_part_version(template: dict[str, Any], plan: AccountPlan, part_index:
 
 
 def kernel_metadata(
-    plan: AccountPlan, code_file: str, *, part_index: int = 0
+    plan: AccountPlan, code_file: str, *, part_index: int = 0, reuse_project_kb: bool = False
 ) -> dict[str, Any]:
     plan = plan_for_part(plan, part_index)
     shard_index = plan.assigned_shards[0]
     kernel_slug = partition_kernel_slug(plan, part_index)
+    physical_index, physical_count = physical_partitions(shard_index)[part_index]
+    kb_dataset = (f'{plan.dataset_owner}/typepro-build-shard-{physical_index:02d}'
+                  + ('-of-40' if physical_count == 40 else ''))
     title = f"TypePro Python Shard {shard_index:02d}"
     if plan.independent_parts and shard_index == 2 and part_index > 0:
         title += f" Part 02 Subpart {part_index:02d}"
@@ -304,7 +314,7 @@ def kernel_metadata(
         "enable_gpu": False,
         "enable_internet": True,
         "keywords": [],
-        "dataset_sources": [],
+        "dataset_sources": [kb_dataset] if reuse_project_kb else [],
         "kernel_sources": [],
         "competition_sources": [],
         "model_sources": [],
@@ -341,7 +351,8 @@ def write_version(
         encoding="utf-8",
     )
     metadata_path.write_text(
-        json.dumps(kernel_metadata(plan, code_path.name, part_index=part_index), indent=2),
+        json.dumps(kernel_metadata(plan, code_path.name, part_index=part_index,
+            reuse_project_kb=bool(rendered.get('metadata', {}).get('typepro', {}).get('reuse_project_kb'))), indent=2),
         encoding="utf-8",
     )
     # Read both files back so a partial write can never be pushed.
@@ -449,6 +460,7 @@ def main(argv: list[str] | None = None) -> None:
         help="Push/render only this 1-based part; requires exactly one --shard",
     )
     parser.add_argument("--push", action="store_true")
+    parser.add_argument("--reuse-project-kb", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--check-status", action="store_true")
     args = parser.parse_args(argv)
     if args.push and args.check_status:
@@ -484,7 +496,7 @@ def main(argv: list[str] | None = None) -> None:
                 continue
             part_plan = plan_for_part(plan, part_index)
             credential = load_credential(credential_paths[part_plan.runner_account.casefold()], part_plan.runner_account)
-            rendered = render_part_version(template, plan, part_index)
+            rendered = render_part_version(template, plan, part_index, reuse_project_kb=args.reuse_project_kb)
             kernel_slug = partition_kernel_slug(plan, part_index)
             summary = {
                 "runner_account": part_plan.runner_account,

@@ -155,6 +155,8 @@ def test_optional_resume_download_failure_starts_fresh(tmp_path, monkeypatch, ca
     exec(compile(source, '<resume-cell>', 'exec'), {
         'Path': Path, 'subprocess': subprocess, 'publish_username': 'duyvu1105',
         'SHARD_INDEX': 2, 'SHARD_COUNT': 20, 'WORK_DIR': work,
+        'REUSE_PROJECT_KB': False,
+        'REPO_DIR': ROOT,
         'resume_test_path': str(tmp_path / 'resume'),
     })
     assert len(commands) == 2
@@ -211,6 +213,7 @@ def test_standalone_notebook_locks_publish_owner_and_single_shard():
         "initial_shard_index": 0,
         "expected_dataset_owner": "duyvu1105",
         "public_dataset": False,
+        "reuse_project_kb": True,
     }
 
 
@@ -249,6 +252,7 @@ def test_scheduler_defaults_to_remote_main_and_resumes_saved_revision(tmp_path, 
     rendered = json.loads(capsys.readouterr().out)
     assert rendered['revision'] == 'a' * 40
     assert len(rendered['jobs']) == 21
+    assert json.loads(state.read_text())['reuse_project_kb'] is True
     assert {account: sum(job['account'] == account for job in rendered['jobs'])
             for account in ('duyvu1105', 'duymign', 'vdduy1105')} == {
                 'duyvu1105': 7, 'duymign': 7, 'vdduy1105': 7}
@@ -272,6 +276,27 @@ def test_scheduler_defaults_to_remote_main_and_resumes_saved_revision(tmp_path, 
     resumed = json.loads(capsys.readouterr().out)
     assert resumed['revision'] == 'a' * 40
     assert resumed['jobs'][0]['status'] == 'submitted'
+
+
+@pytest.mark.parametrize('enabled', [True, False])
+def test_all_partitions_attach_only_their_own_kb_dataset(tmp_path, enabled):
+    _, _, plans=commit_shard_versions.load_plan(NOTEBOOK_DIR/'shard_account_plan.json')
+    expected=json.loads((NOTEBOOK_DIR/'shard_account_plan.json').read_text())['merge_datasets']
+    seen=[]
+    for plan in plans:
+        template=json.loads(plan.notebook_path.read_text())
+        for part,(index,count) in enumerate(commit_shard_versions.physical_partitions(plan.assigned_shards[0])):
+            rendered=commit_shard_versions.render_part_version(template,plan,part,reuse_project_kb=enabled)
+            effective=commit_shard_versions.plan_for_part(plan,part)
+            dest=tmp_path/effective.runner_account/str(index)
+            commit_shard_versions.write_version(dest,effective,rendered,part_index=part)
+            metadata=json.loads((dest/'kernel-metadata.json').read_text())
+            entry=next(e for e in expected if (e['shard_index'],e['shard_count'])==(index,count))
+            assert metadata['dataset_sources']==([entry['dataset_id']] if enabled else [])
+            assert entry['dataset_id'].split('/')[0]==effective.runner_account
+            assert f'REUSE_PROJECT_KB = {enabled!r}' in source_with_tag(rendered,commit_shard_versions.CONFIG_TAG)
+            seen.append((index,count))
+    assert len(seen)==len(set(seen))==21
 
 
 def test_scheduler_new_run_archives_old_ledger_and_resolves_latest(tmp_path, monkeypatch, capsys):

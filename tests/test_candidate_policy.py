@@ -42,7 +42,8 @@ def test_five_components_and_weights():
     text = 'class Client: pass'
     score, parts = score_candidate(item, text, 'Client', text,
                                   {'methods': ['get', 'missing']},
-                                  {'direct': {'app.Client'}, 'import': {'app.Client'}})
+                                  {'direct': {'app.Client'}, 'import': {'app.Client'}},
+                                  policy=LEGACY_POLICY)
     assert parts['direct'] == parts['import'] == parts['name'] == 1
     assert parts['usage'] == .5
     assert 0 <= parts['bm25'] <= 1

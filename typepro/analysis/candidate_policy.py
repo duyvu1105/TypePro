@@ -4,8 +4,12 @@ from __future__ import annotations
 import ast
 import copy
 import re
+import sys
+from collections import OrderedDict, namedtuple
+from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from functools import lru_cache
+from threading import RLock
 
 from typepro.analysis.ast_context_slicer import (
     FUNCTIONS,
@@ -18,10 +22,12 @@ from typepro.analysis.BM25 import bm25_similarity
 from typepro.analysis.signature_contracts import imported_name, opaque
 
 LEGACY_POLICY = 'candidate-weighted-v1'
-POLICY = 'candidate-symbol-v2'
-SUPPORTED_POLICIES = frozenset({LEGACY_POLICY, POLICY})
+SYMBOL_POLICY = 'candidate-symbol-v2'
+POLICY = 'candidate-lexical-v3'
+SUPPORTED_POLICIES = frozenset({LEGACY_POLICY, SYMBOL_POLICY, POLICY})
 LEGACY_WEIGHTS = {'direct': 5.0, 'usage': 3.0, 'bm25': 2.0, 'name': 1.0, 'import': 0.5}
-WEIGHTS = {'direct': 5.0, 'usage': 3.0, 'symbol': 2.0, 'bm25': 2.0, 'name': 1.0, 'import': 0.5}
+SYMBOL_WEIGHTS = {'direct': 5.0, 'usage': 3.0, 'symbol': 2.0, 'bm25': 2.0, 'name': 1.0, 'import': 0.5}
+WEIGHTS = {**SYMBOL_WEIGHTS, 'name_visible': 2.0, 'lexical_overlap': 1.0}
 MIN_SCORE = 1.0
 MAX_CANDIDATES = 10
 TOTAL_CHARS = 16000
@@ -33,6 +39,87 @@ STOP_WORDS = {
     'from', 'if', 'import', 'in', 'none', 'not', 'or', 'pass', 'return',
     'self', 'true', 'with', 'yield',
 }
+TOKEN_PATTERN = re.compile(r'[A-Za-z_]\w*')
+COMPACT_PATTERN = re.compile(r'[^a-z0-9]')
+
+
+@dataclass(slots=True)
+class ScoringQuery:
+    text: str
+    tokens: frozenset[str]
+    target: str
+    members: frozenset[str]
+    # Per-selection cache: duplicate class names do not repeat SequenceMatcher.
+    names: dict[str, float] = field(default_factory=dict)
+
+
+def prepare_scoring_query(target_name, code_slice, members):
+    text, tokens = lexical_text(code_slice)
+    wanted = frozenset((members or {}).get('methods', ())) | frozenset(
+        (members or {}).get('attributes', ()))
+    return ScoringQuery(text, tokens, COMPACT_PATTERN.sub('', target_name.casefold()), wanted)
+
+
+def _lexical_text(text):
+    # One scan supplies both unchanged BM25 text and whole-slice lexical tokens.
+    tokens = tuple(token.casefold() for token in TOKEN_PATTERN.findall(text))
+    return ' '.join(token for token in tokens if token not in STOP_WORDS), frozenset(tokens)
+
+
+_LexicalCacheInfo = namedtuple('LexicalCacheInfo', 'hits misses maxsize currsize retained_bytes')
+
+
+class _LexicalCache:
+    """Keep project-sized immutable features under an explicit memory budget."""
+    def __init__(self, maxsize=16384, maxbytes=64 * 1024 * 1024):
+        self.maxsize, self.maxbytes = maxsize, maxbytes
+        self.entries = OrderedDict()
+        self.retained_bytes = self.hits = self.misses = 0
+        self.lock = RLock()
+
+    def __call__(self, text):
+        with self.lock:
+            entry = self.entries.get(text)
+            if entry is not None:
+                self.hits += 1
+                self.entries.move_to_end(text)
+                return entry[0]
+            self.misses += 1
+        result = _lexical_text(text)
+        # Include string/set storage plus an allowance for the LRU entry.
+        size = (sys.getsizeof(text) + sys.getsizeof(result[0]) + sys.getsizeof(result[1])
+                + sum(sys.getsizeof(token) for token in result[1]) + 256)
+        if size > self.maxbytes:
+            return result
+        with self.lock:
+            previous = self.entries.pop(text, None)
+            if previous is not None:
+                self.retained_bytes -= previous[1]
+            while self.entries and (len(self.entries) >= self.maxsize
+                                    or self.retained_bytes + size > self.maxbytes):
+                _, (_, removed_size) = self.entries.popitem(last=False)
+                self.retained_bytes -= removed_size
+            self.entries[text] = (result, size)
+            self.retained_bytes += size
+        return result
+
+    def cache_clear(self):
+        with self.lock:
+            self.entries.clear()
+            self.retained_bytes = self.hits = self.misses = 0
+
+    def cache_info(self):
+        with self.lock:
+            return _LexicalCacheInfo(self.hits, self.misses, self.maxsize,
+                                     len(self.entries), self.retained_bytes)
+
+
+_cached_lexical_text = _LexicalCache()
+
+
+def lexical_text(text):
+    """Immutable features of exact masked content; bounded entries and input size."""
+    return _cached_lexical_text(text) if len(text) <= 32768 else _lexical_text(text)
 
 
 def _structural_text(text):
@@ -66,31 +153,62 @@ _cached_definition_members = lru_cache(maxsize=128)(_definition_members)
 
 
 def score_candidate(item, definition, target_name, code_slice, members, evidence, *, query_text=None,
-                    policy=POLICY):
+                    query_tokens=None, query_context=None, policy=POLICY):
     """Components in [0, 1]; seed position gives no points."""
     if policy not in SUPPORTED_POLICIES:
         raise ValueError(f'Unknown candidate policy: {policy}')
     qualified = str(item.get('qualified_name') or item['name'])
-    wanted = set((members or {}).get('methods', ())) | set((members or {}).get('attributes', ()))
-    available = set(item.get('members', ()))
+    wanted = (query_context.members if query_context is not None else
+              set((members or {}).get('methods', ())) | set((members or {}).get('attributes', ())))
+    available = set(item.get('members', ())) if wanted else ()
     if wanted and not available:
         available.update(_cached_definition_members(definition) if len(definition) <= 32768
                          else _definition_members(definition))
-    compact = lambda value: re.sub(r'[^a-z0-9]', '', value.casefold())
-    left, right = compact(target_name), compact(str(item['name']))
-    if query_text is None:
-        query_text = structural_text(code_slice)
-    document_text = structural_text(definition)
+    if query_context is None:
+        left = COMPACT_PATTERN.sub('', target_name.casefold())
+        right = COMPACT_PATTERN.sub('', str(item['name']).casefold())
+        similarity = SequenceMatcher(None, left, right).ratio() if left and right else 0.0
+    else:
+        name = str(item['name'])
+        if name not in query_context.names:
+            right = COMPACT_PATTERN.sub('', name.casefold())
+            left = query_context.target
+            query_context.names[name] = SequenceMatcher(None, left, right).ratio() if left and right else 0.0
+        similarity = query_context.names[name]
+        query_text, query_tokens = query_context.text, query_context.tokens
+    if policy == POLICY:
+        if query_tokens is None:
+            prepared_text, query_tokens = lexical_text(code_slice)
+            if query_text is None:
+                query_text = prepared_text
+        elif query_text is None:
+            query_text = structural_text(code_slice)
+        document_text, document_tokens = lexical_text(definition)
+    else:
+        if query_text is None:
+            query_text = structural_text(code_slice)
+        document_text = structural_text(definition)
     components = {
         'direct': float(qualified in evidence.get('direct', ())),
         'usage': len(wanted & available) / len(wanted) if wanted else 0.0,
         'bm25': bm25_similarity(query_text, document_text) if query_text and document_text else 0.0,
-        'name': SequenceMatcher(None, left, right).ratio() if left and right else 0.0,
+        'name': similarity,
         'import': float(qualified in evidence.get('import', ())),
     }
     if policy != LEGACY_POLICY:
         components['symbol'] = float(evidence.get('symbol', {}).get(qualified, 0.0))
-    weights = LEGACY_WEIGHTS if policy == LEGACY_POLICY else WEIGHTS
+    if policy == POLICY:
+        overlap = len(query_tokens.intersection(document_tokens))
+        # Avoid allocating/tokenizing the header once the overlap is saturated.
+        if overlap < 25 and query_tokens:
+            header_tokens = frozenset(token.casefold() for token in
+                                      TOKEN_PATTERN.findall(str(item['name']) + ' ' + qualified))
+            overlap += sum(token in query_tokens and token not in document_tokens
+                           for token in header_tokens)
+        components['name_visible'] = float(str(item['name']).casefold() in query_tokens)
+        components['lexical_overlap'] = min(25, overlap) / 25.0
+    weights = (LEGACY_WEIGHTS if policy == LEGACY_POLICY else
+               SYMBOL_WEIGHTS if policy == SYMBOL_POLICY else WEIGHTS)
     score = sum(weights[key] * components[key] for key in weights)
     return score, components
 
