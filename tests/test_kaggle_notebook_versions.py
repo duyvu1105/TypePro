@@ -17,6 +17,31 @@ import recover_shard_version
 import schedule_shards
 
 
+@pytest.mark.parametrize('republish', [False, True])
+def test_merge_payload_pins_source_before_installing_and_preserves_inputs(tmp_path, republish):
+    import hashlib
+
+    revision = 'a' * 40
+    bundle = b'test source bundle'
+    commit_merge_finalize.write_payload(tmp_path, republish=republish,
+                                        revision=revision, source_bundle=bundle)
+    notebook = json.loads((tmp_path / 'typepro_merge_finalize.ipynb').read_text())
+    metadata = json.loads((tmp_path / 'kernel-metadata.json').read_text())
+    assert notebook['metadata']['typepro'] == {
+        'source_revision': revision,
+        'source_bundle_sha256': hashlib.sha256(bundle).hexdigest(),
+    }
+    source = next(''.join(c['source']) for c in notebook['cells']
+                  if '"git", "clone"' in ''.join(c.get('source', [])))
+    assert source.index('_bundle_hashlib.sha256') < source.index('PIPELINE_DIR =')
+    assert revision in source
+    if republish:
+        assert metadata['kernel_sources'] == ['duyvu1105/merge-dataset']
+    else:
+        assert metadata['dataset_sources'] == commit_merge_finalize.merge_dataset_ids()
+        assert len(metadata['dataset_sources']) == 21
+
+
 def test_embedded_bundle_checks_out_exact_commit_without_remote_push(tmp_path):
     from generate_notebooks import pinned_checkout_source
     def git(*args, cwd):
