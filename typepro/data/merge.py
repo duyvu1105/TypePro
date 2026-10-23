@@ -69,14 +69,14 @@ def main() -> None:
             runtime = json.loads((build / 'runtime_manifest.json').read_text(encoding='utf-8'))
             if runtime.get('retrieval_schema_version') != args.expected_retrieval_schema:
                 raise ValueError(f'Incompatible retrieval schema: {build}')
-            if runtime.get('context_policy_version') != 'ast-context-v7-verified-signature-evidence':
+            if runtime.get('context_policy_version') != 'ast-context-v8-type-evidence-stop':
                 raise ValueError(f'Incompatible context policy: {build}')
             for raw_file in (build / 'raw_slices').glob('*.jsonl'):
                 with raw_file.open(encoding='utf-8') as handle:
                     for line in handle:
                         if line.strip():
                             row = json.loads(line)
-                            if row.get('target_masking_version') != 'typepro-shared-kb-masked-source-v7-resolved-bounded-context' or row.get('context_policy_version') != 'ast-context-v7-verified-signature-evidence':
+                            if row.get('target_masking_version') != 'typepro-shared-kb-masked-source-v7-resolved-bounded-context' or row.get('context_policy_version') != 'ast-context-v8-type-evidence-stop':
                                 raise ValueError(f'Unmasked legacy record or incompatible context policy: {raw_file}')
                             maximum = DEFINITION_CHARS if row.get('candidate_policy_version') in SUPPORTED_POLICIES else 8000
                             if row.get('candidate_definition_max_chars') != maximum or any(len(str(item.get('definition') or '')) > maximum for item in row.get('recommendation_types', [])):

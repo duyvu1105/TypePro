@@ -79,7 +79,7 @@ def main() -> None:
                 ):
                     errors.append(f"{split}:{line_number}: invalid recommendation entry")
                     break
-                if row.get('context_policy_version') == 'ast-context-v7-verified-signature-evidence' and any(
+                if row.get('context_policy_version') == 'ast-context-v8-type-evidence-stop' and any(
                     len(item['definition']) > 8000 for item in row['recommendation_types']
                 ):
                     errors.append(f"{split}:{line_number}: candidate definition exceeds 8000 characters")

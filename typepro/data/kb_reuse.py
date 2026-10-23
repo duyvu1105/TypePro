@@ -76,7 +76,7 @@ def reuse_project_kb(source_build: Path | None, project: str, commit: str,
     if (status.get('project') != project or status.get('commit') != commit
             or runtime.get('retrieval_schema_version') != retrieval_schema
             or status.get('retrieval_schema_version') != retrieval_schema
-            or runtime.get('context_policy_version') != 'ast-context-v7-verified-signature-evidence'):
+            or runtime.get('context_policy_version') not in {'ast-context-v7-verified-signature-evidence', 'ast-context-v8-type-evidence-stop'}):
         return None
     payload = kb_path.read_bytes()
     digest = hashlib.sha256(payload).hexdigest()

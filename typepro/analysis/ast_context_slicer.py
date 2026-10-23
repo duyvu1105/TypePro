@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 FUNCTIONS = (ast.FunctionDef, ast.AsyncFunctionDef)
-POLICY = 'ast-context-v7-verified-signature-evidence'
+POLICY = 'ast-context-v8-type-evidence-stop'
 CANDIDATE_DEFINITION_MAX_CHARS = 8000
 
 
@@ -67,13 +67,14 @@ class Reduction:
                     retained_evidence=self.evidence)
 
 
-def reduce_function(function, parameters=(), returns=False, *, seed_calls=(), include_exits=True):
+def reduce_function(function, parameters=(), returns=False, *, seed_calls=(), include_exits=True,
+                    type_dependencies=None):
     """Select evidence recursively, keeping enclosing control dependencies.
 
     Target exits are preserved by default. Parameter-only callee supplements
     can disable exit seeds; callers seed the exact resolved call instead.
     """
-    return _reduce_recursive(function, parameters, returns, seed_calls, include_exits)
+    return _reduce_recursive(function, parameters, returns, seed_calls, include_exits, type_dependencies)
 
 
 def data_names(node):
@@ -272,7 +273,7 @@ def limit_candidate_definition(definition, maximum=CANDIDATE_DEFINITION_MAX_CHAR
                   'omitted_declarations': omitted}
 
 
-def _reduce_recursive(function, parameters, returns, seed_calls, include_exits):
+def _reduce_recursive(function, parameters, returns, seed_calls, include_exits, type_dependencies=None):
     result = ast.parse(ast.unparse(function)).body[0]
     before = sum(isinstance(n, ast.stmt) for s in function.body for n in ast.walk(s))
     for statement in function.body:
@@ -305,7 +306,8 @@ def _reduce_recursive(function, parameters, returns, seed_calls, include_exits):
                 collect(child_body, (*ancestors, statement))
     collect(function.body)
     compound = {id(s) for ancestors in parents.values() for s in ancestors}
-    references = {id(s): data_names(headers[id(s)]) for s in nodes}
+    dependencies = type_dependencies.statement_dependencies if type_dependencies is not None else data_names
+    references = {id(s): dependencies(headers[id(s)]) for s in nodes}
     writes, receivers = {}, {}
     flow = set(parameters)
     for s in nodes:
@@ -373,6 +375,15 @@ def _reduce_recursive(function, parameters, returns, seed_calls, include_exits):
         early_exit = seeds and isinstance(statement, (ast.Return, ast.Raise)) and statement.lineno <= max(call.lineno for call in seed_calls)
         if (not seeds and (include_exits or returns) and has_exit) or early_exit or any(id(n) in seeds for n in ast.walk(statement)):
             choose(statement)
+    if type_dependencies is not None and type_dependencies.proofs:
+        # Cleanup can mutate aliases, override a return or raise. A value-type
+        # barrier must not erase its input dependencies or finally semantics.
+        for statement in nodes:
+            if isinstance(statement, ast.Try):
+                final_ids = {id(n) for s in statement.finalbody for n in ast.walk(s)}
+                for child in nodes:
+                    if id(child) in final_ids:
+                        choose(child)
     if not live and not selected:
         return Reduction(result, 'full_fallback', 'no_dependency_seed', before, before)
     while True:

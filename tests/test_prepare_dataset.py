@@ -42,7 +42,7 @@ def test_resume_retries_syntax_errors_but_keeps_other_completed_projects(tmp_pat
     args = parse_args()
     runtime = dict(retrieval_schema_version=args.retrieval_schema_version,
                    candidate_policy_version=prepare_dataset_module.CANDIDATE_POLICY,
-                   context_policy_version='ast-context-v7-verified-signature-evidence')
+                   context_policy_version='ast-context-v8-type-evidence-stop')
     prepare_dataset_module.write_json(tmp_path / 'runtime_manifest.json', runtime)
     status = dict(runtime, project='owner/repository', annotations=1, exported=1,
                   export_summary={'exceptions_by_type': exceptions} if exceptions is not None else None)

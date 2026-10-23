@@ -107,3 +107,17 @@ def test_pipeline_reuses_kb_but_regenerates_export(tmp_path,monkeypatch):
     assert status['candidate_policy_version']=='candidate-lexical-v3'
     assert status['kb_reuse']['sha256']==hashlib.sha256((source/'project_kb/owner__repo/knowledge_base.json').read_bytes()).hexdigest()
     assert (work/'raw_slices/owner__repo.jsonl').read_text()=='{"new":true}\n'
+
+
+def test_type_evidence_context_reuses_unchanged_kb_bytes(tmp_path):
+    from typepro.analysis.ast_context_slicer import POLICY
+    source = tmp_path / 'source'
+    frozen(source)
+    runtime_path = source / 'runtime_manifest.json'
+    runtime = json.loads(runtime_path.read_text())
+    runtime['context_policy_version'] = POLICY
+    write(runtime_path, runtime)
+    info = reuse_project_kb(source, 'owner/repo', COMMIT, tmp_path / 'dest', SCHEMA)
+    assert info['reused']
+    assert (tmp_path / 'dest/knowledge_base.json').read_bytes() == (
+        source / 'project_kb/owner__repo/knowledge_base.json').read_bytes()

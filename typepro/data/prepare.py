@@ -838,7 +838,7 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
                         if previous_runtime_path.exists() else {})
     if (previous_runtime.get('retrieval_schema_version') != args.retrieval_schema_version
             or previous_runtime.get('candidate_policy_version') != CANDIDATE_POLICY
-            or previous_runtime.get('context_policy_version') != 'ast-context-v7-verified-signature-evidence'):
+            or previous_runtime.get('context_policy_version') != 'ast-context-v8-type-evidence-stop'):
         # Keep source/download caches, but never skip old completed outputs.
         args.force_projects = True
     write_json(work_dir / "runtime_manifest.json", {
@@ -861,7 +861,7 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
         "only_project_list": str(args.only_project_list.resolve()) if args.only_project_list else None,
         "only_project_count": len(only_projects) if only_projects is not None else None,
         "retrieval_schema_version": args.retrieval_schema_version,
-        "context_policy_version": "ast-context-v7-verified-signature-evidence",
+        "context_policy_version": "ast-context-v8-type-evidence-stop",
         "candidate_definition_max_chars": DEFINITION_CHARS,
         "candidate_policy_version": CANDIDATE_POLICY,
         "reuse_project_kb_from": str(args.reuse_project_kb_from.resolve()) if args.reuse_project_kb_from else None,
@@ -925,7 +925,7 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
             and not args.force_projects
             and existing_status.get('retrieval_schema_version') == args.retrieval_schema_version
             and existing_status.get('candidate_policy_version') == CANDIDATE_POLICY
-            and existing_status.get('context_policy_version') == 'ast-context-v7-verified-signature-evidence'
+            and existing_status.get('context_policy_version') == 'ast-context-v8-type-evidence-stop'
             and (not expected_commit or existing_status.get('commit') == expected_commit)
             # Old import-evidence parse failures can leave a partial output
             # marked complete. Retry that project with the corrected exporter.
@@ -1073,7 +1073,7 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
                 "project": project,
                 "commit": commit,
                 "retrieval_schema_version": args.retrieval_schema_version,
-                "context_policy_version": "ast-context-v7-verified-signature-evidence",
+                "context_policy_version": "ast-context-v8-type-evidence-stop",
                 "candidate_definition_max_chars": DEFINITION_CHARS,
                 "candidate_policy_version": CANDIDATE_POLICY,
                 "annotations": len(project_rows),

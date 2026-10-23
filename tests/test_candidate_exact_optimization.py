@@ -132,7 +132,7 @@ def test_old_and_optimized_shards_merge_with_identical_contract(tmp_path, monkey
         (build / 'metadata').mkdir(parents=True)
         (build / 'metadata/split_manifest.json').write_text('{"split_profile":"paper_project"}')
         runtime = {'retrieval_schema_version': schema, 'candidate_policy_version': policy.LEGACY_POLICY,
-                   'context_policy_version': 'ast-context-v7-verified-signature-evidence',
+                   'context_policy_version': 'ast-context-v8-type-evidence-stop',
                    'project_revision_lock_sha256': 'same-locked-project-revisions',
                    'revision_lock_source': {'version': 13}, 'revision_lock_policy': 'exact',
                    'code_revision': name}

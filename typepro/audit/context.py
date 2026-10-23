@@ -15,7 +15,7 @@ from typepro.analysis.candidate_policy import (
     SUPPORTED_POLICIES, DEFINITION_CHARS, TOTAL_CHARS, candidate_section,
 )
 
-POLICY = 'ast-context-v7-verified-signature-evidence'
+POLICY = 'ast-context-v8-type-evidence-stop'
 MASKING = 'typepro-shared-kb-masked-source-v7-resolved-bounded-context'
 MAX_DEFINITION_CHARS = 8000
 

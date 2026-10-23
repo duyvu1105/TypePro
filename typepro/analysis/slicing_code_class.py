@@ -627,7 +627,19 @@ class Slicer:
         return list(dict.fromkeys(values))
 
     def reduced_target(self, function, parameters=(), returns=False):
-        reduction = reduce_function(function, parameters, returns)
+        from typepro.analysis.type_evidence import TypeDependencies
+        catalog = getattr(self.Funcion_methods, 'context_catalog', None)
+        clean = getattr(self.Funcion_methods, 'context_masker', lambda text: text)
+        # Argument uses constrain admissible types, not a unique annotation.
+        # Preserve every use/caller; only return value edges can stop early.
+        type_dependencies = TypeDependencies(catalog, self.file_name, function, clean) if returns and not parameters else None
+        if type_dependencies is not None and not type_dependencies.proofs:
+            type_dependencies = None
+        reduction = reduce_function(function, parameters, returns, type_dependencies=type_dependencies)
+        dependency_names = type_dependencies.dependencies if type_dependencies is not None else data_names
+        def call_results(value):
+            return (type_dependencies.result_calls(value) if type_dependencies is not None else
+                    {id(n) for n in ast.walk(value) if isinstance(n, ast.Call)})
         self.context_function = function
         self.context_names = set(parameters)
         # Track target aliases, without treating every name in its component
@@ -648,8 +660,8 @@ class Slicer:
         if returns:
             for s in ast.walk(reduction.node):
                 if isinstance(s, (ast.Return, ast.Yield, ast.YieldFrom)) and s.value is not None:
-                    result_names.update(data_names(s.value))
-                    result_calls.update(id(n) for n in ast.walk(s.value) if isinstance(n, ast.Call))
+                    result_names.update(dependency_names(s.value))
+                    result_calls.update(call_results(s.value))
             changed = True
             while changed:
                 previous = len(result_names)
@@ -657,15 +669,21 @@ class Slicer:
                     if isinstance(s, (ast.Assign, ast.AnnAssign)) and s.value is not None:
                         targets = s.targets if isinstance(s, ast.Assign) else [s.target]
                         if any(data_names(t) & result_names for t in targets):
-                            result_names.update(data_names(s.value))
-                            result_calls.update(id(n) for n in ast.walk(s.value) if isinstance(n, ast.Call))
+                            result_names.update(dependency_names(s.value))
+                            result_calls.update(call_results(s.value))
                     elif isinstance(s, ast.Call) and isinstance(s.func, ast.Attribute) and data_names(s.func.value) & result_names:
                         for value in [*s.args, *(k.value for k in s.keywords)]:
-                            result_names.update(data_names(value))
-                            result_calls.update(id(n) for n in ast.walk(value) if isinstance(n, ast.Call))
+                            result_names.update(dependency_names(value))
+                            result_calls.update(call_results(value))
                 changed = previous != len(result_names)
         self.context_result_calls = result_calls
         self.context_diagnostics.append(dict(component='target', **reduction.diagnostics()))
+        if type_dependencies is not None and type_dependencies.proofs:
+            self.context_diagnostics.append(dict(
+                component='type_evidence', mode='bounded_value_dependencies',
+                reason='verified_contracts_only',
+                boundaries=list(type_dependencies.proofs.values()),
+                argument_uses_preserved=True, mutable_value_dependencies_preserved=True))
         related = []
         # One hop only. Called function bodies are not recursively expanded.
         for node in lexical_nodes(reduction.node):
