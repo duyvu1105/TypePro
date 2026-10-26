@@ -220,7 +220,9 @@ any authorized real launch.
 ## Kaggle launch preparation (2026-10-26)
 
 The user explicitly authorized this run from `experiment/graph-context-v1`
-instead of main, and requested retaining the v24 dependency KBs for comparison.
+instead of main, and allowed using the latest dependency KB version, frozen
+before launching. This changes dependency provenance relative to the historical
+v24 baseline; dataset-wide results must not claim identical dependency inputs.
 The 51,735-target roster and labels were checked against a compact projection
 of the original v24 splits; both are identical. The frozen tokenizer includes
 its separate chat-template file and matches the earlier measurement fingerprint.
