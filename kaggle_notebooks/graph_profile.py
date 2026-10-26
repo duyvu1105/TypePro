@@ -17,13 +17,46 @@ def mounted_dataset(reference,marker):
     owner,slug=reference.split('/')[:2]
     base=Path('/kaggle/input')
     candidates=[base/slug,base/'datasets'/owner/slug,base/owner/slug]
-    matches=[p for p in candidates if (p/marker).is_file()]
+    matches=[p for p in candidates if p.is_dir() and (marker is None or (p/marker).is_file())]
     if not matches:
-        matches=[p.parent for p in base.rglob(marker) if p.parent.name==slug]
+        matches=([p for p in base.rglob(slug) if p.is_dir()] if marker is None else
+                 [p.parent for p in base.rglob(marker) if p.parent.name==slug])
     matches=list({p.resolve():p for p in matches}.values())
     if len(matches)!=1:
         raise RuntimeError('Cannot locate unique Dataset mount: '+reference+'; input roots: '+str(list(base.iterdir())))
     return matches[0]
+'''
+
+
+def graph_auth_source(expected_expression,final=False):
+    prefix='TYPEPRO_FINAL' if final else 'TYPEPRO_PUBLISH'
+    return 'EXPECTED_OWNER='+expected_expression+'\nSECRET_PREFIX='+repr(prefix)+'\n'+'''
+from kaggle_secrets import UserSecretsClient
+secrets=UserSecretsClient()
+def optional_secret(name):
+    try:
+        return secrets.get_secret(name) or None
+    except Exception:
+        return None
+username=optional_secret(SECRET_PREFIX+'_USERNAME')
+key=optional_secret(SECRET_PREFIX+'_KEY')
+if bool(username)!=bool(key):
+    raise RuntimeError('Publisher Secrets require a complete username/key pair')
+if username is None:
+    username=optional_secret('KAGGLE_USERNAME')
+    key=optional_secret('KAGGLE_KEY')
+    if bool(username)!=bool(key):
+        raise RuntimeError('Legacy publisher Secrets require a complete pair')
+if username is not None and username.casefold()!=EXPECTED_OWNER.casefold():
+    raise RuntimeError('Publisher credential username mismatch')
+if key:
+    auth_dir=Path('/kaggle/working/graph-publish-auth')
+    auth_dir.mkdir(exist_ok=True)
+    os.environ['KAGGLE_CONFIG_DIR']=str(auth_dir)
+    os.environ['KAGGLE_KEY']=key
+    os.environ.pop('KAGGLE_API_TOKEN',None)
+os.environ['KAGGLE_USERNAME']=EXPECTED_OWNER
+print({'publish_owner':EXPECTED_OWNER,'authentication':'explicit Secret' if key else 'Kaggle notebook host'})
 '''
 
 
@@ -33,7 +66,7 @@ def render_input_freezer(spec_path, output):
     spec=json.loads(Path(spec_path).read_text())
     if not re.fullmatch(r'[A-Za-z0-9_-]+/[a-z0-9-]+/[1-9][0-9]*',spec['baseline_dataset']):
         raise ValueError('Input freezer requires an exact baseline Dataset version')
-    source='SPEC='+repr(spec)+'\n'+'''import hashlib, json
+    source='SPEC='+repr(spec)+'\n'+'''import base64, hashlib, json
 from pathlib import Path
 
 def sha256(path):
@@ -44,13 +77,15 @@ def sha256(path):
     return value.hexdigest()
 
 root=mounted_dataset(SPEC['baseline_dataset'],'manifest.json')
-if sha256(root/'manifest.json')!=SPEC['baseline_manifest_sha256']:
+mount_hash=sha256(root/'manifest.json')
+if mount_hash!=SPEC['baseline_manifest_sha256'] and not SPEC.get('kb_checksums'):
     raise RuntimeError('Attached Dataset is not the frozen v24 baseline')
 manifest=json.loads((root/'manifest.json').read_text())
-for split in ('train','validation','test'):
-    record=manifest['output'][split]
-    if sha256(root/record['file'])!=record['sha256']:
-        raise RuntimeError('Frozen baseline split mismatch: '+split)
+if mount_hash==SPEC['baseline_manifest_sha256']:
+    for split in ('train','validation','test'):
+        record=manifest['output'][split]
+        if sha256(root/record['file'])!=record['sha256']:
+            raise RuntimeError('Frozen baseline split mismatch: '+split)
 original_index=json.loads((root/'project_kb_index.json').read_text())
 index={}
 locks={}
@@ -68,6 +103,16 @@ for number,project in enumerate(SPEC['projects'],1):
     if len(matches)!=1:
         raise RuntimeError('Missing or ambiguous frozen KB: '+project)
     path=matches[0]
+    if SPEC.get('kb_checksums'):
+        record=SPEC['kb_checksums'][project]
+        if path.relative_to(root).as_posix()!=record['path'] or path.stat().st_size!=record['bytes']:
+            raise RuntimeError('Mounted KB differs from exact v24 object: '+project)
+        md5=hashlib.md5()
+        with path.open('rb') as handle:
+            while block:=handle.read(1024*1024):
+                md5.update(block)
+        if base64.b64encode(md5.digest()).decode()!=record['md5']:
+            raise RuntimeError('Mounted KB checksum differs from v24: '+project)
     # Inspect one KB at a time, retaining neither records nor annotated indexes.
     kb=json.loads(path.read_text())
     if kb.get('schema_version')!='typepro-project-kb-v7-source-evidence':
@@ -79,6 +124,7 @@ for number,project in enumerate(SPEC['projects'],1):
         print({'hashed_projects':number,'total':len(SPEC['projects'])},flush=True)
 output=Path('/kaggle/working/frozen-locks')
 output.mkdir()
+SPEC['dependency_mount_manifest_sha256']=mount_hash
 for name,value in [('dependency_locks.json',locks),('project_kb_index.json',index),('freeze_provenance.json',SPEC)]:
     (output/name).write_text(json.dumps(value,indent=2)+'\\n')
 print({'frozen_projects':len(locks),'baseline_dataset':SPEC['baseline_dataset']})
@@ -143,7 +189,7 @@ def run(command):
     subprocess.run([str(v) for v in command],check=True)
 
 REPO_DIR=Path('/kaggle/working/TypePro')
-run([sys.executable,'-m','pip','install','-q','transformers','torch','kaggle==1.7.4.2'])
+run([sys.executable,'-m','pip','install','-q','transformers==4.57.6','tokenizers==0.22.2','torch','kaggle==1.7.4.2'])
 run(['git','clone','--no-checkout','https://github.com/duyvu1105/TypePro.git',REPO_DIR])
 '''+pinned_checkout_source(profile['revision'],source_bundle)+'''
 sys.path.insert(0,str(REPO_DIR))
@@ -166,11 +212,14 @@ roster=[r for r in roster if stable_number(r['target']['project'],17)%JOB['shard
 source_locks=json.loads((INPUT/'source_locks.json').read_text())
 dependency_locks=json.loads((INPUT/'dependency_locks.json').read_text())
 tokenizer=AutoTokenizer.from_pretrained(INPUT/'tokenizer',local_files_only=True)
+from typepro.shared.context_packing import tokenizer_fingerprint
+if locks.get('tokenizer_fingerprint') and tokenizer_fingerprint(tokenizer)!=locks['tokenizer_fingerprint']:
+    raise RuntimeError('Frozen tokenizer fingerprint mismatch')
 dependency_root=INPUT/'baseline'
 dependency_index=None
 if PROFILE.get('dependency_dataset'):
     dependency_root=mounted_dataset(PROFILE['dependency_dataset'],'manifest.json')
-    if sha256(dependency_root/'manifest.json')!=locks['baseline_manifest_sha256']:
+    if sha256(dependency_root/'manifest.json')!=locks.get('dependency_mount_manifest_sha256',locks['baseline_manifest_sha256']):
         raise RuntimeError('Frozen dependency Dataset version mismatch')
     dependency_index=json.loads((INPUT/'project_kb_index.json').read_text())
 OUTPUT=Path('/kaggle/working/graph-context-v1')
@@ -180,20 +229,11 @@ manifest=export_graph_dataset(roster,labels,Path('/kaggle/working/graph-sources'
 print({'outcomes':manifest['outcomes'],'targets':manifest['total_targets'],'revision':PROFILE['revision']})
 '''
     publish='''from typepro.publishing.graph import publish_graph_dataset
-from kaggle_secrets import UserSecretsClient
-secrets=UserSecretsClient()
-username=secrets.get_secret('TYPEPRO_PUBLISH_USERNAME')
-key=secrets.get_secret('TYPEPRO_PUBLISH_KEY')
-if username!=JOB['account']:
-    raise RuntimeError('Publisher credential username mismatch')
-os.environ['KAGGLE_USERNAME']=username
-os.environ['KAGGLE_KEY']=key
-os.environ.pop('KAGGLE_API_TOKEN',None)
 publish_graph_dataset(OUTPUT,JOB['dataset'],public=JOB['public'])
 '''
     execute=execute.replace('INPUT=mounted_dataset',mounted_dataset_source()+'\nINPUT=mounted_dataset',1)
     return notebook([markdown('# TypePro graph-context-v1 experiment\nFrozen inputs, exact source revision, separate experiment output.'),
-                     code(config),code(setup),code(execute),code(publish)])
+                     code(config),code(setup),code(graph_auth_source("JOB['account']")),code(execute),code(publish)])
 
 
 def render_profile(profile_path,state_parent,requested_revision=None,source_bundle=None):
@@ -248,19 +288,25 @@ if sha256(INPUT/'input_manifest.json')!=PROFILE['input_manifest_sha256']:
 roster,_=freeze_roster(INPUT/'baseline')
 roots=[]
 for job in PLAN['jobs']:
-    archive=mounted_dataset(job['dataset'],'graph-dataset.zip')/'graph-dataset.zip'
+    dataset_root=mounted_dataset(job['dataset'],None)
+    archive=dataset_root/'graph-dataset.zip'
     root=Path('/kaggle/working/merge-inputs')/job['dataset'].split('/')[1]
     root.mkdir(parents=True,exist_ok=True)
-    with zipfile.ZipFile(archive) as bundle:
-        seen=set()
-        for member in bundle.infolist():
-            path=root/member.filename
-            if not path.resolve().is_relative_to(root.resolve()) or member.filename.casefold() in seen:
-                raise RuntimeError('Unsafe graph archive path or collision')
-            if (member.external_attr>>16)&0o170000==0o120000:
-                raise RuntimeError('Symlink in graph archive')
-            seen.add(member.filename.casefold())
-        bundle.extractall(root)
+    if archive.is_file():
+        with zipfile.ZipFile(archive) as bundle:
+            seen=set()
+            for member in bundle.infolist():
+                path=root/member.filename
+                if not path.resolve().is_relative_to(root.resolve()) or member.filename.casefold() in seen:
+                    raise RuntimeError('Unsafe graph archive path or collision')
+                if (member.external_attr>>16)&0o170000==0o120000:
+                    raise RuntimeError('Symlink in graph archive')
+                seen.add(member.filename.casefold())
+            bundle.extractall(root)
+    elif (dataset_root/'graph-dataset/manifest.json').is_file():
+        root=dataset_root/'graph-dataset'
+    else:
+        raise RuntimeError('Missing graph archive or extracted Dataset')
     manifest=verify_graph_dataset(root)
     if manifest.get('partition')!={'shard_index':job['shard_index'],'shard_count':job['shard_count']}:
         raise RuntimeError('Graph Dataset physical coordinate mismatch')
@@ -270,15 +316,7 @@ merge_graph_datasets(roots,OUTPUT,roster)
 """.replace('PROFILE_VALUE',repr(profile)).replace('PLAN_VALUE',repr(plan))
     execute=execute.replace('INPUT=mounted_dataset',mounted_dataset_source()+'\nINPUT=mounted_dataset',1)
     publish="""from typepro.publishing.graph import publish_graph_dataset
-from kaggle_secrets import UserSecretsClient
-secrets=UserSecretsClient()
-username=secrets.get_secret('TYPEPRO_FINAL_USERNAME')
-key=secrets.get_secret('TYPEPRO_FINAL_KEY')
-if username!='duyvu1105':
-    raise RuntimeError('Final graph publisher must be duyvu1105')
-os.environ['KAGGLE_USERNAME']=username
-os.environ['KAGGLE_KEY']=key
-os.environ.pop('KAGGLE_API_TOKEN',None)
 publish_graph_dataset(OUTPUT,'duyvu1105/typepro-graph-v1-final',public=False)
 """
-    return notebook([markdown('# Merge exactly 21 graph experiment partitions'),code(setup),code(execute),code(publish)])
+    return notebook([markdown('# Merge exactly 21 graph experiment partitions'),code(setup),
+                     code(graph_auth_source("'duyvu1105'",final=True)),code(execute),code(publish)])

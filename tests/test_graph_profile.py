@@ -91,3 +91,29 @@ def test_graph_source_bundle_and_versioned_dependency_mounts():
     source='\n'.join(c['source'] for c in graph_profile.graph_notebook(p,jobs[0])['cells'])
     assert 'dependency_index=dependency_index' in source
     assert 'Frozen dependency Dataset version mismatch' in source
+
+
+def test_freezer_accepts_only_v24_identical_objects_on_a_newer_mount(tmp_path):
+    import base64
+    import hashlib
+    mount=tmp_path/'input/slug';mount.mkdir(parents=True)
+    kb=mount/'project_kb/owner__repo/knowledge_base.json';kb.parent.mkdir(parents=True)
+    kb.write_text(json.dumps({'schema_version':'typepro-project-kb-v7-source-evidence','records':[]}))
+    (mount/'manifest.json').write_text('{}')
+    (mount/'project_kb_index.json').write_text(json.dumps({'owner__repo':kb.relative_to(mount).as_posix()}))
+    spec=dict(baseline_dataset='owner/slug/24',baseline_manifest_sha256='a'*64,projects=['owner/repo'],
+        kb_checksums={'owner/repo':dict(path=kb.relative_to(mount).as_posix(),bytes=kb.stat().st_size,
+            md5=base64.b64encode(hashlib.md5(kb.read_bytes()).digest()).decode())})
+    path=tmp_path/'spec.json';path.write_text(json.dumps(spec))
+    graph_profile.render_input_freezer(path,tmp_path/'render')
+    nb=json.loads((tmp_path/'render/freeze.ipynb').read_text())
+    source=nb['cells'][1]['source'].replace('/kaggle/input',str(tmp_path/'input')).replace('/kaggle/working',str(tmp_path/'working'))
+    (tmp_path/'working').mkdir()
+    exec(compile(source,'freezer','exec'),{})
+    locks=json.loads((tmp_path/'working/frozen-locks/dependency_locks.json').read_text())
+    assert locks=={'owner/repo':hashlib.sha256(kb.read_bytes()).hexdigest()}
+    provenance=json.loads((tmp_path/'working/frozen-locks/freeze_provenance.json').read_text())
+    assert provenance['dependency_mount_manifest_sha256']==hashlib.sha256(b'{}').hexdigest()
+    kb.write_bytes(kb.read_bytes().replace(b'[]',b'{}'))
+    with pytest.raises(RuntimeError,match='checksum differs from v24'):
+        exec(compile(source,'freezer','exec'),{})

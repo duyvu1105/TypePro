@@ -216,3 +216,46 @@ This dry-run used an explicitly render-only input-manifest placeholder, so it
 verifies profile/revision/coordinate isolation, not Dataset availability or remote
 execution. The frozen source/KB input bundle still needs to be prepared before
 any authorized real launch.
+
+## Kaggle launch preparation (2026-10-26)
+
+The user explicitly authorized this run from `experiment/graph-context-v1`
+instead of main, and requested retaining the v24 dependency KBs for comparison.
+The 51,735-target roster and labels were checked against a compact projection
+of the original v24 splits; both are identical. The frozen tokenizer includes
+its separate chat-template file and matches the earlier measurement fingerprint.
+
+Additional regression cases found and fixed two evidence-selection gaps:
+in-place operations on a callee parameter now retain the affected source and
+record unresolved alias effects; dependency evidence now follows local imports
+and reached source helpers, including cross-file helpers, while respecting
+shadowing and preserving non-target signature support. The 17-case size replay
+still totals 2,468 baseline / 2,369 graph prompt tokens and retains all 15
+explicit development evidence checks. These remain development fixtures.
+
+The generator now supports a CPU input-freezer job. Kaggle's push interface
+normalizes Dataset attachment references to the current version, so requesting
+`owner/slug/24` alone is not sufficient. The freezer accepts trusted per-object
+checksums obtained through authenticated version-24 downloads, verifies mounted
+KB sizes and checksums against them, then emits SHA256 dependency locks. It
+rejects mismatches; it never relabels newer KB contents as v24. Export verifies
+each frozen SHA256 again. A tested frozen index override handles the historical
+`typepro.analysis.project_kb/` upload path without modifying source KBs.
+
+Graph shard/merge notebooks support both Kaggle mount layouts and both archived
+and automatically extracted shard inputs. Publisher Secrets are optional when
+the notebook host is the expected Dataset owner, as in the baseline workflow.
+Explicit Secret pairs must match that owner. Tokenizer dependencies are pinned,
+and the loaded tokenizer must match the frozen input fingerprint.
+
+Graph scheduling also accepts `--source-bundle`, with the same exact-commit,
+checksum, prerequisite and durable-ledger checks as ordinary scheduling. This
+allows the committed branch changes to run when GitHub push authentication is
+unavailable. A source bundle never includes untracked payloads or credentials.
+All 21 coordinates, 7 per account, and the five-active-job account limit remain
+unchanged. Merge/final publication is a separate step after Dataset verification.
+
+Full pipeline verification after these changes: **540 passed**. A local freezer
+integration test verifies identical historical KBs on a newer mount and rejects
+same-size changed contents. Successful submission is still not Dataset success;
+actual kernel versions, statuses and input-lock artifacts belong in the run ledger.
