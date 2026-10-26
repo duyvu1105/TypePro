@@ -60,3 +60,20 @@ def test_project_bootstrap_counts_failed_targets_as_incorrect():
     assert report['common_ready']['targets']==1
     assert report['outcomes']['budget_exceeded']==1
     assert report==compare(ledger,baseline,graph,bootstrap_samples=100)
+
+
+def test_input_freezer_pins_baseline_and_checks_all_source_payloads(tmp_path):
+    spec=dict(baseline_dataset='owner/baseline/24',baseline_manifest_sha256='a'*64,projects=['owner/repo'])
+    path=tmp_path/'spec.json';path.write_text(json.dumps(spec))
+    metadata=graph_profile.render_input_freezer(path,tmp_path/'render')
+    assert metadata['dataset_sources']==['owner/baseline/24']
+    assert metadata['is_private'] and not metadata['enable_gpu']
+    nb=json.loads((tmp_path/'render/freeze.ipynb').read_text())
+    source=nb['cells'][1]['source']
+    ast.parse(source)
+    assert "sha256(root/'manifest.json')" in source
+    assert "sha256(root/record['file'])" in source
+    assert 'dependency_locks.json' in source
+    spec['baseline_dataset']='owner/baseline';path.write_text(json.dumps(spec))
+    with pytest.raises(ValueError,match='exact baseline'):
+        graph_profile.render_input_freezer(path,tmp_path/'bad')

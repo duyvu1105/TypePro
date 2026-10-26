@@ -2214,6 +2214,7 @@ def test_retrieval_ablation_notebook(repository: str) -> dict:
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--graph-profile", type=Path, help="Render isolated graph experiment notebooks from an explicit profile")
+    parser.add_argument("--graph-freeze-spec", type=Path, help="Render a CPU job hashing KBs from a pinned baseline Dataset")
     parser.add_argument("--graph-output", type=Path, default=ROOT.parent/"typepro_kernel_versions"/"graph-render")
     parser.add_argument("--shards", type=int, default=10)
     parser.add_argument("--repository", default="https://github.com/duyvu1105/TypePro.git")
@@ -2241,6 +2242,12 @@ def main(argv: list[str] | None = None) -> None:
         del remaining[index : index + 2]
     if remaining:
         parser.error(f"unrecognized arguments: {' '.join(remaining)}")
+    if args.graph_freeze_spec:
+        if args.graph_profile:
+            parser.error('Choose graph-profile or graph-freeze-spec')
+        from graph_profile import render_input_freezer
+        print(json.dumps(render_input_freezer(args.graph_freeze_spec,args.graph_output),indent=2))
+        return
     if args.graph_profile:
         from graph_profile import render_profile
         plan=render_profile(args.graph_profile,args.graph_output)

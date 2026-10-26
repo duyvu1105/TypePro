@@ -11,6 +11,74 @@ BRANCH='experiment/graph-context-v1'
 PREFIX='typepro-graph-v1'
 
 
+def render_input_freezer(spec_path, output):
+    """Hash immutable v24 KBs in-place on Kaggle; never rebuild dependencies."""
+    from generate_notebooks import notebook, code, markdown
+    spec=json.loads(Path(spec_path).read_text())
+    if not re.fullmatch(r'[A-Za-z0-9_-]+/[a-z0-9-]+/[1-9][0-9]*',spec['baseline_dataset']):
+        raise ValueError('Input freezer requires an exact baseline Dataset version')
+    source='SPEC='+repr(spec)+'\n'+'''import hashlib, json
+from pathlib import Path
+
+def sha256(path):
+    value=hashlib.sha256()
+    with path.open('rb') as handle:
+        while block:=handle.read(1024*1024):
+            value.update(block)
+    return value.hexdigest()
+
+root=Path('/kaggle/input')/SPEC['baseline_dataset'].split('/')[1]
+if sha256(root/'manifest.json')!=SPEC['baseline_manifest_sha256']:
+    raise RuntimeError('Attached Dataset is not the frozen v24 baseline')
+manifest=json.loads((root/'manifest.json').read_text())
+for split in ('train','validation','test'):
+    record=manifest['output'][split]
+    if sha256(root/record['file'])!=record['sha256']:
+        raise RuntimeError('Frozen baseline split mismatch: '+split)
+original_index=json.loads((root/'project_kb_index.json').read_text())
+index={}
+locks={}
+for number,project in enumerate(SPEC['projects'],1):
+    key=project.replace('/','__')
+    matches=[k for k in original_index if k.casefold()==key.casefold()]
+    if key not in original_index and len(matches)!=1:
+        raise RuntimeError('Missing or ambiguous baseline KB identity: '+project)
+    relative=original_index[key if key in original_index else matches[0]]
+    candidates=[root/relative]
+    # Final publisher historically uploaded project_kb under this ZIP stem.
+    if relative.startswith('project_kb/'):
+        candidates.append(root/'typepro.analysis.project_kb'/relative.removeprefix('project_kb/'))
+    matches=[p for p in candidates if p.is_file() and p.resolve().is_relative_to(root.resolve())]
+    if len(matches)!=1:
+        raise RuntimeError('Missing or ambiguous frozen KB: '+project)
+    path=matches[0]
+    # Inspect one KB at a time, retaining neither records nor annotated indexes.
+    kb=json.loads(path.read_text())
+    if kb.get('schema_version')!='typepro-project-kb-v7-source-evidence':
+        raise RuntimeError('Incompatible frozen KB: '+project)
+    del kb
+    locks[project]=sha256(path)
+    index[key]=path.relative_to(root).as_posix()
+    if number%100==0:
+        print({'hashed_projects':number,'total':len(SPEC['projects'])},flush=True)
+output=Path('/kaggle/working/frozen-locks')
+output.mkdir()
+for name,value in [('dependency_locks.json',locks),('project_kb_index.json',index),('freeze_provenance.json',SPEC)]:
+    (output/name).write_text(json.dumps(value,indent=2)+'\\n')
+print({'frozen_projects':len(locks),'baseline_dataset':SPEC['baseline_dataset']})
+'''
+    output=Path(output)
+    output.mkdir(parents=True,exist_ok=True)
+    (output/'freeze.ipynb').write_text(json.dumps(notebook([
+        markdown('# Freeze graph inputs from the exact v24 Dataset'),code(source)]),indent=1))
+    metadata=dict(id='duyvu1105/typepro-graph-v1-freeze-inputs',title='TypePro graph v1 freeze v24 inputs',
+        code_file='freeze.ipynb',language='python',kernel_type='notebook',is_private=True,
+        enable_gpu=False,enable_internet=False,dataset_sources=[spec['baseline_dataset']],
+        kernel_sources=[],competition_sources=[])
+    (output/'kernel-metadata.json').write_text(json.dumps(metadata,indent=2))
+    return metadata
+
+
 def validate_profile(profile):
     if profile.get('schema_version')!='typepro-graph-experiment-profile-v1' or profile.get('branch')!=BRANCH:
         raise ValueError('Require explicit graph experiment profile/branch')
