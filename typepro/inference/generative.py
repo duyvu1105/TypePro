@@ -14,7 +14,7 @@ import torch
 from peft import PeftModel
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
-from typepro.shared.generative_chat import chat_token_ids
+from typepro.shared.context_packing import prompt_token_ids
 from typepro.shared.type_labels import normalize_type_label
 
 
@@ -54,15 +54,14 @@ def main(argv=None) -> None:
     correct = 0
     for start in range(0, len(rows), args.batch_size):
         batch = rows[start:start + args.batch_size]
-        prompt_limit = max(1, args.input_length - args.label_length)
         prompt_ids = [
-            chat_token_ids(tokenizer, row["input"])[:prompt_limit]
+            prompt_token_ids(tokenizer, row["input"], args.input_length, args.label_length)
             for row in batch
         ]
         encoded = tokenizer.pad({"input_ids": prompt_ids}, padding=True, return_tensors="pt").to(device)
         with torch.inference_mode():
             generated = model.generate(
-                **encoded, max_new_tokens=args.label_length,
+                **encoded, max_new_tokens=args.label_length, do_sample=False,
                 pad_token_id=tokenizer.pad_token_id,
             )
         prompt_length = encoded["input_ids"].shape[1]

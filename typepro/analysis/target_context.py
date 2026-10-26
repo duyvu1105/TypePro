@@ -100,3 +100,19 @@ def mask_definition(text, function_name, target_name, scope):
     for annotation in sorted(annotations, key=lambda n: (n.lineno, n.col_offset), reverse=True):
         text = mask_annotation(text, annotation)
     return text
+
+
+class MaskedSources:
+    """Lazy target-owned source views; no shared annotation-bearing overlay cache."""
+    def __init__(self, sources, function, name, scope):
+        self.sources = sources
+        self.function, self.name, self.scope = function, name, scope
+        self.cache = {}
+
+    def __contains__(self, file):
+        return file in self.sources
+
+    def __getitem__(self, file):
+        if file not in self.cache:
+            self.cache[file] = mask_definition(self.sources[file], self.function, self.name, self.scope)
+        return self.cache[file]

@@ -1336,6 +1336,11 @@ See `manifest.json` and `preprocess_stats.json` for provenance and checksums.
 
 
 def main() -> None:
+    if '--graph-context' in sys.argv:
+        from typepro.data.graph_dataset import main as graph_main
+        sys.argv.remove('--graph-context')
+        graph_main()
+        return
     args = parse_args()
     if args.shard_count <= 0 or not 0 <= args.shard_index < args.shard_count:
         raise ValueError("Require 0 <= shard-index < shard-count")

@@ -544,6 +544,11 @@ def _export_masked_one(
 
 
 def main() -> None:
+    if '--graph-context' in sys.argv:
+        from typepro.data.graph_dataset import main as graph_main
+        sys.argv.remove('--graph-context')
+        graph_main()
+        return
     args = parse_args()
     # The upstream repository does not ship these empty runtime directories.
     Path("data").mkdir(parents=True, exist_ok=True)

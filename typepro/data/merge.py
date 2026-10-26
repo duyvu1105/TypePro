@@ -14,6 +14,7 @@ from pathlib import Path
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Merge resumable TypePro build shards")
+    parser.add_argument("--graph-roster", type=Path, help="Frozen global graph roster JSONL; enables graph merge")
     parser.add_argument("--shard-build-dirs", nargs="+", required=True)
     parser.add_argument("--work-dir", required=True)
     parser.add_argument('--expected-retrieval-schema')
@@ -51,6 +52,10 @@ def main() -> None:
         SUPPORTED_POLICIES, DEFINITION_CHARS, TOTAL_CHARS, candidate_section,
     )
     args = parse_args()
+    if args.graph_roster:
+        from typepro.data.graph_dataset import merge_graph_datasets, read_jsonl
+        merge_graph_datasets(args.shard_build_dirs, args.work_dir, list(read_jsonl(args.graph_roster)))
+        return
     destination = Path(args.work_dir).resolve()
     builds = [locate_build_dir(Path(value).resolve()) for value in args.shard_build_dirs]
     policies = {json.loads((build / 'runtime_manifest.json').read_text(encoding='utf-8'))

@@ -29,6 +29,11 @@ def main() -> None:
     root = Path(args.data_dir)
     with (root / "manifest.json").open(encoding="utf-8") as handle:
         manifest = json.load(handle)
+    if manifest.get("schema_version") == "typepro-graph-dataset-v1":
+        from typepro.data.graph_dataset import verify_graph_dataset
+        verify_graph_dataset(root)
+        print("Verified graph dataset and exact outcome roster")
+        return
     errors = []
     split_projects = {split: set() for split in ("train", "validation", "test")}
     kb_key_cache: dict[Path, set[str]] = {}

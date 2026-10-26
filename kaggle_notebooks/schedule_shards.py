@@ -64,6 +64,7 @@ def save(path, state):
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument('--graph-profile',type=Path,help='Explicit graph experiment inputs/revision; isolated jobs and ledger')
     parser.add_argument('--push', action='store_true')
     parser.add_argument('--watch', action='store_true')
     parser.add_argument('--reuse-project-kb', action=argparse.BooleanOptionalAction, default=True)
@@ -85,6 +86,17 @@ def main():
         parser.error('--jobs-per-account must be >= 1')
     if args.skip_jobs_per_account < 0:
         parser.error('--skip-jobs-per-account must be >= 0')
+    graph_plan = None
+    if args.graph_profile:
+        from graph_profile import render_profile
+        if args.source_bundle:
+            parser.error('Graph profiles require an available exact experiment SHA; source bundles are not supported')
+        if args.state == REPO_ROOT/'typepro_kernel_versions'/'latest_run.json':
+            args.state = REPO_ROOT/'typepro_kernel_versions'/'graph-context-v1'/'latest_run.json'
+        if args.state.resolve() == (REPO_ROOT/'typepro_kernel_versions'/'latest_run.json').resolve():
+            parser.error('Graph experiment cannot use the production scheduler ledger')
+        graph_plan=render_profile(args.graph_profile,args.state.parent,args.revision)
+        args.revision=graph_plan['revision']
     previous = json.loads(args.state.read_text(encoding='utf-8')) if args.state.exists() else None
     if (previous is not None and not args.new_run
             and previous.get('reuse_project_kb', False) != args.reuse_project_kb):
@@ -108,41 +120,47 @@ def main():
     if not all(plan.independent_parts for plan in plans):
         parser.error('Scheduling requires independent partition kernels')
     credentials = parse_credentials([], plans)
-    jobs = []
-    jobs_by_account = {}
-    seen_by_account = {}
-    for plan in plans:
-        template = json.loads(plan.notebook_path.read_text(encoding='utf-8'))
-        for part, (index, count) in enumerate(physical_partitions(plan.assigned_shards[0])):
-            part_plan = plan_for_part(plan, part)
-            seen_jobs = seen_by_account.get(part_plan.runner_account, 0)
-            seen_by_account[part_plan.runner_account] = seen_jobs + 1
-            if seen_jobs < args.skip_jobs_per_account:
-                continue
-            account_jobs = jobs_by_account.get(part_plan.runner_account, 0)
-            if args.jobs_per_account is not None and account_jobs >= args.jobs_per_account:
-                continue
-            rendered = render_part_version(template, plan, part, reuse_project_kb=args.reuse_project_kb)
-            clone_cells = [cell for cell in rendered['cells'] if '"git", "clone"' in ''.join(cell.get('source', []))]
-            if len(clone_cells) != 1:
-                raise ValueError('Expected exactly one clone cell')
-            source = ''.join(clone_cells[0]['source'])
-            marker = '\nPIPELINE_DIR = '
-            if marker not in source:
-                raise ValueError('Expected pipeline setup after repository checkout')
-            checkout = pinned_checkout_source(args.revision, bundle)
-            clone_cells[0]['source'] = source.replace(marker, checkout + marker, 1)
-            rendered.setdefault('metadata', {}).setdefault('typepro', {}).update(
-                source_revision=args.revision, source_bundle_sha256=bundle_sha256)
-            directory = args.state.parent / 'scheduled' / part_plan.runner_account / f'{index:02d}'
-            write_version(directory, part_plan, rendered, part_index=part)
-            jobs.append({'account': part_plan.runner_account, 'kernel': f'{part_plan.runner_account}/{partition_kernel_slug(part_plan, part)}',
-                         'shard_index': index, 'shard_count': count, 'dataset': f'{part_plan.dataset_owner}/typepro-build-shard-{index:02d}' + ('-of-40' if count == 40 else ''),
-                         'payload': str(directory), 'status': 'pending'})
-            jobs_by_account[part_plan.runner_account] = account_jobs + 1
+    if graph_plan:
+        jobs=graph_plan['jobs']
+    else:
+        jobs = []
+        jobs_by_account = {}
+        seen_by_account = {}
+        for plan in plans:
+            template = json.loads(plan.notebook_path.read_text(encoding='utf-8'))
+            for part, (index, count) in enumerate(physical_partitions(plan.assigned_shards[0])):
+                part_plan = plan_for_part(plan, part)
+                seen_jobs = seen_by_account.get(part_plan.runner_account, 0)
+                seen_by_account[part_plan.runner_account] = seen_jobs + 1
+                if seen_jobs < args.skip_jobs_per_account:
+                    continue
+                account_jobs = jobs_by_account.get(part_plan.runner_account, 0)
+                if args.jobs_per_account is not None and account_jobs >= args.jobs_per_account:
+                    continue
+                rendered = render_part_version(template, plan, part, reuse_project_kb=args.reuse_project_kb)
+                clone_cells = [cell for cell in rendered['cells'] if '"git", "clone"' in ''.join(cell.get('source', []))]
+                if len(clone_cells) != 1:
+                    raise ValueError('Expected exactly one clone cell')
+                source = ''.join(clone_cells[0]['source'])
+                marker = '\nPIPELINE_DIR = '
+                if marker not in source:
+                    raise ValueError('Expected pipeline setup after repository checkout')
+                checkout = pinned_checkout_source(args.revision, bundle)
+                clone_cells[0]['source'] = source.replace(marker, checkout + marker, 1)
+                rendered.setdefault('metadata', {}).setdefault('typepro', {}).update(
+                    source_revision=args.revision, source_bundle_sha256=bundle_sha256)
+                directory = args.state.parent / 'scheduled' / part_plan.runner_account / f'{index:02d}'
+                write_version(directory, part_plan, rendered, part_index=part)
+                jobs.append({'account': part_plan.runner_account, 'kernel': f'{part_plan.runner_account}/{partition_kernel_slug(part_plan, part)}',
+                             'shard_index': index, 'shard_count': count, 'dataset': f'{part_plan.dataset_owner}/typepro-build-shard-{index:02d}' + ('-of-40' if count == 40 else ''),
+                             'payload': str(directory), 'status': 'pending'})
+                jobs_by_account[part_plan.runner_account] = account_jobs + 1
     state = previous if previous is not None and not args.new_run else {
         'revision': args.revision, 'source_bundle_sha256': bundle_sha256,
-        'reuse_project_kb': args.reuse_project_kb, 'jobs': jobs}
+        'reuse_project_kb': args.reuse_project_kb, 'jobs': jobs,
+        'graph_profile': graph_plan['profile'] if graph_plan else None}
+    if state.get('graph_profile') != (graph_plan['profile'] if graph_plan else None):
+        raise ValueError('Experiment profile differs from saved ledger')
     if state['revision'] != args.revision or [j['kernel'] for j in state['jobs']] != [j['kernel'] for j in jobs]:
         raise ValueError('Ledger does not match this revision/plan; use --new-run or a new --state file')
     if any(job['status'] == 'submitting' for job in state['jobs']):

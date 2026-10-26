@@ -2213,6 +2213,8 @@ def test_retrieval_ablation_notebook(repository: str) -> dict:
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--graph-profile", type=Path, help="Render isolated graph experiment notebooks from an explicit profile")
+    parser.add_argument("--graph-output", type=Path, default=ROOT.parent/"typepro_kernel_versions"/"graph-render")
     parser.add_argument("--shards", type=int, default=10)
     parser.add_argument("--repository", default="https://github.com/duyvu1105/TypePro.git")
     parser.add_argument("--branch", default="main")
@@ -2239,6 +2241,11 @@ def main(argv: list[str] | None = None) -> None:
         del remaining[index : index + 2]
     if remaining:
         parser.error(f"unrecognized arguments: {' '.join(remaining)}")
+    if args.graph_profile:
+        from graph_profile import render_profile
+        plan=render_profile(args.graph_profile,args.graph_output)
+        print(json.dumps(plan,indent=2))
+        return
     if args.shards <= 0:
         raise ValueError("shards must be positive")
     if len(args.runner_accounts) not in (2, 3):

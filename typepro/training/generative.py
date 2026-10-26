@@ -29,6 +29,7 @@ from tqdm.auto import tqdm
 
 from typepro.shared.data_utils import select_training_samples
 from typepro.shared.generative_chat import chat_token_ids, left_pad_causal_batch
+from typepro.shared.context_packing import training_token_ids, tokenizer_fingerprint, VERSION as PACKING_VERSION
 from typepro.training.length_grouping import LengthGroupedSampler
 
 
@@ -45,14 +46,9 @@ class JsonlDataset(Dataset):
 
 
 def training_sequence_length(row, tokenizer, input_length: int, label_length: int) -> int:
-    """Return the post-truncation sequence length used by ``collate``."""
-    prompt_ids = chat_token_ids(tokenizer, row["input"])
-    full_ids = chat_token_ids(tokenizer, row["input"], row["label"])
-    if full_ids[:len(prompt_ids)] != prompt_ids:
-        raise ValueError("Chat template did not preserve the prompt as a sequence prefix")
-    prompt_limit = max(1, input_length - label_length)
-    completion_length = min(max(0, len(full_ids) - len(prompt_ids)), label_length)
-    return min(len(prompt_ids), prompt_limit) + completion_length
+    """Return the exact packed sequence length used by ``collate``."""
+    _, sequence = training_token_ids(tokenizer, row["input"], row["label"], input_length, label_length)
+    return len(sequence)
 
 
 def train():
@@ -169,20 +165,9 @@ def train():
         model.config.use_cache = False
 
     def collate(rows):
-        prompt_limit = max(1, args.input_length - args.label_length)
-        prompt_ids = []
-        completion_ids = []
-        for row in rows:
-            full_prompt = chat_token_ids(tokenizer, row["input"])
-            full_sequence = chat_token_ids(tokenizer, row["input"], row["label"])
-            if full_sequence[:len(full_prompt)] != full_prompt:
-                raise ValueError("Chat template did not preserve the prompt as a sequence prefix")
-            # Preserve the structured header at the beginning of the prompt.
-            # Inference uses the same policy so train/eval see identical inputs.
-            prompt_ids.append(full_prompt[:prompt_limit])
-            completion_ids.append(full_sequence[len(full_prompt):len(full_prompt) + args.label_length])
-        sequences = [prompt + completion for prompt, completion in zip(prompt_ids, completion_ids)]
-        return left_pad_causal_batch(prompt_ids, sequences, tokenizer.pad_token_id)
+        encoded = [training_token_ids(tokenizer, row["input"], row["label"],
+                                      args.input_length, args.label_length) for row in rows]
+        return left_pad_causal_batch([p for p, _ in encoded], [s for _, s in encoded], tokenizer.pad_token_id)
 
     data_dir = Path(args.data_dir)
     output = Path(args.output_dir)
@@ -197,7 +182,9 @@ def train():
         length_sample_count = len(train_dataset)
         train_stat = train_path.stat()
         cache_metadata = {
-            "version": 1,
+            "version": 2,
+            "packing_policy": PACKING_VERSION,
+            "tokenizer_fingerprint": tokenizer_fingerprint(tokenizer),
             "train_path": str(train_path.resolve()),
             "train_size": train_stat.st_size,
             "train_mtime_ns": train_stat.st_mtime_ns,
