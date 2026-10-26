@@ -207,3 +207,12 @@ median per-target change is **+0.85%**. Outcomes remain six ready and eleven
 unresolved, with no parse/export/budget failures in these fixtures. All 15 explicit
 development evidence checks pass. This is a modest aggregate reduction, not
 uniform compression or an accuracy/holdout result.
+
+Implementation source commit: `453bcba45198b44602b5f604a65f75ce9db7b3ea`. The final measurement
+source fingerprints were checked against the committed files.
+The graph scheduler dry-run pinned that exact SHA and rendered **21 jobs
+(7/7/7) plus one merge notebook**; all 22 notebooks parsed successfully.
+This dry-run used an explicitly render-only input-manifest placeholder, so it
+verifies profile/revision/coordinate isolation, not Dataset availability or remote
+execution. The frozen source/KB input bundle still needs to be prepared before
+any authorized real launch.
