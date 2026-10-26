@@ -192,32 +192,55 @@ def support_groups(target, definition, overlays, graph, resolver=None):
     return groups
 
 
-def dependency_groups(target, overlays, graph, dependency_kb):
+def dependency_groups(target, overlays, graph, dependency_kb, resolver=None):
     """Exact imported symbols from a frozen project KB, masked before selection.
 
     This supplies declaration evidence, not a proof of runtime library dispatch.
     KB metadata other than identity/source is never an annotation-derived score.
     """
     from typepro.analysis.target_context import mask_definition
-    tree=ast.parse(overlays[target.file])
-    imported={}
-    for stmt in tree.body:
-        if isinstance(stmt,ast.Import):
-            for alias in stmt.names:
-                imported[alias.asname or alias.name.split('.')[0]]=alias.name if alias.asname else alias.name.split('.')[0]
-        elif isinstance(stmt,ast.ImportFrom) and not stmt.level:
-            for alias in stmt.names:
-                imported[alias.asname or alias.name]=(stmt.module+'.'+alias.name) if stmt.module else alias.name
     needed=set()
-    for _,node in functions(tree):
-        if node.name!=target.function.rsplit('.',1)[-1]:
+    from typepro.analysis.graph_selection import dependency_closure
+    selected=dependency_closure(graph,target.scope)
+    scopes={(graph.nodes[k].span.file,graph.nodes[k].scope.split('@',1)[0]) for k in selected}
+    scopes.add((target.file,target.function))
+    for file,qualified in sorted(scopes):
+        if file not in overlays:
             continue
-        for expr in ast.walk(node):
-            if isinstance(expr,(ast.Name,ast.Attribute)):
+        tree=ast.parse(overlays[file])
+        definitions=[(q,node) for q,node in functions(tree) if q==qualified]
+        if qualified=='<module>' and resolver is not None:
+            definitions=[(qualified,resolver.module_function(tree))]
+        for _,node in definitions:
+            if resolver is None:
+                continue
+            candidates=resolver.by_scope.get((file,qualified),[])
+            definition=next((d for d in candidates if d.node.lineno==node.lineno),None)
+            if definition is None:
+                definition=resolver.module_definitions.get(file)
+            if definition is None:
+                continue
+            bound=resolver.local_bindings(node)
+            from typepro.analysis.graph_summaries import scope_nodes
+            annotations=[a.annotation for a in node.args.posonlyargs+node.args.args+node.args.kwonlyargs
+                         +[a for a in (node.args.vararg,node.args.kwarg) if a] if a.annotation]
+            if node.returns is not None:
+                annotations.append(node.returns)
+            expressions=[*scope_nodes(node),*[child for annotation in annotations for child in ast.walk(annotation)]]
+            for expr in expressions:
+                if not isinstance(expr,(ast.Name,ast.Attribute)):
+                    continue
                 name=ast.unparse(expr)
                 root,_,suffix=name.partition('.')
-                if root in imported:
-                    needed.add(imported[root]+('.'+suffix if suffix else ''))
+                imported=resolver.symbols.local_import(definition,root,expr) if root in bound else None
+                if root not in bound:
+                    stmt=resolver.module_binding(definition,root)
+                    if isinstance(stmt,(ast.Import,ast.ImportFrom)):
+                        matches=[a for a in stmt.names if (a.asname or a.name.split('.')[0])==root]
+                        if len(matches)==1:
+                            imported=resolver.symbols.import_target(file,stmt,matches[0])
+                if imported:
+                    needed.add(imported+('.'+suffix if suffix else ''))
     groups=[]
     seed=next(iter(sorted(graph.seeds)),None)
     if seed is None:

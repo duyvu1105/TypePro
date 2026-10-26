@@ -100,3 +100,20 @@ def test_timeout_is_an_outcome_and_diagnostics_stay_outside_train_rows(tmp_path,
     assert manifest['outcomes']=={'timeout':1}
     verify_graph_dataset(tmp_path/'timed')
     assert not (tmp_path/'timed/train.jsonl').read_text()
+
+
+def test_export_uses_frozen_index_for_read_only_dependency_mount(tmp_path):
+    root,sha=repository(tmp_path)
+    row=roster()
+    baseline=tmp_path/'baseline'
+    kb=baseline/'actual-archive-path/owner__repo/knowledge_base.json'
+    kb.parent.mkdir(parents=True)
+    kb.write_text(json.dumps({'schema_version':'typepro-project-kb-v7-source-evidence','records':[]}))
+    write_json(baseline/'project_kb_index.json',{'owner__repo':'old-archive-path/missing.json'})
+    manifest=export_graph_dataset([row],{row['target_id']:'int'},root.parents[1],
+        {'owner/repo':sha},{'owner/repo':sha256(kb)},Tokenizer(),tmp_path/'export',
+        dependency_root=baseline,dependency_index={'owner__repo':kb.relative_to(baseline).as_posix()})
+    assert manifest['dependency_kb_attached']
+    index=json.loads((tmp_path/'export/project_kb_index.json').read_text())
+    assert (tmp_path/'export'/index['owner__repo']).read_bytes()==kb.read_bytes()
+    verify_graph_dataset(tmp_path/'export')

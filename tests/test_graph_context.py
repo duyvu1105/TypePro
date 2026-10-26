@@ -432,3 +432,40 @@ def test_unpack_alias_hypothesis_is_optional_and_never_resolves_fixture():
     groups=[g for g in result['full_evidence'] if 'Payload =' in g['text']]
     assert groups and all(not g['mandatory'] and g['priority']==4 for g in groups)
     assert any(e['kind']=='hypothesis' for e in result['audit']['graph']['edges'])
+
+
+def test_callee_inplace_mutation_keeps_caller_and_element_evidence():
+    result=query('def fill(items):\n items += ["text"]\ndef f():\n items = []\n fill(items)\n return items\n')
+    assert 'fill(items)' in result['input']
+    assert "items += ['text']" in result['input']
+    assert result['outcome']=='unresolved'
+    assert any(g['reason']=='inplace_argument_alias_effect_not_closed' for g in result['gaps'])
+
+
+@pytest.mark.parametrize('sources',[
+    {'m.py':'def f(key):\n from external import fetch\n return fetch(key)\n'},
+    {'m.py':'from external import fetch\ndef helper(key):\n return fetch(key)\ndef f(key):\n return helper(key)\n'},
+    {'m.py':'from helper import run\ndef f(key):\n return run(key)\n',
+     'helper.py':'from external import fetch\ndef run(key):\n return fetch(key)\n'},
+])
+def test_frozen_dependency_support_covers_local_imports_and_reached_helpers(sources):
+    kb={'records':[{'qualified_name':'external.fetch','definition':'def fetch(key: str) -> bytes: ...','source_file':'external.py'}]}
+    result=GraphContextProject('p',sources,'sha','kb',dependency_kb=kb).query(
+        TargetSpec('p','m.py','f','return','f'),Tokenizer(),20000)
+    assert 'def fetch(key: str) -> bytes' in result['input']
+
+
+def test_shadowed_import_does_not_pull_unrelated_dependency_definition():
+    source='from external import fetch\ndef f(fetch):\n return fetch("key")\n'
+    kb={'records':[{'qualified_name':'external.fetch','definition':'def fetch(key: str) -> bytes: ...'}]}
+    result=GraphContextProject('p',{'m.py':source},'sha','kb',dependency_kb=kb).query(
+        TargetSpec('p','m.py','f','return','f'),Tokenizer(),20000)
+    assert 'def fetch(key: str)' not in result['input']
+
+
+def test_frozen_dependency_keeps_non_target_signature_support():
+    source='from external import User\ndef f(value: User):\n return value\n'
+    kb={'records':[{'qualified_name':'external.User','definition':'class User:\n name: str'}]}
+    result=GraphContextProject('p',{'m.py':source},'sha','kb',dependency_kb=kb).query(
+        TargetSpec('p','m.py','f','return','f'),Tokenizer(),20000)
+    assert 'class User:' in result['input']

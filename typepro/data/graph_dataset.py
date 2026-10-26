@@ -204,7 +204,7 @@ def verify_graph_dataset(root, tokenizer=None):
 
 
 def export_graph_dataset(roster, labels, repos_root, source_locks, dependency_locks, tokenizer, output,
-                         input_length=6144, label_length=64, max_expansions=32, dependency_root=None, clone_missing=False, partition=None, annotation_timeout_seconds=30):
+                         input_length=6144, label_length=64, max_expansions=32, dependency_root=None, clone_missing=False, partition=None, annotation_timeout_seconds=30, dependency_index=None):
     output = Path(output)
     if output.exists() and any(output.iterdir()):
         raise ValueError('Graph output directory must be new/empty; preserve previous experiment artifacts')
@@ -275,7 +275,7 @@ def export_graph_dataset(roster, labels, repos_root, source_locks, dependency_lo
             if dependency_root is not None:
                 kb_root = Path(dependency_root)
                 index_file = kb_root/'project_kb_index.json'
-                index = json.loads(index_file.read_text()) if index_file.exists() else {}
+                index = dependency_index if dependency_index is not None else (json.loads(index_file.read_text()) if index_file.exists() else {})
                 key = project.replace('/','__')
                 relative = index.get(key, f'project_kb/{key}/knowledge_base.json')
                 if not isinstance(relative,str):

@@ -362,7 +362,7 @@ class GraphContextProject:
                 for supported in self.resolver.definitions.values():
                     if digest(supported.key)==key:
                         groups.extend(support_groups(target,supported,overlays,graph,self.resolver))
-        groups.extend(dependency_groups(target, overlays, graph, self.dependency_kb))
+        groups.extend(dependency_groups(target, overlays, graph, self.dependency_kb, self.resolver))
         from typepro.analysis.graph_hypotheses import source_hypotheses
         groups.extend(source_hypotheses(target,definition,overlays,graph))
         selected_nodes = dependency_closure(graph, target.scope)

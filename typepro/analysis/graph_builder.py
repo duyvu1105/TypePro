@@ -220,6 +220,10 @@ class GraphBuilder:
             elif isinstance(stmt, ast.AnnAssign):
                 self.bind(stmt.target, self.expr(stmt.value, env, controls), env, controls)
             elif isinstance(stmt, ast.AugAssign):
+                # __iadd__/__imul__ may mutate an object shared with the caller.
+                # A local rebinding edge alone cannot summarize that effect.
+                if isinstance(stmt.target, ast.Name):
+                    self.graph.gap(self.node(stmt, 'unresolved'), 'inplace_argument_alias_effect_not_closed')
                 values = self.expr(stmt.target, env, controls) | self.expr(stmt.value, env, controls)
                 self.bind(stmt.target, values, env, controls)
             elif isinstance(stmt, (ast.Return, ast.Raise)):

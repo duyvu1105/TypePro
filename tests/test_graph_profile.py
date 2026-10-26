@@ -77,3 +77,17 @@ def test_input_freezer_pins_baseline_and_checks_all_source_payloads(tmp_path):
     spec['baseline_dataset']='owner/baseline';path.write_text(json.dumps(spec))
     with pytest.raises(ValueError,match='exact baseline'):
         graph_profile.render_input_freezer(path,tmp_path/'bad')
+
+
+def test_graph_source_bundle_and_versioned_dependency_mounts():
+    p=profile();p['dependency_dataset']='owner/baseline/24'
+    production=json.loads((ROOT/'kaggle_notebooks/shard_account_plan.json').read_text())
+    jobs=graph_profile.isolated_plan(production)
+    for nb in [graph_profile.graph_notebook(p,jobs[0],b'fixture bundle'),
+               graph_profile.graph_merge_notebook(p,dict(jobs=jobs),b'fixture bundle')]:
+        cells=[c['source'] for c in nb['cells'] if c['cell_type']=='code']
+        for source in cells:ast.parse(source)
+        assert any('Source bundle checksum mismatch' in source for source in cells)
+    source='\n'.join(c['source'] for c in graph_profile.graph_notebook(p,jobs[0])['cells'])
+    assert 'dependency_index=dependency_index' in source
+    assert 'Frozen dependency Dataset version mismatch' in source

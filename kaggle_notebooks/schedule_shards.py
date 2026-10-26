@@ -89,13 +89,12 @@ def main():
     graph_plan = None
     if args.graph_profile:
         from graph_profile import render_profile
-        if args.source_bundle:
-            parser.error('Graph profiles require an available exact experiment SHA; source bundles are not supported')
         if args.state == REPO_ROOT/'typepro_kernel_versions'/'latest_run.json':
             args.state = REPO_ROOT/'typepro_kernel_versions'/'graph-context-v1'/'latest_run.json'
         if args.state.resolve() == (REPO_ROOT/'typepro_kernel_versions'/'latest_run.json').resolve():
             parser.error('Graph experiment cannot use the production scheduler ledger')
-        graph_plan=render_profile(args.graph_profile,args.state.parent,args.revision)
+        graph_plan=render_profile(args.graph_profile,args.state.parent,args.revision,
+                                  args.source_bundle.read_bytes() if args.source_bundle else None)
         args.revision=graph_plan['revision']
     previous = json.loads(args.state.read_text(encoding='utf-8')) if args.state.exists() else None
     if (previous is not None and not args.new_run
