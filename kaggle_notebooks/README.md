@@ -1,5 +1,52 @@
 # TypePro Kaggle workflow: target masking rerun
 
+## Graph evidence rerun (2026-10-27)
+
+The current graph run reuses `typepro-python-shard-*` notebook IDs with an
+explicit profile containing `reuse_shard_notebooks=true` and
+`model_neutral=true`. It publishes the 21 `typepro-graph-v1-data-*-of-*`
+Datasets, then the private `duyvu1105/typepro-graph-v1-final`. These are graph
+outputs; the notebook ID alone does not identify a baseline run.
+
+The common Dataset uses `typepro-graph-evidence-v2`: complete eligible evidence
+groups, masking/graph provenance, source/dependency locks, labels, fixed roster
+and split assignment. It does not select evidence using a model tokenizer,
+chat template or context window. Budget failures belong to model preprocessing.
+The old packed v1 graph format remains readable for historical experiments;
+do not mix v1 and v2 shards in a merge.
+
+Preprocess the same shared Dataset into separate model directories before train:
+
+```bash
+python -m typepro.data.model_preprocess --data-dir DATASET \
+  --output-dir PREPARED_MODEL_A --model-name MODEL_A --revision MODEL_A_SHA \
+  --input-length 6144 --label-length 64
+python -m typepro.data.model_preprocess --data-dir DATASET \
+  --output-dir PREPARED_MODEL_B --model-name MODEL_B --revision MODEL_B_SHA \
+  --input-length 8192 --label-length 64
+```
+
+An optional `--chat-template-file` supplies a model's template. Preprocessing
+packs whole evidence groups and their prerequisites using that template,
+checks the assistant boundary and label/EOS budget, and records every outcome.
+It never slices template tokens or changes labels to choose context. Source
+Dataset files remain untouched. Model budgets, tokenizer/template fingerprint,
+retained/omitted evidence and the source manifest hash are recorded per output.
+
+Use `--data-dir PREPARED_MODEL_A --tokenizer-name PREPARED_MODEL_A/tokenizer`
+when invoking `typepro.training.generative`, with the same lengths used by
+preprocessing. Training rejects raw evidence and mismatched prepared budgets.
+Inference uses the tokenizer saved in the checkpoint and the corresponding
+prepared test file; it checks the template/budget fingerprint too.
+
+Keep one work branch for the change. If already outside `main`, continue that
+branch. Pin the run's full commit and bundle, run the full tests, and dry-run
+the exact profile/state before starting its watcher in tmux (see `AGENTS.md`).
+For a schema change prepare a fresh 21-job ledger; preserve previous ledgers.
+The graph watcher counts all active kernels across each account, submits at
+most five per account, waits for the exact 21 versions and new Dataset files,
+then submits and checks merge. A failed shard stops merge for inspection.
+
 Current workflow (2026-10-18): **21 independent physical partitions**, generated
 from 10 logical shard templates, on three accounts. The table below supersedes
 the historical two-account workflow documented later in this file.

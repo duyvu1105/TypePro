@@ -204,6 +204,34 @@ def test_clone_project_checks_out_locked_commit_from_existing_cache(tmp_path):
     assert (cache / "value.txt").read_text(encoding="utf-8") == "first"
 
 
+def test_graph_clone_preserves_git_blobs_despite_inherited_lfs_filter(tmp_path, monkeypatch):
+    source = tmp_path / 'origin'
+    subprocess.run(['git', 'init', '-q', str(source)], check=True)
+    (source / '.gitattributes').write_text('*.txt filter=lfs\n')
+    (source / 'data.txt').write_text('historical non-pointer content\n')
+    (source / 'm.py').write_text('def f(x):\n return x\n')
+    subprocess.run(['git', '-C', str(source), '-c', 'filter.lfs.process=',
+                    '-c', 'filter.lfs.clean=cat', '-c', 'filter.lfs.required=false', 'add', '.'], check=True)
+    subprocess.run(['git', '-C', str(source), '-c', 'user.name=Test', '-c',
+                    'user.email=test@example.test', 'commit', '-qm', 'fixture'], check=True)
+    revision = subprocess.check_output(['git', '-C', str(source), 'rev-parse', 'HEAD'], text=True).strip()
+    config = tmp_path / 'global-config'
+    config.write_text('[filter "lfs"]\n process =\n clean = sed s/historical/filtered/\n smudge = cat\n required = false\n')
+    monkeypatch.setenv('GIT_CONFIG_GLOBAL', str(config))
+    original_run = prepare_dataset_module.run
+    def local_remote(command, **kwargs):
+        command = [str(source) if v == 'https://github.com/owner/repo.git' else v for v in command]
+        return original_run(command, **kwargs)
+    monkeypatch.setattr(prepare_dataset_module, 'run', local_remote)
+    destination = tmp_path / 'clone'
+    assert clone_project('owner/repo', destination, expected_commit=revision,
+                         disable_lfs_filters=True) == revision
+    for name in ('data.txt', 'm.py'):
+        blob = subprocess.check_output(['git', '-C', str(source), 'show', revision + ':' + name])
+        assert (destination / name).read_bytes() == blob
+    assert subprocess.check_output(['git', '-C', str(destination), 'status', '--porcelain']) == b''
+
+
 def test_run_logged_terminates_a_timed_out_phase(tmp_path):
     with pytest.raises(subprocess.TimeoutExpired):
         run_logged(

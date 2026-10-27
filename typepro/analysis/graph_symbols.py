@@ -70,6 +70,34 @@ class SymbolIndex:
         return runtime or list(files)
 
     def full_references(self, full, seen=()):
+        return self._resolve_references(self._full_references(full, seen))
+
+    def file_references(self, file, expression, seen=()):
+        return self._resolve_references(self._file_references(file, expression, seen))
+
+    @staticmethod
+    def _resolve_references(request):
+        # Drive the original depth-first traversal with explicit generator
+        # frames. Preserve resolution order, rules and deduplication without
+        # consuming Python call stack or truncating valid long import chains.
+        stack = [request]
+        result = None
+        try:
+            while stack:
+                try:
+                    child = stack[-1].send(result)
+                except StopIteration as done:
+                    stack.pop()
+                    result = done.value
+                else:
+                    stack.append(child)
+                    result = None
+            return result
+        finally:
+            for frame in reversed(stack):
+                frame.close()
+
+    def _full_references(self, full, seen=()):
         full = self.canonical(full)
         if full is None or full in seen:
             return [], 'reexport_cycle'
@@ -81,7 +109,7 @@ class SymbolIndex:
                 found = []
                 reason = 'exact_import_or_reexport'
                 for file in files:
-                    values, rule = self.file_references(file, tail, (*seen, full))
+                    values, rule = yield self._file_references(file, tail, (*seen, full))
                     found.extend(values)
                     if not values:
                         reason = rule
@@ -89,7 +117,7 @@ class SymbolIndex:
                 return list(unique.values()), reason
         return [], 'external_source_unavailable'
 
-    def file_references(self, file, expression, seen=()):
+    def _file_references(self, file, expression, seen=()):
         root, _, suffix = expression.partition('.')
         bindings = self.bindings[file].get(root, ())
         if bindings:
@@ -102,7 +130,7 @@ class SymbolIndex:
                     full = self.import_target(file, stmt, alias)
                     if suffix:
                         full += '.' + suffix
-                    values, rule = self.full_references(full, seen)
+                    values, rule = yield self._full_references(full, seen)
                     found.extend(values)
                 elif isinstance(binding, (*FUNCTIONS, ast.ClassDef)):
                     if not suffix:
@@ -119,7 +147,7 @@ class SymbolIndex:
                         identity = f'{file}:{expression}'
                         if identity in seen:
                             return [], 'reexport_cycle'
-                        values, rule = self.file_references(file, reference, (*seen, identity))
+                        values, rule = yield self._file_references(file, reference, (*seen, identity))
                         found.extend(values)
             return found, 'exact_import_or_reexport' if found else 'binding_not_statically_resolved'
         # Python wildcard import semantics: use declared __all__ when static,
@@ -144,7 +172,7 @@ class SymbolIndex:
                             continue
                     if (exports is not None and root not in exports) or (exports is None and root.startswith('_')):
                         continue
-                    values, _ = self.full_references(module + '.' + expression, seen)
+                    values, _ = yield self._full_references(module + '.' + expression, seen)
                     found.extend(values)
         return found, 'scoped_wildcard' if found else 'symbol_not_found'
 

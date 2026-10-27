@@ -1,4 +1,4 @@
-"""Qwen chat formatting shared by generative training and inference."""
+"""Model-owned chat formatting shared by generative training and inference."""
 from __future__ import annotations
 
 

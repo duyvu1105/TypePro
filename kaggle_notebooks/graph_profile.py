@@ -143,14 +143,30 @@ print({'frozen_projects':len(locks),'baseline_dataset':SPEC['baseline_dataset']}
 
 
 def validate_profile(profile):
-    if profile.get('schema_version')!='typepro-graph-experiment-profile-v1' or profile.get('branch')!=BRANCH:
+    branch = profile.get('branch', '')
+    if profile.get('schema_version')!='typepro-graph-experiment-profile-v1' or not branch or branch=='main':
         raise ValueError('Require explicit graph experiment profile/branch')
     revision=profile.get('revision','')
     if not re.fullmatch('[0-9a-f]{40}',revision):
         raise ValueError('Graph experiment requires a checked full SHA; latest/main are not accepted')
-    for command in (['git','merge-base','--is-ancestor',revision,'refs/heads/'+BRANCH],
+    subprocess.run(['git', 'check-ref-format', '--branch', branch], cwd=REPO_ROOT, check=True, capture_output=True)
+    for command in (['git','merge-base','--is-ancestor',revision,'refs/heads/'+branch],
                     ['git','cat-file','-e',revision+':typepro/analysis/graph_context.py']):
         subprocess.run(command,cwd=REPO_ROOT,check=True,capture_output=True)
+    if profile.get('reuse_shard_notebooks'):
+        if not re.fullmatch(r'[A-Za-z0-9_-]+/[a-z0-9-]+/[1-9][0-9]*',profile.get('direct_dataset','')):
+            raise ValueError('Direct graph inputs require an exact Dataset version')
+        for name in (('dataset_manifest_sha256',) if profile.get('model_neutral') else ('dataset_manifest_sha256','tokenizer_fingerprint')):
+            if not re.fullmatch('[0-9a-f]{64}',profile.get(name,'')):
+                raise ValueError('Direct graph inputs require '+name)
+        source=profile.get('source_locks',{})
+        dependencies=profile.get('dependency_locks',{})
+        if not source or source.keys()!=dependencies.keys():
+            raise ValueError('Direct source/dependency locks must cover the same projects')
+        if any(not re.fullmatch('[0-9a-f]{40}',v) for v in source.values()) or any(
+                not re.fullmatch('[0-9a-f]{64}',v) for v in dependencies.values()):
+            raise ValueError('Malformed direct project locks')
+        return revision
     dataset=profile.get('input_dataset','')
     if not re.fullmatch(r'[A-Za-z0-9_-]+/[a-z0-9-]+',dataset):
         raise ValueError('Profile requires an explicit frozen graph input Dataset')
@@ -163,7 +179,7 @@ def validate_profile(profile):
     return revision
 
 
-def isolated_plan(account_plan):
+def isolated_plan(account_plan,reuse_shard_notebooks=False):
     result=[]
     for item in account_plan['merge_datasets']:
         owner=item['dataset_id'].split('/')[0]
@@ -177,10 +193,88 @@ def isolated_plan(account_plan):
         raise ValueError('Graph profile must preserve all 21 coordinates, 7 per account')
     if len({(r['shard_index'],r['shard_count']) for r in result})!=21:
         raise ValueError('Duplicate graph physical coordinates')
+    if reuse_shard_notebooks:
+        from commit_shard_versions import load_plan,physical_partitions,plan_for_part,partition_kernel_slug
+        _,_,plans=load_plan(ROOT/'shard_account_plan.json')
+        templates={}
+        for plan in plans:
+            for part,coordinate in enumerate(physical_partitions(plan.assigned_shards[0])):
+                effective=plan_for_part(plan,part)
+                templates[coordinate]=(plan,part,effective)
+        for job in result:
+            plan,part,effective=templates[(job['shard_index'],job['shard_count'])]
+            job.update(kernel=f'{effective.runner_account}/{partition_kernel_slug(effective,part)}',
+                       template=plan.notebook_path.name,part_index=part)
+            job['dataset']=f"{effective.dataset_owner}/typepro-graph-v1-data-{job['shard_index']:02d}-of-{job['shard_count']:02d}"
+    return result
+
+
+def reused_shard_notebook(profile,job,source_bundle=None):
+    """Keep the established shard's configuration, authentication and setup."""
+    from generate_notebooks import notebook,code,markdown,pinned_checkout_source
+    from commit_shard_versions import load_plan,render_part_version
+    _,_,plans=load_plan(ROOT/'shard_account_plan.json')
+    plan=next(p for p in plans if p.notebook_path.name==job['template'])
+    old=render_part_version(json.loads(plan.notebook_path.read_text()),plan,job['part_index'])
+    boundary=next(i for i,c in enumerate(old['cells']) if '## Optional automatic resume' in c['source'])
+    cells=old['cells'][:boundary]
+    cells[0]=markdown('# TypePro graph shard\nReuse this shard notebook and the attached Dataset KBs; publish graph outputs separately.')
+    config=next(c for c in cells if 'ASSIGNED_SHARDS =' in c['source'])
+    config['source']=re.sub(r'^BRANCH = .+$','BRANCH = '+repr(profile['branch']),config['source'],flags=re.MULTILINE)
+    config['source']+='\nPROFILE='+repr(profile)+'\nJOB='+repr(job)+'\n'
+    setup=next(c for c in cells if '"git", "clone"' in c['source'])
+    marker='\nPIPELINE_DIR = '
+    if marker not in setup['source']:
+        raise ValueError('Existing shard setup has no checkout insertion point')
+    setup['source']=setup['source'].replace(marker,pinned_checkout_source(profile['revision'],source_bundle)+marker,1)
+    setup['source']+='''
+sys.path.insert(0,str(REPO_DIR))
+run([sys.executable,'-m','pip','install','-q','transformers==4.57.6','tokenizers==0.22.2','torch','loguru==0.7.3'])
+from typepro.analysis.project_index import project_module_aliases
+'''
+    execute='''from typepro.data.graph_dataset import freeze_roster, export_graph_dataset, sha256
+from typepro.data.prepare import stable_number
+from typepro.shared.context_packing import tokenizer_fingerprint
+from transformers import AutoTokenizer
+
+BASELINE=mounted_dataset(PROFILE['direct_dataset'],'manifest.json')
+if sha256(BASELINE/'manifest.json')!=PROFILE['dataset_manifest_sha256']:
+    raise RuntimeError('Attached Dataset changed since scheduling')
+roster,labels=freeze_roster(BASELINE)
+roster=[r for r in roster if stable_number(r['target']['project'],17)%SHARD_COUNT==SHARD_INDEX]
+tokenizer=AutoTokenizer.from_pretrained(PROFILE['tokenizer_repository'],revision=PROFILE['tokenizer_revision'])
+tokenizer_dir=Path('/kaggle/working/graph-tokenizer')
+tokenizer.save_pretrained(tokenizer_dir)
+tokenizer=AutoTokenizer.from_pretrained(tokenizer_dir,local_files_only=True)
+if tokenizer_fingerprint(tokenizer)!=PROFILE['tokenizer_fingerprint']:
+    raise RuntimeError('Frozen tokenizer fingerprint mismatch')
+OUTPUT=Path('/kaggle/working/graph-context-v1')
+print({'phase':'graph_export','targets':len(roster),'shard_index':SHARD_INDEX,'shard_count':SHARD_COUNT},flush=True)
+manifest=export_graph_dataset(roster,labels,Path('/kaggle/working/graph-sources'),
+    PROFILE['source_locks'],PROFILE['dependency_locks'],tokenizer,OUTPUT,
+    dependency_root=BASELINE,dependency_index=PROFILE['dependency_index'],clone_missing=True,
+    partition=(SHARD_INDEX,SHARD_COUNT))
+print({'outcomes':manifest['outcomes'],'targets':manifest['total_targets'],'revision':PROFILE['revision']})
+'''
+    if profile.get('model_neutral'):
+        start = execute.index('tokenizer=AutoTokenizer.from_pretrained')
+        end = execute.index('OUTPUT=Path', start)
+        execute = execute[:start] + 'tokenizer=None\n' + execute[end:]
+        execute = execute.replace('from transformers import AutoTokenizer\n', '')
+        execute = execute.replace('from typepro.shared.context_packing import tokenizer_fingerprint\n', '')
+    cells.extend([markdown('## Build graph context using the attached existing KBs'),
+                  code(mounted_dataset_source()+execute),
+                  markdown('## Verify and publish this graph shard'),
+                  code("from typepro.publishing.graph import publish_graph_dataset\npublish_graph_dataset(OUTPUT,JOB['dataset'],public=JOB['public'])")])
+    result=notebook(cells)
+    result['metadata'].update(typepro=dict(old['metadata']['typepro'],context_policy_version='graph-context-v1',
+        source_revision=profile['revision'],graph_dataset=job['dataset'],reused_template=job['template']))
     return result
 
 
 def graph_notebook(profile,job,source_bundle=None):
+    if profile.get('reuse_shard_notebooks'):
+        return reused_shard_notebook(profile,job,source_bundle)
     from generate_notebooks import notebook, code, markdown, pinned_checkout_source
     setup='''import json, os, subprocess, sys
 from pathlib import Path
@@ -189,10 +283,11 @@ def run(command):
     subprocess.run([str(v) for v in command],check=True)
 
 REPO_DIR=Path('/kaggle/working/TypePro')
-run([sys.executable,'-m','pip','install','-q','transformers==4.57.6','tokenizers==0.22.2','torch','kaggle==1.7.4.2'])
+run([sys.executable,'-m','pip','install','-q','transformers==4.57.6','tokenizers==0.22.2','torch','loguru==0.7.3','kaggle==1.7.4.2'])
 run(['git','clone','--no-checkout','https://github.com/duyvu1105/TypePro.git',REPO_DIR])
 '''+pinned_checkout_source(profile['revision'],source_bundle)+'''
 sys.path.insert(0,str(REPO_DIR))
+from typepro.analysis.project_index import project_module_aliases
 '''
     config='PROFILE='+repr(profile)+'\nJOB='+repr(job)+'\n'
     execute='''from typepro.data.graph_dataset import freeze_roster, export_graph_dataset, sha256
@@ -241,15 +336,17 @@ def render_profile(profile_path,state_parent,requested_revision=None,source_bund
     revision=validate_profile(profile)
     if requested_revision and requested_revision!=revision:
         raise ValueError('Scheduler revision differs from graph profile')
-    jobs=isolated_plan(json.loads((ROOT/'shard_account_plan.json').read_text()))
+    jobs=isolated_plan(json.loads((ROOT/'shard_account_plan.json').read_text()),profile.get('reuse_shard_notebooks',False))
     for job in jobs:
         directory=Path(state_parent)/'graph-context-v1'/job['account']/f"{job['shard_index']:02d}-of-{job['shard_count']}"
         directory.mkdir(parents=True,exist_ok=True)
         rendered=graph_notebook(profile,job,source_bundle)
         (directory/'graph.ipynb').write_text(json.dumps(rendered,indent=1))
+        sources=([profile['direct_dataset']] if profile.get('reuse_shard_notebooks') else
+                 [profile['input_dataset']]+([profile['dependency_dataset']] if profile.get('dependency_dataset') else []))
         metadata=dict(id=job['kernel'],title=job['kernel'].split('/')[1],code_file='graph.ipynb',
                       language='python',kernel_type='notebook',is_private=True,enable_gpu=False,
-                      enable_internet=True,dataset_sources=[profile['input_dataset']]+([profile['dependency_dataset']] if profile.get('dependency_dataset') else []),kernel_sources=[],competition_sources=[])
+                      enable_internet=True,dataset_sources=sources,kernel_sources=[],competition_sources=[])
         (directory/'kernel-metadata.json').write_text(json.dumps(metadata,indent=2))
         job['payload']=str(directory)
     plan=dict(schema_version='typepro-graph-experiment-plan-v1',revision=revision,
@@ -261,10 +358,11 @@ def render_profile(profile_path,state_parent,requested_revision=None,source_bund
     merge_dir=Path(state_parent)/'graph-context-v1'/'merge'
     merge_dir.mkdir(parents=True,exist_ok=True)
     (merge_dir/'merge.ipynb').write_text(json.dumps(merge,indent=1))
-    (merge_dir/'kernel-metadata.json').write_text(json.dumps(dict(id='duyvu1105/typepro-graph-v1-merge',
-        title='typepro-graph-v1-merge',code_file='merge.ipynb',language='python',kernel_type='notebook',
+    merge_slug='merge-dataset' if profile.get('reuse_shard_notebooks') else 'typepro-graph-v1-merge'
+    (merge_dir/'kernel-metadata.json').write_text(json.dumps(dict(id='duyvu1105/'+merge_slug,
+        title=merge_slug,code_file='merge.ipynb',language='python',kernel_type='notebook',
         is_private=True,enable_gpu=False,enable_internet=True,
-        dataset_sources=[profile['input_dataset'],*plan['merge_datasets']],kernel_sources=[],competition_sources=[]),indent=2))
+        dataset_sources=[profile.get('direct_dataset') or profile['input_dataset'],*plan['merge_datasets']],kernel_sources=[],competition_sources=[]),indent=2))
     return plan
 
 
@@ -310,11 +408,21 @@ for job in PLAN['jobs']:
     manifest=verify_graph_dataset(root)
     if manifest.get('partition')!={'shard_index':job['shard_index'],'shard_count':job['shard_count']}:
         raise RuntimeError('Graph Dataset physical coordinate mismatch')
+    if manifest.get('implementation_sha')!=PROFILE['revision']:
+        raise RuntimeError('Graph Dataset implementation commit mismatch')
     roots.append(root)
 OUTPUT=Path('/kaggle/working/graph-v1-final')
 merge_graph_datasets(roots,OUTPUT,roster)
 """.replace('PROFILE_VALUE',repr(profile)).replace('PLAN_VALUE',repr(plan))
     execute=execute.replace('INPUT=mounted_dataset',mounted_dataset_source()+'\nINPUT=mounted_dataset',1)
+    if profile.get('reuse_shard_notebooks'):
+        start=execute.index("INPUT=mounted_dataset")
+        end=execute.index('roots=[]',start)
+        execute=execute[:start]+'''INPUT=mounted_dataset(PROFILE['direct_dataset'],'manifest.json')
+if sha256(INPUT/'manifest.json')!=PROFILE['dataset_manifest_sha256']:
+    raise RuntimeError('Attached Dataset changed since scheduling')
+roster,_=freeze_roster(INPUT)
+'''+execute[end:]
     publish="""from typepro.publishing.graph import publish_graph_dataset
 publish_graph_dataset(OUTPUT,'duyvu1105/typepro-graph-v1-final',public=False)
 """

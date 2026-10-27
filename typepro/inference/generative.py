@@ -34,6 +34,13 @@ def main(argv=None) -> None:
         tokenizer.pad_token = tokenizer.eos_token
     # Causal-LM generation from a padded batch must use the final non-pad token.
     tokenizer.padding_side = "left"
+    from typepro.data.model_preprocess import validate_model_row
+    from typepro.shared.context_packing import tokenizer_fingerprint
+    with Path(args.input).open(encoding="utf-8") as handle:
+        rows = [json.loads(line) for line in handle if line.strip()]
+    fingerprint = tokenizer_fingerprint(tokenizer)
+    for row in rows:
+        validate_model_row(row, tokenizer, args.input_length, args.label_length, fingerprint=fingerprint)
     quantization_config = BitsAndBytesConfig(
         load_in_4bit=True,
         bnb_4bit_quant_type="nf4",
@@ -48,8 +55,6 @@ def main(argv=None) -> None:
     )
     model = PeftModel.from_pretrained(base_model, args.checkpoint).to(device).eval()
     model.config.pad_token_id = tokenizer.pad_token_id
-    with Path(args.input).open(encoding="utf-8") as handle:
-        rows = [json.loads(line) for line in handle if line.strip()]
     predictions = []
     correct = 0
     for start in range(0, len(rows), args.batch_size):

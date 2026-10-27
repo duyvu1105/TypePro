@@ -26,6 +26,8 @@ from typepro.analysis.graph_limits import query_deadline, QueryTimeout
 from typepro.shared.context_packing import tokenizer_fingerprint, VERSION as BUDGET_POLICY
 
 DATASET_SCHEMA = 'typepro-graph-dataset-v1'
+EVIDENCE_SCHEMA = 'typepro-graph-evidence-v2'
+EVIDENCE_POLICY = 'typepro-evidence-unpacked-v1'
 LOCK_FIELDS = ('implementation_sha','implementation_fingerprint','python_version','context_policy_version', 'graph_schema', 'budget_policy', 'tokenizer_fingerprint',
                'source_lock_hash', 'dependency_lock_hash', 'roster_hash', 'input_length', 'label_length')
 
@@ -92,7 +94,7 @@ def freeze_roster(baseline):
 
 def training_row(row):
     """Keep diagnostics in the outcome ledger rather than the model dataset."""
-    keys=('id','target_id','target','project','split','outcome','input','label',
+    keys=('id','target_id','target','project','split','outcome','input','label','evidence',
           'context_policy_version','graph_schema','budget_policy','tokenizer_fingerprint',
           'source_commit','source_hash','dependency_hash','input_length','label_length','cache_key')
     return {key:row[key] for key in keys if key in row}
@@ -101,8 +103,12 @@ def training_row(row):
 def verify_graph_dataset(root, tokenizer=None):
     root = Path(root)
     manifest = json.loads((root / 'manifest.json').read_text())
-    if manifest.get('schema_version') != DATASET_SCHEMA or manifest.get('context_policy_version') != POLICY:
+    neutral = manifest.get('schema_version') == EVIDENCE_SCHEMA
+    if manifest.get('schema_version') not in {DATASET_SCHEMA, EVIDENCE_SCHEMA} or manifest.get('context_policy_version') != POLICY:
         raise ValueError('Incompatible graph dataset schema/policy')
+    if neutral and (manifest.get('budget_policy') != EVIDENCE_POLICY or
+                    any(manifest.get(k) is not None for k in ('tokenizer_fingerprint','input_length','label_length'))):
+        raise ValueError('Model-neutral evidence cannot have tokenizer/template/token budgets')
     for key, expected in manifest['files'].items():
         if not (root/key).resolve().is_relative_to(root.resolve()):
             raise ValueError('Graph manifest path escapes dataset')
@@ -123,7 +129,7 @@ def verify_graph_dataset(root, tokenizer=None):
         # containing underscores; the digest still binds the exact file.
         if original in dependency_locks and sha256(path)!=dependency_locks[original]:
             raise ValueError('Graph KB dependency fingerprint mismatch')
-    if tokenizer is not None and tokenizer_fingerprint(tokenizer)!=manifest['tokenizer_fingerprint']:
+    if tokenizer is not None and not neutral and tokenizer_fingerprint(tokenizer)!=manifest['tokenizer_fingerprint']:
         raise ValueError('Verification tokenizer fingerprint mismatch')
     roster = list(read_jsonl(root / 'roster.jsonl'))
     expected = {r['target_id']: r for r in roster}
@@ -153,6 +159,8 @@ def verify_graph_dataset(root, tokenizer=None):
             raise ValueError('Missing frozen project KB')
         if row['outcome'] not in OUTCOMES or row['split'] != expected[target.identity]['split']:
             raise ValueError('Invalid outcome or changed split')
+        if neutral and row['outcome'] == 'budget_exceeded':
+            raise ValueError('Model budget outcomes belong to per-model preprocessing')
         if manifest.get('partition'):
             physical=manifest['partition']
             number=int(hashlib.sha1(('17:'+target.project).encode()).hexdigest()[:16],16)
@@ -166,14 +174,27 @@ def verify_graph_dataset(root, tokenizer=None):
             if row.get(key) != manifest.get(key):
                 raise ValueError(f'Mixed graph fingerprint: {key}')
         if row['outcome'] in {'ready', 'unresolved'}:
-            if not row.get('input') or row['audit']['prompt_tokens'] > manifest['input_length'] - manifest['label_length']:
+            if not row.get('input') or (not neutral and row['audit']['prompt_tokens'] > manifest['input_length'] - manifest['label_length']):
                 raise ValueError('Invalid packed ready prompt')
-            if tokenizer is not None:
+            if neutral:
+                from typepro.analysis.graph_selection import EvidenceGroup
+                from typepro.analysis.graph_render import render_groups
+                evidence = row.get('evidence')
+                if not isinstance(evidence, list) or not evidence:
+                    raise ValueError('Missing model-neutral evidence groups')
+                groups_for_prompt = [EvidenceGroup(**g) for g in evidence]
+                if render_groups(target, sorted(groups_for_prompt, key=lambda g: g.id)) != row['input']:
+                    raise ValueError('Model-neutral input differs from complete evidence')
+                if set(row['audit']['retained_groups']) != {g.id for g in groups_for_prompt}:
+                    raise ValueError('Model-neutral dataset discarded evidence')
+            if tokenizer is not None and not neutral:
                 from typepro.shared.context_packing import prompt_token_ids
                 actual_tokens=prompt_token_ids(tokenizer,row['input'],manifest['input_length'],manifest['label_length'])
                 if len(actual_tokens)!=row['audit']['prompt_tokens']:
                     raise ValueError('Packed prompt token count mismatch')
             groups={g['id']:g for g in row['full_evidence']}
+            if neutral and any(groups.get(g['id']) != g for g in row['evidence']):
+                raise ValueError('Model-neutral evidence differs from graph source evidence')
             retained=set(row['audit']['retained_groups'])
             if not retained<=groups.keys() or any(g['mandatory'] and k not in retained for k,g in groups.items()):
                 raise ValueError('Missing mandatory evidence group')
@@ -203,8 +224,10 @@ def verify_graph_dataset(root, tokenizer=None):
     return manifest
 
 
-def export_graph_dataset(roster, labels, repos_root, source_locks, dependency_locks, tokenizer, output,
+def export_graph_dataset(roster, labels, repos_root, source_locks, dependency_locks, tokenizer=None, output=None,
                          input_length=6144, label_length=64, max_expansions=32, dependency_root=None, clone_missing=False, partition=None, annotation_timeout_seconds=30, dependency_index=None):
+    if output is None:
+        raise ValueError('Require graph output directory')
     output = Path(output)
     if output.exists() and any(output.iterdir()):
         raise ValueError('Graph output directory must be new/empty; preserve previous experiment artifacts')
@@ -220,9 +243,12 @@ def export_graph_dataset(roster, labels, repos_root, source_locks, dependency_lo
                           implementation_root/'typepro/shared/context_packing.py',
                           implementation_root/'typepro/shared/generative_chat.py',Path(__file__)]
     implementation_fingerprint=digest({p.relative_to(implementation_root).as_posix():sha256(p) for p in implementation_files})
+    neutral = tokenizer is None
+    if neutral:
+        input_length = label_length = None
     manifest = dict(implementation_sha=implementation_sha, implementation_fingerprint=implementation_fingerprint,
-                    python_version=list(sys.version_info[:2]),schema_version=DATASET_SCHEMA, context_policy_version=POLICY, graph_schema=SCHEMA,
-                    budget_policy=BUDGET_POLICY, tokenizer_fingerprint=tokenizer_fingerprint(tokenizer),
+                    python_version=list(sys.version_info[:2]),schema_version=EVIDENCE_SCHEMA if neutral else DATASET_SCHEMA, context_policy_version=POLICY, graph_schema=SCHEMA,
+                    budget_policy=EVIDENCE_POLICY if neutral else BUDGET_POLICY, tokenizer_fingerprint=tokenizer_fingerprint(tokenizer) if not neutral else None,
                     source_lock_hash=digest(source_locks), dependency_lock_hash=digest(dependency_locks),
                     roster_hash=digest(roster), input_length=input_length, label_length=label_length,
                     max_expansions=max_expansions, annotation_timeout_seconds=annotation_timeout_seconds,
@@ -253,14 +279,16 @@ def export_graph_dataset(roster, labels, repos_root, source_locks, dependency_lo
             created_checkout = False
             if clone_missing and not root.exists():
                 from typepro.data.prepare import clone_project
-                clone_project(project, root, timeout_seconds=120, expected_commit=source_locks[project])
+                clone_project(project, root, timeout_seconds=120, expected_commit=source_locks[project],
+                              disable_lfs_filters=True)
                 created_checkout = True
             revision = subprocess.run(['git', '-C', str(root), 'rev-parse', 'HEAD'], check=True,
                                       capture_output=True, text=True).stdout.strip()
             dirty = subprocess.run(['git', '-C', str(root), 'status', '--porcelain'], check=True,
                                    capture_output=True, text=True).stdout.strip()
             if revision != source_locks[project] or dirty:
-                raise ValueError(f'Project checkout is not the clean locked revision: {project}')
+                raise ValueError(f'Project checkout is not the clean locked revision: {project}; '
+                                 f'expected={source_locks[project]}, actual={revision}, status={dirty!r}')
             tracked = subprocess.check_output(['git','-C',str(root),'ls-files','-z'], text=True).split('\0')
             sources = {}
             for file in tracked:
@@ -339,7 +367,7 @@ def main():
     parser.add_argument('--source-lock', required=True, type=Path, help='JSON project -> exact commit')
     parser.add_argument('--dependency-lock', required=True, type=Path, help='JSON project -> frozen KB SHA256')
     parser.add_argument('--dependency-root', required=True, type=Path, help='Frozen baseline project KB directory')
-    parser.add_argument('--tokenizer', required=True, help='Local frozen tokenizer directory')
+    parser.add_argument('--tokenizer', help='Legacy packed export only; omit for model-neutral evidence')
     parser.add_argument('--output', required=True, type=Path)
     parser.add_argument('--input-length', type=int, default=6144)
     parser.add_argument('--label-length', type=int, default=64)
@@ -347,7 +375,7 @@ def main():
     parser.add_argument('--max-expansions', type=int, default=32)
     args = parser.parse_args()
     from transformers import AutoTokenizer
-    tokenizer = AutoTokenizer.from_pretrained(args.tokenizer, local_files_only=True)
+    tokenizer = AutoTokenizer.from_pretrained(args.tokenizer, local_files_only=True) if args.tokenizer else None
     roster, labels = freeze_roster(args.baseline)
     manifest = export_graph_dataset(roster, labels, args.repos_root, json.loads(args.source_lock.read_text()),
         json.loads(args.dependency_lock.read_text()), tokenizer, args.output,

@@ -56,6 +56,7 @@ def train():
     parser.add_argument("--data-dir", required=True)
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--model-name", default="Qwen/Qwen2.5-Coder-1.5B-Instruct")
+    parser.add_argument('--tokenizer-name', help='Tokenizer artifact saved by model_preprocess')
     parser.add_argument("--input-length", type=int, default=8192)
     parser.add_argument("--label-length", type=int, default=64)
     parser.add_argument("--batch-size", type=int, default=1)
@@ -130,9 +131,11 @@ def train():
     # set_seed reads the distributed process index from AcceleratorState.
     set_seed(args.seed, device_specific=True)
     random.seed(args.seed)
-    tokenizer = AutoTokenizer.from_pretrained(args.model_name)
+    tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_name or args.model_name)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
+    from typepro.data.model_preprocess import validate_model_dataset
+    validate_model_dataset(args.data_dir, tokenizer, args.input_length, args.label_length)
     quantization_config = BitsAndBytesConfig(
         load_in_4bit=True,
         bnb_4bit_quant_type="nf4",

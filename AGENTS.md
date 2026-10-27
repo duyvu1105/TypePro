@@ -1,14 +1,54 @@
 # TypePro agent runbook
 
-## Quy tắc Git: chỉ dùng nhánh main (2026-10-19)
+## Quy tắc Git cho shard và thay đổi (2026-10-27)
 
-- Chỉ làm việc, commit và push trên một nhánh duy nhất: `main`.
-- Không tự tạo hoặc chuyển sang nhánh khác, kể cả nhánh tạm, nhánh sửa lỗi,
-  nhánh tối ưu hoặc nhánh dùng riêng để chạy Kaggle. Không dùng worktree hay
-  detached HEAD để lách quy tắc này.
-- Các job Kaggle phải pin commit đã có trên `main`, không dùng commit chỉ có
-  trên nhánh khác.
-- Chỉ được dùng nhánh khác khi người dùng yêu cầu rõ ràng cho công việc đó.
+- Mỗi thay đổi hoặc lượt tạo shard dùng một nhánh công việc ngoài `main`.
+- Nếu đang ở `main`, tạo nhánh mới trước khi sửa hoặc chuẩn bị shard.
+- Nếu đã ở nhánh ngoài `main` cho công việc hiện tại, tiếp tục dùng nhánh đó;
+  không tạo thêm nhánh sửa lỗi hay nhánh con. Một thay đổi chỉ dùng một nhánh.
+- Pin từng job Kaggle bằng full commit SHA trên nhánh công việc. Ghi nhánh,
+  SHA và checksum bundle vào ledger; không dùng HEAD/latest thay đổi theo thời gian.
+- Retry chỉ các kernel/version đã xác nhận lỗi từ Kaggle; giữ nguyên job đang
+  chạy và job thành công. Lưu lịch sử version và ledger trước khi retry.
+- Sửa cơ chế chung, không thêm ngoại lệ theo shard/project. Kiểm tra hồi quy
+  nội dung graph, prompt, nhãn, thứ tự và roster của các trường hợp đã thành công.
+- Merge phải giữ kiểm tra implementation SHA/fingerprint và các source/policy
+  lock. Khi đổi schema hoặc policy Dataset, tạo lượt mới đầy đủ 21 shard.
+- Dataset graph chung lưu evidence đầy đủ, không áp chat template, tokenizer
+  hay token budget của model. Đóng gói/cắt prompt và kiểm tra label/EOS ở bước
+  preprocess riêng trước train; dùng cùng cấu hình khi inference.
+
+## Chạy scheduler và merge trong tmux
+
+- Phân biệt scheduler local/tmux với kernel chạy trên Kaggle. Kiểm tra đúng
+  ledger, profile, kernel ID và version; tên kernel cũ có thể đang xuất graph mới.
+- Với graph mới dùng notebook shard hiện có, profile phải có
+  `reuse_shard_notebooks=true`. Dùng đúng ledger hiện tại để tránh submit trùng.
+- Chạy full test suite và dry-run trước khi push. Lệnh mẫu cho lượt graph;
+  thay PROFILE, BUNDLE và STATE bằng đường dẫn đã xác minh, không tạo lượt mới
+  khi đang resume. State phải nằm trong thư mục riêng được Git ignore.
+
+```bash
+uv run --with kaggle==1.7.4.2 python kaggle_notebooks/schedule_shards.py \
+  --graph-profile PROFILE --source-bundle BUNDLE --state STATE
+
+tmux new-session -d -s typepro_graph_reuse -c /home/anhnd_02/TypePro \
+  'uv run --with kaggle==1.7.4.2 python kaggle_notebooks/schedule_shards.py --graph-profile PROFILE --source-bundle BUNDLE --state STATE --push --watch --poll-seconds 60 >> SCHEDULER_LOG 2>&1'
+
+tmux attach -t typepro_graph_reuse
+tail -f SCHEDULER_LOG
+```
+
+- `--watch` của lượt graph chờ đủ 21 shard, kiểm tra đúng version và Dataset
+  files rồi submit merge; notebook merge xác minh archive, manifest, roster,
+  coordinate và fingerprint trước khi publish private Dataset graph cuối.
+- Theo dõi tiếp version/status merge và Dataset version mới; submit thành công
+  không có nghĩa Dataset đã tạo thành công. Nếu shard lỗi, watcher dừng an toàn;
+  sửa lỗi, dry-run và retry đúng shard lỗi, rồi resume watcher bằng tmux.
+- Giới hạn tối đa 5 kernel active/account, kể cả kernel ngoài ledger. Không
+  chạy hai scheduler dùng chung ledger hoặc khởi chạy merge khi thiếu shard.
+- Scheduler baseline hiện dừng sau khi submit đủ; muốn merge baseline cần bước
+  chờ và xác minh riêng. Không dùng watcher graph cho Dataset baseline.
 
 ## Current authorized workflow (2026-10-18)
 

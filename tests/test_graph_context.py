@@ -355,6 +355,27 @@ def test_reexport_cycle_is_explicit_and_does_not_recurse_forever():
     assert result['outcome']=='unresolved'
 
 
+def test_import_chain_beyond_python_recursion_limit_keeps_exact_resolution():
+    from typepro.analysis.graph_resolver import GraphResolver
+    sources = {f'm{i}.py': f'from m{i+1} import helper\n' for i in range(1200)}
+    sources['m1200.py'] = 'def helper(x):\n return x\n'
+    symbols = GraphResolver(sources).symbols
+    values, rule = symbols.full_references('m0.helper')
+    assert [(file, name) for file, name, _ in values] == [('m1200.py', 'helper')]
+    assert rule == 'exact_import_or_reexport'
+
+
+def test_growing_alias_uses_target_deadline_instead_of_crashing_call_stack():
+    from typepro.analysis.graph_limits import QueryTimeout, query_deadline
+    from typepro.analysis.graph_resolver import GraphResolver
+    symbols = GraphResolver({'m.py': 'alias = alias.child\n'}).symbols
+    with pytest.raises(QueryTimeout):
+        with query_deadline(0.05):
+            symbols.file_references('m.py', 'alias')
+    # A cancelled traversal must not poison subsequent independent lookups.
+    assert symbols.file_references('m.py', 'missing') == ([], 'symbol_not_found')
+
+
 def test_bound_instance_method_preserves_self_binding():
     source='class C:\n def helper(self, x):\n  return x\n def f(self, x):\n  return self.helper(x)\n'
     result=GraphContextProject('p',{'m.py':source},'sha','kb').query(TargetSpec('p','m.py','C.f','return','f'),Tokenizer(),20000)

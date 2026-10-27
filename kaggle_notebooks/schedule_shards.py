@@ -231,6 +231,10 @@ def main():
                         continue
                     if job['kernel'] in active:
                         continue
+                    if graph_plan:
+                        from graph_watch import exact_dataset
+                        baseline = exact_dataset(api, job['dataset'])
+                        job['dataset_baseline'] = int(baseline.current_version_number) if baseline else 0
                     job['status'] = 'submitting'
                     save(args.state, state)
                     output = run_push(Path(job['payload']), credential, Path(auth_dir))
@@ -242,7 +246,26 @@ def main():
                 save(args.state, state)
             pending = sum(job['status'] == 'pending' and (not args.account or job['account'] in args.account) for job in state['jobs'])
             print(json.dumps({'pending': pending, 'state': str(args.state)}), flush=True)
-            if not pending or not args.watch:
+            if not args.watch:
+                break
+            if graph_plan and not pending:
+                if args.account or args.jobs_per_account or args.skip_jobs_per_account:
+                    raise RuntimeError('Automatic graph merge requires the complete unfiltered 21-job plan')
+                credential = load_credential(credentials['duyvu1105'], 'duyvu1105')
+                os.environ['KAGGLE_CONFIG_DIR'] = auth_dir
+                os.environ['KAGGLE_USERNAME'] = credential['username']
+                os.environ['KAGGLE_KEY'] = credential['key']
+                os.environ.pop('KAGGLE_API_TOKEN', None)
+                from kaggle.api.kaggle_api_extended import KaggleApi
+                merge_api = KaggleApi()
+                merge_api.authenticate()
+                from graph_watch import merge_tick
+                merge_dir = args.state.parent / 'graph-context-v1' / 'merge'
+                if merge_tick(merge_api, credential, Path(auth_dir), state,
+                              lambda: save(args.state, state), merge_dir, bundle):
+                    print(json.dumps({'merge': state['merge']}), flush=True)
+                    break
+            elif not pending:
                 break
             time.sleep(max(10, args.poll_seconds))
 

@@ -117,3 +117,48 @@ def test_freezer_accepts_only_v24_identical_objects_on_a_newer_mount(tmp_path):
     kb.write_bytes(kb.read_bytes().replace(b'[]',b'{}'))
     with pytest.raises(RuntimeError,match='checksum differs from v24'):
         exec(compile(source,'freezer','exec'),{})
+
+
+def test_reuse_existing_shards_preserves_kernels_coordinates_auth_and_graph_outputs():
+    production=json.loads((ROOT/'kaggle_notebooks/shard_account_plan.json').read_text())
+    jobs=graph_profile.isolated_plan(production,reuse_shard_notebooks=True)
+    assert len(jobs)==21
+    assert len({j['kernel'] for j in jobs})==21
+    assert all('/typepro-python-shard-' in j['kernel'] for j in jobs)
+    assert all('/typepro-graph-v1-data-' in j['dataset'] for j in jobs)
+    p=dict(profile(),reuse_shard_notebooks=True,direct_dataset='owner/baseline/26',
+        dataset_manifest_sha256='c'*64,tokenizer_fingerprint='d'*64,
+        source_locks={'owner/repo':'a'*40},dependency_locks={'owner/repo':'b'*64},
+        dependency_index={'owner__repo':'project_kb/owner__repo/knowledge_base.json'},
+        tokenizer_repository='Qwen/Qwen2.5-Coder-0.5B-Instruct',tokenizer_revision='e'*40)
+    for job in jobs:
+        nb=graph_profile.graph_notebook(p,job,b'fixture bundle')
+        source='\n'.join(c['source'] for c in nb['cells'])
+        for c in nb['cells']:
+            if c['cell_type']=='code':ast.parse(c['source'])
+        config=next(c['source'] for c in nb['cells'] if 'ASSIGNED_SHARDS =' in c['source'])
+        assert f"SHARD_INDEX = {job['shard_index']}\n" in config
+        assert f"SHARD_COUNT = {job['shard_count']}\n" in config
+        assert 'TYPEPRO_KAGGLE_IDENTITY=' in source
+        assert 'requirements' in source and 'build.txt' in source
+        assert 'export_graph_dataset(' in source
+        assert 'input_manifest.json' not in source
+        assert '--stage' not in source and '--build-import-kb' not in source
+        assert nb['metadata']['typepro']['reused_template']==job['template']
+    nb=graph_profile.graph_merge_notebook(p,dict(jobs=jobs))
+    for c in nb['cells']:
+        if c['cell_type']=='code':ast.parse(c['source'])
+    source='\n'.join(c['source'] for c in nb['cells'])
+    assert "freeze_roster(INPUT)" in source and 'input_manifest.json' not in source
+    neutral = dict(p, model_neutral=True)
+    neutral.pop('tokenizer_fingerprint')
+    for key in ('tokenizer_repository', 'tokenizer_revision'):
+        neutral.pop(key)
+    nb = graph_profile.graph_notebook(neutral, jobs[0], b'fixture bundle')
+    source = '\n'.join(c['source'] for c in nb['cells'])
+    assert 'tokenizer=None' in source
+    assert 'AutoTokenizer.from_pretrained' not in source
+    assert 'Qwen/' not in source
+    for cell in nb['cells']:
+        if cell['cell_type'] == 'code':
+            ast.parse(cell['source'])

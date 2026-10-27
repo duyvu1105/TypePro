@@ -667,6 +667,7 @@ def parse_export_summary(tail: str) -> dict | None:
 def clone_project(
     project: str, destination: Path, timeout_seconds: int = 0,
     expected_commit: str | None = None,
+    *, disable_lfs_filters: bool = False,
 ) -> str:
     def execute(command: list[str]) -> subprocess.CompletedProcess:
         try:
@@ -676,7 +677,17 @@ def clone_project(
                 f"git operation timed out after {timeout_seconds}s for {project}"
             ) from error
 
+    def configure_filters():
+        if disable_lfs_filters:
+            # Graph analysis consumes committed source blobs, not hydrated LFS
+            # objects. Malformed historical LFS pointers must not dirty checkout.
+            for key, value in (('process', ''), ('required', 'false'),
+                               ('smudge', 'cat'), ('clean', 'cat')):
+                execute(['git', '-C', str(destination), 'config', '--local',
+                         'filter.lfs.' + key, value])
+
     if destination.exists() and (destination / ".git").exists():
+        configure_filters()
         actual = execute(["git", "-C", str(destination), "rev-parse", "HEAD"]).stdout.strip()
         if expected_commit and actual.casefold() != expected_commit.casefold():
             execute(["git", "-C", str(destination), "fetch", "--quiet", "--depth", "1", "origin", expected_commit])
@@ -689,6 +700,7 @@ def clone_project(
     if expected_commit:
         destination.mkdir()
         execute(["git", "-C", str(destination), "init", "--quiet"])
+        configure_filters()
         execute(["git", "-C", str(destination), "remote", "add", "origin", f"https://github.com/{project}.git"])
         execute(["git", "-C", str(destination), "fetch", "--quiet", "--depth", "1", "origin", expected_commit])
         execute(["git", "-C", str(destination), "checkout", "--quiet", "--detach", "FETCH_HEAD"])

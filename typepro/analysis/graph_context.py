@@ -85,14 +85,16 @@ class GraphContextProject:
             builder.terminal_exits = {mapping[k] for k in builder.terminal_exits}
         return builder
 
-    def query(self, target, tokenizer, input_length=6144, label_length=64):
+    def query(self, target, tokenizer=None, input_length=6144, label_length=64):
         started = time.monotonic()
         if target.project != self.project:
             raise ValueError('Target belongs to another project')
-        fingerprint = tokenizer_fingerprint(tokenizer)
+        fingerprint = tokenizer_fingerprint(tokenizer) if tokenizer is not None else None
+        if tokenizer is None:
+            input_length = label_length = None
         base = dict(target=asdict(target), target_id=target.identity,
                     context_policy_version=POLICY, graph_schema=SCHEMA,
-                    target_masking_version=MASKING, budget_policy=BUDGET_POLICY,
+                    target_masking_version=MASKING, budget_policy=BUDGET_POLICY if tokenizer is not None else 'typepro-evidence-unpacked-v1',
                     contract_version=CONTRACT_VERSION, source_commit=self.source_commit,
                     source_hash=self.source_hash, dependency_hash=self.dependency_hash,
                     tokenizer_fingerprint=fingerprint, input_length=input_length, label_length=label_length)
@@ -396,7 +398,13 @@ class GraphContextProject:
         groups = canonicalize_groups(groups)
         from typepro.analysis.graph_conflicts import annotation_conflicts
         conflicts=annotation_conflicts(groups)
-        packed = pack_groups(tokenizer, groups, lambda gs: render_groups(target, gs), input_length, label_length)
+        if tokenizer is None:
+            from typepro.shared.context_packing import PackedContext
+            packed = PackedContext(render_groups(target, sorted(groups, key=lambda g: g.id)), [],
+                                   sorted(g.id for g in groups), {}, None, 'ready')
+            base['evidence'] = [asdict(g) for g in groups]
+        else:
+            packed = pack_groups(tokenizer, groups, lambda gs: render_groups(target, gs), input_length, label_length)
         outcome = packed.outcome
         if outcome == 'ready' and graph.gaps:
             outcome = 'unresolved'
@@ -404,7 +412,7 @@ class GraphContextProject:
                     full_evidence=[asdict(g) for g in [*groups,*unrelated_evidence]],
                     audit=dict(graph=graph.serialize(), selected_node_ids=sorted(selected_nodes),
                                retained_groups=packed.retained, omitted_groups={**unrelated_groups,**packed.omitted},
-                               conflicts=conflicts, prompt_tokens=len(packed.prompt_ids),
+                               conflicts=conflicts, prompt_tokens=len(packed.prompt_ids) if tokenizer is not None else None,
                                mandatory_tokens=packed.required_tokens,
                                resolved_edges=sum(e.certainty == 'verified' for e in graph.edges),
                                unresolved_count=len(graph.gaps),
@@ -416,7 +424,7 @@ class GraphContextProject:
         base['cache_key'] = digest(dict(target=asdict(target), structural_hash=self.structural_hash,
             dependency=self.dependency_hash, source_commit=self.source_commit, schema=SCHEMA, masking=MASKING,
             module_aliases=self.resolver.symbols.aliases,
-            policy=POLICY, contracts=CONTRACT_VERSION, budget=BUDGET_POLICY,
+            policy=POLICY, contracts=CONTRACT_VERSION, budget=base['budget_policy'],
             allowed_source_hashes={f:digest(ast.dump(ast.parse(s),include_attributes=False)) for f,s in overlays.cache.items()},
             tokenizer=fingerprint, input_length=input_length, label_length=label_length,
             max_expansions=self.max_expansions))
