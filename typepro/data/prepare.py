@@ -14,6 +14,7 @@ if __package__ in (None, ''):
 
 import argparse
 import hashlib
+import io
 import json
 import os
 import re
@@ -23,6 +24,8 @@ import stat
 import shutil
 import subprocess
 import sys
+import tarfile
+import tempfile
 import time
 import threading
 import urllib.request
@@ -664,6 +667,59 @@ def parse_export_summary(tail: str) -> dict | None:
     return None
 
 
+def restore_locked_commit_from_archive(
+    destination: Path, expected_commit: str, timeout_seconds: int = 0,
+) -> None:
+    """Restore an exact Git revision from Software Heritage's git-bare vault."""
+    swhid = f"swh:1:rev:{expected_commit}"
+    endpoint = f"https://archive.softwareheritage.org/api/1/vault/git-bare/{swhid}/"
+    request_timeout = timeout_seconds or 120
+
+    def request_json(request: str | urllib.request.Request) -> dict[str, Any]:
+        with urllib.request.urlopen(request, timeout=request_timeout) as response:
+            value = json.loads(response.read().decode('utf-8'))
+        if not isinstance(value, dict):
+            raise RuntimeError('Software Heritage returned malformed vault metadata')
+        return value
+
+    status = request_json(urllib.request.Request(endpoint, data=b'', method='POST'))
+    deadline = time.monotonic() + request_timeout
+    while status.get('status') not in {'done', 'failed'}:
+        if time.monotonic() >= deadline:
+            raise RuntimeError('Software Heritage vault cooking timed out')
+        time.sleep(2)
+        status = request_json(endpoint)
+    if status.get('status') != 'done' or not isinstance(status.get('fetch_url'), str):
+        raise RuntimeError('Software Heritage could not archive the locked revision')
+
+    maximum_archive_bytes = 1024 * 1024 * 1024
+    archive = bytearray()
+    with urllib.request.urlopen(status['fetch_url'], timeout=request_timeout) as response:
+        while block := response.read(1024 * 1024):
+            archive.extend(block)
+            if len(archive) > maximum_archive_bytes:
+                raise RuntimeError('Software Heritage Git archive exceeds 1 GiB')
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix='typepro_swh_', dir=destination.parent) as temporary:
+        temporary = Path(temporary)
+        with tarfile.open(fileobj=io.BytesIO(archive), mode='r:') as bundle:
+            for member in bundle.getmembers():
+                if not (temporary / member.name).resolve().is_relative_to(temporary.resolve()):
+                    raise RuntimeError('Software Heritage archive path escapes extraction root')
+            bundle.extractall(temporary, filter='data')
+        repositories = [path for path in temporary.iterdir()
+                        if path.is_dir() and path.name.endswith('.git')]
+        if len(repositories) != 1:
+            raise RuntimeError('Software Heritage archive must contain one bare Git repository')
+        subprocess.run(['git', 'clone', '--quiet', '--no-checkout',
+                        str(repositories[0]), str(destination)], check=True,
+                       capture_output=True, text=True, timeout=timeout_seconds or None)
+    subprocess.run(['git', '-C', str(destination), 'checkout', '--quiet', '--detach',
+                    expected_commit], check=True, capture_output=True, text=True,
+                   timeout=timeout_seconds or None)
+
+
 def clone_project(
     project: str, destination: Path, timeout_seconds: int = 0,
     expected_commit: str | None = None,
@@ -690,8 +746,13 @@ def clone_project(
         configure_filters()
         actual = execute(["git", "-C", str(destination), "rev-parse", "HEAD"]).stdout.strip()
         if expected_commit and actual.casefold() != expected_commit.casefold():
-            execute(["git", "-C", str(destination), "fetch", "--quiet", "--depth", "1", "origin", expected_commit])
-            execute(["git", "-C", str(destination), "checkout", "--quiet", "--detach", "--force", "FETCH_HEAD"])
+            try:
+                execute(["git", "-C", str(destination), "fetch", "--quiet", "--depth", "1", "origin", expected_commit])
+                execute(["git", "-C", str(destination), "checkout", "--quiet", "--detach", "--force", "FETCH_HEAD"])
+            except (subprocess.CalledProcessError, RuntimeError):
+                shutil.rmtree(destination)
+                restore_locked_commit_from_archive(destination, expected_commit, timeout_seconds)
+                configure_filters()
         actual = execute(["git", "-C", str(destination), "rev-parse", "HEAD"]).stdout.strip()
         if expected_commit and actual.casefold() != expected_commit.casefold():
             raise RuntimeError(f"Checkout mismatch for {project}: expected {expected_commit}, got {actual}")
@@ -702,8 +763,13 @@ def clone_project(
         execute(["git", "-C", str(destination), "init", "--quiet"])
         configure_filters()
         execute(["git", "-C", str(destination), "remote", "add", "origin", f"https://github.com/{project}.git"])
-        execute(["git", "-C", str(destination), "fetch", "--quiet", "--depth", "1", "origin", expected_commit])
-        execute(["git", "-C", str(destination), "checkout", "--quiet", "--detach", "FETCH_HEAD"])
+        try:
+            execute(["git", "-C", str(destination), "fetch", "--quiet", "--depth", "1", "origin", expected_commit])
+            execute(["git", "-C", str(destination), "checkout", "--quiet", "--detach", "FETCH_HEAD"])
+        except (subprocess.CalledProcessError, RuntimeError):
+            shutil.rmtree(destination)
+            restore_locked_commit_from_archive(destination, expected_commit, timeout_seconds)
+            configure_filters()
     else:
         execute([
             "git", "clone", "--quiet", "--depth", "1", "--no-tags", "--single-branch",

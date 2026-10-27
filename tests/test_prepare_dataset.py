@@ -232,6 +232,46 @@ def test_graph_clone_preserves_git_blobs_despite_inherited_lfs_filter(tmp_path, 
     assert subprocess.check_output(['git', '-C', str(destination), 'status', '--porcelain']) == b''
 
 
+def test_locked_clone_falls_back_to_exact_software_heritage_archive(tmp_path, monkeypatch):
+    import io
+    import tarfile
+
+    source = tmp_path/'source'
+    subprocess.run(['git','init','-q',str(source)],check=True)
+    (source/'m.py').write_text('def f():\n return 1\n')
+    subprocess.run(['git','-C',str(source),'add','m.py'],check=True)
+    subprocess.run(['git','-C',str(source),'-c','user.name=Test','-c',
+                    'user.email=test@example.test','commit','-qm','fixture'],check=True)
+    revision=subprocess.check_output(['git','-C',str(source),'rev-parse','HEAD'],text=True).strip()
+    bare=tmp_path/'fixture.git'
+    subprocess.run(['git','clone','-q','--bare',str(source),str(bare)],check=True)
+    archive=io.BytesIO()
+    with tarfile.open(fileobj=archive,mode='w') as bundle:
+        bundle.add(bare,arcname='locked.git')
+
+    class Response(io.BytesIO):
+        def __enter__(self): return self
+        def __exit__(self,*args): self.close()
+
+    responses=iter([
+        Response(json.dumps({'status':'done','fetch_url':'https://archive.test/raw'}).encode()),
+        Response(archive.getvalue()),
+    ])
+    monkeypatch.setattr(prepare_dataset_module.urllib.request,'urlopen',
+                        lambda *args,**kwargs: next(responses))
+    original_run=prepare_dataset_module.run
+    def unavailable(command,**kwargs):
+        if 'fetch' in command and 'origin' in command:
+            raise subprocess.CalledProcessError(128,command)
+        return original_run(command,**kwargs)
+    monkeypatch.setattr(prepare_dataset_module,'run',unavailable)
+
+    destination=tmp_path/'clone'
+    assert clone_project('owner/repo',destination,expected_commit=revision)==revision
+    assert (destination/'m.py').read_text()=='def f():\n return 1\n'
+    assert subprocess.check_output(['git','-C',str(destination),'status','--porcelain'])==b''
+
+
 def test_run_logged_terminates_a_timed_out_phase(tmp_path):
     with pytest.raises(subprocess.TimeoutExpired):
         run_logged(
