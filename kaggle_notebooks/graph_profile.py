@@ -11,6 +11,54 @@ BRANCH='experiment/graph-context-v1'
 PREFIX='typepro-graph-v1'
 
 
+def pinned_graph_execution(config_source, execute_source, *, verify_output=True):
+    """Run graph construction under a verified interpreter, independent of host."""
+    worker = '''import json, sys
+from pathlib import Path
+if sys.version_info[:3] != (3, 12, 12):
+    raise RuntimeError('Graph worker requires Python 3.12.12: '+sys.version)
+print({'graph_python':sys.version,'executable':sys.executable},flush=True)
+'''+config_source+'''
+sys.path.insert(0,str(REPO_DIR))
+'''+execute_source
+    source = '''# The notebook host may run Python 3.13. Graph ASTs must use 3.12.
+import json, os, shutil, subprocess, sys
+from pathlib import Path
+run([sys.executable,'-m','pip','install','-q','uv==0.9.5'])
+graph_uv=shutil.which('uv')
+if not graph_uv:
+    raise RuntimeError('uv executable missing')
+graph_env=os.environ.copy()
+graph_env['UV_PYTHON_INSTALL_DIR']='/kaggle/working/graph-python'
+subprocess.run([graph_uv,'python','install','3.12.12'],env=graph_env,check=True)
+graph_venv=Path('/kaggle/working/graph-python312-venv')
+subprocess.run([graph_uv,'venv','--python','3.12.12',str(graph_venv)],env=graph_env,check=True)
+graph_python=graph_venv/'bin'/'python'
+graph_version=json.loads(subprocess.check_output(
+    [str(graph_python),'-c','import sys,json; print(json.dumps(list(sys.version_info[:3])))'],text=True))
+if graph_version != [3,12,12]:
+    raise RuntimeError('Unexpected graph Python: '+repr(graph_version))
+print({'graph_python_verified':graph_version,'executable':str(graph_python)},flush=True)
+subprocess.run([graph_uv,'pip','install','--python',str(graph_python),
+    '-r',str(REPO_DIR/'requirements'/'build.txt'),
+    'transformers==4.57.6','tokenizers==0.22.2','loguru==0.7.3'],env=graph_env,check=True)
+# Graph imports use torch utilities, but graph creation needs no CUDA wheels.
+subprocess.run([graph_uv,'pip','install','--python',str(graph_python),
+    '--index-url','https://download.pytorch.org/whl/cpu','torch==2.9.0'],env=graph_env,check=True)
+graph_worker=Path('/kaggle/working/graph_worker.py')
+graph_worker.write_text('''+repr(worker)+''',encoding='utf-8')
+subprocess.run([str(graph_python),str(graph_worker)],env=graph_env,check=True)
+'''
+    if verify_output:
+        source += '''
+OUTPUT=Path('/kaggle/working/graph-context-v1')
+graph_manifest=json.loads((OUTPUT/'manifest.json').read_text())
+if graph_manifest.get('python_version') != [3,12]:
+    raise RuntimeError('Graph manifest Python version mismatch')
+'''
+    return source
+
+
 def mounted_dataset_source():
     return '''
 def mounted_dataset(reference,marker):
@@ -263,7 +311,7 @@ print({'outcomes':manifest['outcomes'],'targets':manifest['total_targets'],'revi
         execute = execute.replace('from transformers import AutoTokenizer\n', '')
         execute = execute.replace('from typepro.shared.context_packing import tokenizer_fingerprint\n', '')
     cells.extend([markdown('## Build graph context using the attached existing KBs'),
-                  code(mounted_dataset_source()+execute),
+                  code(pinned_graph_execution(config['source'],mounted_dataset_source()+execute)),
                   markdown('## Verify and publish this graph shard'),
                   code("from typepro.publishing.graph import publish_graph_dataset\npublish_graph_dataset(OUTPUT,JOB['dataset'],public=JOB['public'])")])
     result=notebook(cells)

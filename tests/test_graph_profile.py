@@ -2,6 +2,7 @@ import ast
 from collections import Counter
 import importlib.util
 import json
+import subprocess
 from pathlib import Path
 import sys
 
@@ -11,6 +12,27 @@ ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'kaggle_notebooks'))
 import graph_profile
 from typepro.audit.graph_comparison import compare
+
+
+def test_graph_worker_rejects_wrong_python_before_executing_export():
+    source = graph_profile.pinned_graph_execution(
+        "REPO_DIR=Path('/tmp/typepro-probe')\n", "print('EXPORT_STARTED')\n"
+    )
+    tree = ast.parse(source)
+    write = next(node for node in ast.walk(tree)
+                 if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                 and node.func.attr == 'write_text')
+    worker = ast.literal_eval(write.args[0])
+    for version, expected in (((3, 13, 0), False), ((3, 12, 12), True)):
+        result = subprocess.run(
+            [sys.executable, '-c',
+             f'import sys; sys.version_info={version!r}; exec({worker!r})'],
+            capture_output=True, text=True,
+        )
+        assert (result.returncode == 0) == expected
+        assert ('EXPORT_STARTED' in result.stdout) == expected
+        if not expected:
+            assert 'requires Python 3.12.12' in result.stderr
 
 
 def profile():

@@ -24,6 +24,7 @@ PUBLISH_ERROR_MARKERS = (
     "dataset version creation error:",
     "error during creation:",
 )
+RATE_LIMIT_MARKERS = ("429", "too many requests", "rate limit")
 
 
 def _has_word(value: str, words: tuple[str, ...]) -> bool:
@@ -107,6 +108,46 @@ def _raise_for_publish_error(
             f"Kaggle Dataset {operation} command failed for {dataset_id} "
             f"(exit {result.returncode}): {output}"
         )
+
+
+def _run_publish_with_retry(
+    command: list[str],
+    dataset_id: str,
+    operation: str,
+    previous_version: int,
+    *,
+    attempts: int = 6,
+) -> subprocess.CompletedProcess[str]:
+    """Retry a rejected Dataset mutation without creating duplicate versions."""
+    for attempt in range(attempts):
+        result = _run(command)
+        output = (result.stdout or "").casefold()
+        semantic_error = any(marker in output for marker in PUBLISH_ERROR_MARKERS)
+        failed = bool(result.returncode or semantic_error)
+        if not failed:
+            return result
+        if not any(marker in output for marker in RATE_LIMIT_MARKERS):
+            _raise_for_publish_error(result, dataset_id, operation)
+        # A proxy can return 429 after Kaggle accepted the mutation. Never
+        # submit a second version until the exact owner listing proves that the
+        # first request did not advance the Dataset.
+        if _current_version(dataset_id) > previous_version:
+            print(
+                "Dataset version advanced despite the rate-limit response; "
+                "continuing with status verification",
+                flush=True,
+            )
+            return subprocess.CompletedProcess(command, 0, result.stdout, None)
+        if attempt + 1 == attempts:
+            _raise_for_publish_error(result, dataset_id, operation)
+        delay = min(300, 30 * (2 ** attempt))
+        print(
+            f"Kaggle Dataset publish rate-limited; retrying in {delay}s "
+            f"({attempt + 1}/{attempts})",
+            flush=True,
+        )
+        time.sleep(delay)
+    raise AssertionError("unreachable")
 
 
 def _owned_dataset_exists(dataset_id: str) -> bool:
@@ -302,7 +343,9 @@ def publish_dataset(
         # failed: create a clean version rather than trying to recreate its slug.
         command = ["kaggle", "datasets", "version", *common, "-m", message]
         operation = "versioned"
-    result = _run(command)
+    result = _run_publish_with_retry(
+        command, dataset_id, operation, previous_version
+    )
     # Kaggle CLI 2.2.4 can print a server-side creation error while returning
     # exit code 0, so checking only returncode would incorrectly report success.
     _raise_for_publish_error(result, dataset_id, operation)
