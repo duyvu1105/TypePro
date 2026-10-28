@@ -17,6 +17,13 @@ import recover_shard_version
 import schedule_shards
 
 
+def test_scheduler_slows_polling_after_first_fifteen_submissions():
+    state = {'jobs': [{'status':'submitted'} for _ in range(14)] + [{'status':'pending'}]}
+    assert schedule_shards.poll_interval(state, 60, 15, 600) == 60
+    state['jobs'][-1]['status'] = 'submitted'
+    assert schedule_shards.poll_interval(state, 60, 15, 600) == 600
+
+
 @pytest.mark.parametrize('republish', [False, True])
 def test_merge_payload_pins_source_before_installing_and_preserves_inputs(tmp_path, republish):
     import hashlib

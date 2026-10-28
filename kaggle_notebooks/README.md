@@ -122,6 +122,11 @@ python kaggle_notebooks/schedule_shards.py
 uv run --with kaggle==1.7.4.2 python kaggle_notebooks/schedule_shards.py --push --watch
 ```
 
+The watcher polls at `--poll-seconds` (60 seconds by default) while submitting
+the initial jobs. After 15 jobs have been submitted it switches to
+`--slow-poll-seconds` (600 seconds by default). Override the threshold with
+`--slow-poll-after-submissions` when using a different launch plan.
+
 The scheduler pins the source checkout to that commit, counts nonterminal jobs
 across each account, reserves newly submitted slots, and keeps a durable ledger
 at `typepro_kernel_versions/latest_run.json`. Reusing the same ledger retains

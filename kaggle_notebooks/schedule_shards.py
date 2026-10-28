@@ -62,6 +62,11 @@ def save(path, state):
             time.sleep(0.2 * (attempt + 1))
 
 
+def poll_interval(state, fast_seconds, slow_after_submissions, slow_seconds):
+    submitted = sum(job.get('status') == 'submitted' for job in state['jobs'])
+    return slow_seconds if submitted >= slow_after_submissions else fast_seconds
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--graph-profile',type=Path,help='Explicit graph experiment inputs/revision; isolated jobs and ledger')
@@ -77,6 +82,10 @@ def main():
     parser.add_argument('--jobs-per-account', type=int)
     parser.add_argument('--skip-jobs-per-account', type=int, default=0)
     parser.add_argument('--poll-seconds', type=int, default=60)
+    parser.add_argument('--slow-poll-after-submissions', type=int, default=15,
+                        help='Use the slow polling interval after this many jobs are submitted')
+    parser.add_argument('--slow-poll-seconds', type=int, default=600,
+                        help='Polling interval after the initial submission threshold')
     args = parser.parse_args()
     if args.new_run and args.push:
         parser.error('Run --new-run without --push first, then submit with --push --watch')
@@ -86,6 +95,10 @@ def main():
         parser.error('--jobs-per-account must be >= 1')
     if args.skip_jobs_per_account < 0:
         parser.error('--skip-jobs-per-account must be >= 0')
+    if args.poll_seconds < 10 or args.slow_poll_seconds < 10:
+        parser.error('Polling intervals must be at least 10 seconds')
+    if args.slow_poll_after_submissions < 1:
+        parser.error('--slow-poll-after-submissions must be >= 1')
     graph_plan = None
     if args.graph_profile:
         from graph_profile import render_profile
@@ -267,7 +280,13 @@ def main():
                     break
             elif not pending:
                 break
-            time.sleep(max(10, args.poll_seconds))
+            interval = poll_interval(state, args.poll_seconds,
+                                     args.slow_poll_after_submissions,
+                                     args.slow_poll_seconds)
+            print(json.dumps({'next_poll_seconds': interval,
+                              'submitted': sum(job.get('status') == 'submitted'
+                                               for job in state['jobs'])}), flush=True)
+            time.sleep(interval)
 
 
 if __name__ == '__main__':
