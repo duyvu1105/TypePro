@@ -150,6 +150,7 @@ def test_reuse_existing_shards_preserves_kernels_coordinates_auth_and_graph_outp
         if c['cell_type']=='code':ast.parse(c['source'])
     source='\n'.join(c['source'] for c in nb['cells'])
     assert "freeze_roster(INPUT)" in source and 'input_manifest.json' not in source
+    assert "dataset_root/'manifest.json'" in source and 'root=dataset_root' in source
     neutral = dict(p, model_neutral=True)
     neutral.pop('tokenizer_fingerprint')
     for key in ('tokenizer_repository', 'tokenizer_revision'):

@@ -403,6 +403,9 @@ for job in PLAN['jobs']:
             bundle.extractall(root)
     elif (dataset_root/'graph-dataset/manifest.json').is_file():
         root=dataset_root/'graph-dataset'
+    elif (dataset_root/'manifest.json').is_file():
+        # Kaggle may auto-extract graph-dataset.zip at the mount root.
+        root=dataset_root
     else:
         raise RuntimeError('Missing graph archive or extracted Dataset')
     manifest=verify_graph_dataset(root)

@@ -2,6 +2,7 @@
 from datetime import datetime, timezone
 import json
 import re
+import time
 from pathlib import Path
 
 from commit_shard_versions import run_push
@@ -33,12 +34,27 @@ def exact_dataset(api, reference):
     raise RuntimeError('Dataset listing exceeded pagination limit: ' + reference)
 
 
+def graph_payload_present(names):
+    return 'graph-dataset.zip' in names or {'manifest.json', 'outcomes.jsonl'} <= names
+
+
 def dataset_files(api, reference):
     names, token = set(), None
     for _ in range(100):
-        result = api.dataset_list_files(reference, page_size=100,
-                                        **({'page_token': token} if token else {}))
+        for attempt in range(6):
+            try:
+                result = api.dataset_list_files(reference, page_size=100,
+                                                **({'page_token': token} if token else {}))
+                break
+            except Exception as error:
+                response = getattr(error, 'response', None)
+                if response is not None and response.status_code in (429, 502, 503, 504) and attempt < 5:
+                    time.sleep(min(60, 10 * (attempt + 1)))
+                    continue
+                raise
         names.update(item.name for item in result.files)
+        if graph_payload_present(names):
+            break
         token = result.next_page_token
         if not token:
             break
@@ -85,7 +101,7 @@ def merge_tick(api, credential, auth_dir, state, persist, merge_dir, bundle):
                 persist()
                 return False
             names = dataset_files(api, job['dataset'])
-            if 'graph-dataset.zip' not in names:
+            if not graph_payload_present(names):
                 merge.update(waiting_for_dataset_files=job['dataset'], files=sorted(names))
                 persist()
                 return False
@@ -124,7 +140,7 @@ def merge_tick(api, credential, auth_dir, state, persist, merge_dir, bundle):
     if status == 'COMPLETE':
         current = exact_dataset(api, FINAL_REF)
         names = dataset_files(api, FINAL_REF) if current else set()
-        if current and int(current.current_version_number) > merge['previous_final_version'] and 'graph-dataset.zip' in names:
+        if current and int(current.current_version_number) > merge['previous_final_version'] and graph_payload_present(names):
             merge.update(phase='complete', final_version=int(current.current_version_number),
                          final_files=sorted(names))
         else:

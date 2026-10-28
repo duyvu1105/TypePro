@@ -8,6 +8,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'kaggle_notebooks')
 import graph_watch
 
 
+def test_graph_payload_accepts_archive_or_kaggle_extracted_root():
+    assert graph_watch.graph_payload_present({'graph-dataset.zip'})
+    assert graph_watch.graph_payload_present({'manifest.json', 'outcomes.jsonl'})
+    assert not graph_watch.graph_payload_present({'manifest.json'})
+
+
 def job(status='COMPLETE'):
     return dict(kernel='owner/shard', dataset='owner/graph', status='submitted',
                 remote_status=status, cli_output='Kernel version 8 successfully pushed.', dataset_baseline=3)
