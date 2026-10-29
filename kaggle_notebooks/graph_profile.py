@@ -76,6 +76,32 @@ def mounted_dataset(reference,marker):
 '''
 
 
+def graph_merge_storage_source():
+    return '''
+import shutil, tempfile
+
+def graph_merge_workspace(roots, candidates=(Path('/tmp'),Path('/kaggle/working'))):
+    # The peak includes both the raw merge and its ZIP, which may be nearly
+    # incompressible. Read-only inputs are never copied into the workspace.
+    input_bytes=sum(path.stat().st_size for root in roots for path in root.rglob('*') if path.is_file())
+    required_bytes=2*input_bytes+2*1024**3
+    volumes=[]
+    for candidate in candidates:
+        if not candidate.is_dir():
+            continue
+        free=shutil.disk_usage(candidate).free
+        volumes.append({'path':str(candidate),'free_bytes':free})
+        if free >= required_bytes:
+            workspace=Path(tempfile.mkdtemp(prefix='typepro_graph_merge_',dir=candidate))
+            report={'workspace':str(workspace),'input_bytes':input_bytes,
+                    'required_bytes':required_bytes,'free_bytes':free}
+            print({'phase':'merge_storage_verified',**report},flush=True)
+            return workspace,report
+    raise RuntimeError('Insufficient graph merge space before writing: '+str(
+        {'input_bytes':input_bytes,'required_bytes':required_bytes,'volumes':volumes}))
+'''
+
+
 def graph_auth_source(expected_expression,final=False):
     prefix='TYPEPRO_FINAL' if final else 'TYPEPRO_PUBLISH'
     return 'EXPECTED_OWNER='+expected_expression+'\nSECRET_PREFIX='+repr(prefix)+'\n'+'''
@@ -436,10 +462,12 @@ roots=[]
 for job in PLAN['jobs']:
     dataset_root=mounted_dataset(job['dataset'],None)
     archive=dataset_root/'graph-dataset.zip'
-    root=Path('/kaggle/working/merge-inputs')/job['dataset'].split('/')[1]
-    root.mkdir(parents=True,exist_ok=True)
-    if archive.is_file():
+    if archive.is_file() and not ((dataset_root/'graph-dataset/manifest.json').is_file() or (dataset_root/'manifest.json').is_file()):
         with zipfile.ZipFile(archive) as bundle:
+            extracted_bytes=sum(member.file_size for member in bundle.infolist())
+            if shutil.disk_usage('/tmp').free < extracted_bytes+1024**3:
+                raise RuntimeError('Insufficient scratch space to extract graph input')
+            root=Path(tempfile.mkdtemp(prefix='typepro_graph_input_',dir='/tmp'))
             seen=set()
             for member in bundle.infolist():
                 path=root/member.filename
@@ -456,15 +484,21 @@ for job in PLAN['jobs']:
         root=dataset_root
     else:
         raise RuntimeError('Missing graph archive or extracted Dataset')
-    manifest=verify_graph_dataset(root)
+    # The merger performs full verification before writing any merged rows.
+    manifest=json.loads((root/'manifest.json').read_text())
+    if job.get('manifest_sha256') and sha256(root/'manifest.json')!=job['manifest_sha256']:
+        raise RuntimeError('Graph Dataset manifest changed since verification')
     if manifest.get('partition')!={'shard_index':job['shard_index'],'shard_count':job['shard_count']}:
         raise RuntimeError('Graph Dataset physical coordinate mismatch')
     if manifest.get('implementation_sha')!=PROFILE['revision']:
         raise RuntimeError('Graph Dataset implementation commit mismatch')
     roots.append(root)
-OUTPUT=Path('/kaggle/working/graph-v1-final')
+WORKSPACE,storage_report=graph_merge_workspace(roots)
+(Path('/kaggle/working')/'merge_storage.json').write_text(json.dumps(storage_report,indent=2))
+OUTPUT=WORKSPACE/'graph-v1-final'
 merge_graph_datasets(roots,OUTPUT,roster)
 """.replace('PROFILE_VALUE',repr(profile)).replace('PLAN_VALUE',repr(plan))
+    execute=graph_merge_storage_source()+execute
     execute=execute.replace('INPUT=mounted_dataset',mounted_dataset_source()+'\nINPUT=mounted_dataset',1)
     if profile.get('reuse_shard_notebooks'):
         start=execute.index("INPUT=mounted_dataset")
@@ -475,7 +509,20 @@ if sha256(INPUT/'manifest.json')!=PROFILE['dataset_manifest_sha256']:
 roster,_=freeze_roster(INPUT)
 '''+execute[end:]
     publish="""from typepro.publishing.graph import publish_graph_dataset
-publish_graph_dataset(OUTPUT,'duyvu1105/typepro-graph-v1-final',public=False)
+try:
+    publish_graph_dataset(OUTPUT,'duyvu1105/typepro-graph-v1-final',public=False)
+finally:
+    # Preserve a completed archive for publish recovery even if Kaggle returns
+    # an API error after the expensive merge. Keep raw intermediates on scratch.
+    archive=OUTPUT.parent/(OUTPUT.name+'-publish')/'graph-dataset.zip'
+    if archive.is_file():
+        saved=Path('/kaggle/working/graph-final-publish')
+        saved.mkdir(exist_ok=True)
+        if shutil.disk_usage(saved).free >= archive.stat().st_size+1024**2:
+            shutil.copyfile(archive,saved/archive.name)
+            print({'saved_merge_archive':str(saved/archive.name),'bytes':archive.stat().st_size},flush=True)
+        else:
+            print({'archive_retained_on_scratch':str(archive),'reason':'insufficient output space'},flush=True)
 """
     return notebook([markdown('# Merge exactly 21 graph experiment partitions'),code(setup),
                      code(graph_auth_source("'duyvu1105'",final=True)),code(execute),code(publish)])
