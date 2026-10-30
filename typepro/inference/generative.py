@@ -14,7 +14,7 @@ import torch
 from peft import PeftModel
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
-from typepro.shared.generative_chat import chat_token_ids
+from typepro.shared.context_packing import ContextPacker
 from typepro.shared.type_labels import normalize_type_label
 
 
@@ -28,12 +28,16 @@ def main(argv=None) -> None:
     parser.add_argument("--label-length", type=int, default=64)
     parser.add_argument("--batch-size", type=int, default=4)
     args = parser.parse_args(argv)
+    if args.label_length < 1 or args.input_length <= args.label_length:
+        parser.error('--input-length must exceed positive --label-length')
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     tokenizer = AutoTokenizer.from_pretrained(args.checkpoint)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     # Causal-LM generation from a padded batch must use the final non-pad token.
     tokenizer.padding_side = "left"
+    packer = ContextPacker(tokenizer, args.input_length - args.label_length,
+                           Path(args.output).parent / 'packed_context_cache')
     quantization_config = BitsAndBytesConfig(
         load_in_4bit=True,
         bnb_4bit_quant_type="nf4",
@@ -54,11 +58,8 @@ def main(argv=None) -> None:
     correct = 0
     for start in range(0, len(rows), args.batch_size):
         batch = rows[start:start + args.batch_size]
-        prompt_limit = max(1, args.input_length - args.label_length)
-        prompt_ids = [
-            chat_token_ids(tokenizer, row["input"])[:prompt_limit]
-            for row in batch
-        ]
+        packed_batch = [packer.pack(row) for row in batch]
+        prompt_ids = [packed.token_ids for packed in packed_batch]
         encoded = tokenizer.pad({"input_ids": prompt_ids}, padding=True, return_tensors="pt").to(device)
         with torch.inference_mode():
             generated = model.generate(
@@ -69,7 +70,7 @@ def main(argv=None) -> None:
         values = tokenizer.batch_decode(
             generated[:, prompt_length:], skip_special_tokens=True
         )
-        for row, prediction in zip(batch, values):
+        for row, prediction, packed in zip(batch, values, packed_batch):
             prediction = prediction.strip()
             label = normalize_type_label(row["label"])
             try:
@@ -82,11 +83,13 @@ def main(argv=None) -> None:
                 "id": row["id"], "prediction": prediction,
                 "label": label, "normalized_prediction": normalized_prediction,
                 "exact_match": matched, "raw_exact_match": prediction == row["label"],
+                "context_packing": packed.audit,
             })
     output = Path(args.output)
     with output.open("w", encoding="utf-8") as handle:
         for item in predictions:
             handle.write(json.dumps(item, ensure_ascii=False) + "\n")
+    packer.close()
     print(json.dumps({
         "rows": len(rows), "exact_matches": correct,
         "exact_match_accuracy": correct / len(rows) if rows else 0.0,

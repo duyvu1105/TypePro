@@ -20,7 +20,7 @@ MASKING = 'typepro-shared-kb-masked-source-v7-resolved-bounded-context'
 MAX_DEFINITION_CHARS = 8000
 
 
-def audit(raw_dir: Path) -> dict:
+def audit(raw_dir: Path, *, require_evidence=False) -> dict:
     lengths = {'slice_chars': [], 'candidate_chars': [], 'input_chars': []}
     rows = 0
     unresolved = 0
@@ -33,6 +33,12 @@ def audit(raw_dir: Path) -> dict:
                     continue
                 row = json.loads(line)
                 where = f'{path}:{number}'
+                if require_evidence or 'evidence_bundle' in row:
+                    from typepro.analysis.evidence_bundle import validate_bundle
+                    try:
+                        validate_bundle(row.get('evidence_bundle'))
+                    except ValueError as exc:
+                        raise ValueError(f'Invalid sample evidence: {where}: {exc}') from exc
                 if row.get('context_policy_version') != POLICY or row.get('target_masking_version') != MASKING:
                     raise ValueError(f'Incompatible context policy: {where}')
                 maximum = (DEFINITION_CHARS if row.get('candidate_policy_version') in SUPPORTED_POLICIES
@@ -79,8 +85,9 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--raw-dir', required=True, type=Path)
     parser.add_argument('--report', required=True, type=Path)
+    parser.add_argument('--require-evidence', action='store_true')
     args = parser.parse_args()
-    report = audit(args.raw_dir)
+    report = audit(args.raw_dir, require_evidence=args.require_evidence)
     args.report.write_text(json.dumps(report, indent=2), encoding='utf-8')
     print(json.dumps({k: v for k, v in report.items() if k != 'largest_inputs'}, indent=2), flush=True)
 

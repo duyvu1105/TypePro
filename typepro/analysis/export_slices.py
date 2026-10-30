@@ -413,6 +413,16 @@ def export_one(
         result['context_policy_version'] = POLICY
         from typepro.analysis.candidate_policy import DEFINITION_CHARS
         result['candidate_definition_max_chars'] = DEFINITION_CHARS
+        from typepro.analysis.evidence_bundle import build_bundle
+        result['evidence_bundle'] = build_bundle(
+            result['interprocedural_slice'],
+            [{'text': render_masks(clean(c['text'])), 'source': c['source']}
+             for c in result.pop('_evidence_callers', [])],
+            [{**c, 'definition': render_masks(clean(c['definition']))}
+             for c in result.pop('_evidence_candidates', [])],
+            {'file': str(file_path), 'function': function_name,
+             'line': getattr(function, 'lineno', None)},
+        )
     return result
 
 
@@ -508,9 +518,11 @@ def _export_masked_one(
     retrieval_kb = project_kb if project_kb is not None else {
         'records': seed_recommendations
     }
+    evidence_candidates = []
     recommendations = top_project_types(
         retrieval_kb, target_name, code_slice, seed_recommendations,
         limit=recommendation_limit,
+        evidence_sink=evidence_candidates,
         target_function=target_function_label,
         target_scope=scope,
         target_members=target_member_query(target_node, target_name) if scope == "arg" else None,
@@ -520,6 +532,8 @@ def _export_masked_one(
         ),
     )
     result["recommendation_types"] = recommendations
+    result['_evidence_candidates'] = evidence_candidates
+    result['_evidence_callers'] = getattr(slicer, 'evidence_callers', [])
     result['candidate_policy_version'] = CANDIDATE_POLICY
     result["recommendation_diagnostics"] = {
         "context_reduction": slicer.context_diagnostics,

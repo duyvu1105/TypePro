@@ -491,7 +491,7 @@ def shard_notebook(
         # This rerun keeps built-in annotations and adds function returns.
         INCLUDE_BUILTINS = True
         INCLUDE_RETURNS = True
-        RETRIEVAL_SCHEMA_VERSION = "typepro-project-kb-top10-generative-v17-catalog-fallback-audit"
+        RETRIEVAL_SCHEMA_VERSION = "typepro-project-kb-top10-generative-v18-sample-evidence"
 
         from pathlib import Path
 
@@ -1424,7 +1424,7 @@ def merge_notebook(
             sys.executable, "-u", merge_script,
             "--shard-build-dirs", *shard_builds,
             "--work-dir", MERGED_BUILD,
-            "--expected-retrieval-schema", "typepro-project-kb-top10-generative-v17-catalog-fallback-audit",
+            "--expected-retrieval-schema", "typepro-project-kb-top10-generative-v18-sample-evidence",
         ])
         """),
         markdown("## Finalize generative train/validation/test and retain project KBs"),
@@ -2050,7 +2050,7 @@ def test_retrieval_ablation_notebook(repository: str) -> dict:
         BASELINE_DATASET = "duyvu1105/typepro-python-generative"
         BASELINE_REVISION = "2e6625f4259fd488f89c5e97ac50c018b6b0326c"
         EXPECTED_BASELINE_TEST_ROWS = 3296
-        RETRIEVAL_SCHEMA_VERSION = "typepro-project-kb-top10-generative-v17-catalog-fallback-audit"
+        RETRIEVAL_SCHEMA_VERSION = "typepro-project-kb-top10-generative-v18-sample-evidence"
 
         import json
         import subprocess

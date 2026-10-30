@@ -112,8 +112,12 @@ def test_exported_source_evidence_matches_reference(case_id, tmp_path, monkeypat
         legacy.setattr(policy, 'source_evidence', partial(policy.source_evidence, policy=policy.LEGACY_POLICY))
         expected = replay(case, tmp_path / 'source')
     # Reuse the same source paths so definition metadata is comparable.
+    def reference_selection(*args, evidence_sink=None, **kwargs):
+        # Frozen v1 fixture predates the additive evidence export hook. Keep
+        # its scoring/allocation implementation untouched for the comparison.
+        return reference.top_project_types(*args, **kwargs)
     with monkeypatch.context() as guard:
-        guard.setattr(export_slices, 'top_project_types', reference.top_project_types)
+        guard.setattr(export_slices, 'top_project_types', reference_selection)
         guard.setattr(policy, 'source_evidence', reference.source_evidence)
         baseline = replay(case, tmp_path / 'source')
     for field in ('slice', 'candidates', 'checks', 'passed'):

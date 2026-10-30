@@ -33,6 +33,7 @@ def chat_token_ids(tokenizer: Any, instruction: str, response: str | None = None
         messages(instruction, response),
         tokenize=True,
         add_generation_prompt=response is None,
+        return_dict=False,
     )
 
 

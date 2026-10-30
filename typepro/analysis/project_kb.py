@@ -298,6 +298,7 @@ def top_project_types(
     target_members: dict[str, list[str]] | None = None,
     evidence: dict[str, Any] | None = None,
     policy: str | None = None,
+    evidence_sink: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Rank project-KB records without reading the target annotation."""
     from typepro.analysis.candidate_policy import (
@@ -355,7 +356,15 @@ def top_project_types(
         # Skip impossible headers and continue with the next ranked record.
         if allocate_characters([candidate]):
             result.append(candidate)
-    return allocate_characters(result)
+    allocated = allocate_characters(result)
+    if evidence_sink is not None:
+        kept = {c['qualified_name'] for c in allocated}
+        evidence_sink.extend({
+            'name': c['name'], 'qualified_name': c['qualified_name'],
+            'definition': c['definition'],
+            'source_location': {'qualified_name': c['qualified_name'], 'origin': c['source']},
+        } for c in result if c['qualified_name'] in kept)
+    return allocated
 
 
 

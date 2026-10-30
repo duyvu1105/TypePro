@@ -110,6 +110,9 @@ def format_input(
 
 def record_fields(row: dict[str, Any], label_field: str = "gttype", limit: int = 10):
     """Shared eligibility check for project selection and actual sample writing."""
+    if 'evidence_bundle' in row:
+        from typepro.analysis.evidence_bundle import validate_bundle
+        validate_bundle(row['evidence_bundle'])
     try:
         label = normalize_type_label(str(row.get(label_field) or ""))
     except ValueError:
@@ -131,6 +134,7 @@ def main() -> None:
     parser.add_argument("--train-ratio", type=float, default=0.70)
     parser.add_argument("--validation-ratio", type=float, default=0.10)
     parser.add_argument("--project-split-map", type=Path)
+    parser.add_argument('--require-evidence', action='store_true')
     args = parser.parse_args()
     if args.recommendation_limit != 10:
         parser.error("The dataset contract requires exactly a top-10 limit")
@@ -143,6 +147,8 @@ def main() -> None:
     stats: Counter[str] = Counter()
     try:
         for index, row in enumerate(iter_records(Path(args.input))):
+            if args.require_evidence and 'evidence_bundle' not in row:
+                raise ValueError(f'Missing sample evidence at input record {index}')
             stats["input_records"] += 1
             name, label, code_slice, recommendations = record_fields(row, args.label_field, args.recommendation_limit)
             if not name or not label or not code_slice:
@@ -174,6 +180,7 @@ def main() -> None:
                 "source_commit": row.get("source_commit"),
                 "candidate_definition_max_chars": DEFINITION_CHARS,
                 "candidate_policy_version": row.get('candidate_policy_version'),
+                **({'evidence_bundle': row['evidence_bundle']} if 'evidence_bundle' in row else {}),
                 **({"context_policy_version": row["context_policy_version"]}
                    if row.get("context_policy_version") else {}),
             }

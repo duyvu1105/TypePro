@@ -950,6 +950,11 @@ class Slicer:
             code = '\n'.join([*(clean(value) for value in aliases if clean(value) not in code), code])
             if code and code not in values:
                 values.append(code)
+                if not hasattr(self, 'evidence_callers'):
+                    self.evidence_callers = []
+                self.evidence_callers.append({'text': code, 'source': {
+                    'file': path, 'line': call.lineno, 'resolution': 'resolved',
+                }})
         rejections = catalog.caller_rejections.get(function_name.rsplit('.', 1)[-1], ())
         self.context_diagnostics.extend(rejections[:20])
         if len(rejections) > 20:

@@ -29,6 +29,7 @@ from tqdm.auto import tqdm
 
 from typepro.shared.data_utils import select_training_samples
 from typepro.shared.generative_chat import chat_token_ids, left_pad_causal_batch
+from typepro.shared.context_packing import ContextPacker, POLICY as PACKING_POLICY
 from typepro.training.length_grouping import LengthGroupedSampler
 
 
@@ -44,15 +45,16 @@ class JsonlDataset(Dataset):
         return self.rows[index]
 
 
-def training_sequence_length(row, tokenizer, input_length: int, label_length: int) -> int:
+def training_sequence_length(row, tokenizer, input_length: int, label_length: int, packer=None) -> int:
     """Return the post-truncation sequence length used by ``collate``."""
-    prompt_ids = chat_token_ids(tokenizer, row["input"])
-    full_ids = chat_token_ids(tokenizer, row["input"], row["label"])
+    packer = packer or ContextPacker(tokenizer, max(1, input_length - label_length))
+    packed = packer.pack(row)
+    prompt_ids = chat_token_ids(tokenizer, packed.instruction)
+    full_ids = chat_token_ids(tokenizer, packed.instruction, row["label"])
     if full_ids[:len(prompt_ids)] != prompt_ids:
         raise ValueError("Chat template did not preserve the prompt as a sequence prefix")
-    prompt_limit = max(1, input_length - label_length)
     completion_length = min(max(0, len(full_ids) - len(prompt_ids)), label_length)
-    return min(len(prompt_ids), prompt_limit) + completion_length
+    return len(packed.token_ids) + completion_length
 
 
 def train():
@@ -120,6 +122,8 @@ def train():
         help="Cache measured train lengths in the output directory",
     )
     args = parser.parse_args()
+    if args.label_length < 1 or args.input_length <= args.label_length:
+        parser.error('--input-length must exceed positive --label-length')
     if args.epochs < 1:
         parser.error("--epochs must be positive")
     if args.inference_batch_size < 1:
@@ -169,17 +173,15 @@ def train():
         model.config.use_cache = False
 
     def collate(rows):
-        prompt_limit = max(1, args.input_length - args.label_length)
         prompt_ids = []
         completion_ids = []
         for row in rows:
-            full_prompt = chat_token_ids(tokenizer, row["input"])
-            full_sequence = chat_token_ids(tokenizer, row["input"], row["label"])
+            packed = packer.pack(row)
+            full_prompt = chat_token_ids(tokenizer, packed.instruction)
+            full_sequence = chat_token_ids(tokenizer, packed.instruction, row["label"])
             if full_sequence[:len(full_prompt)] != full_prompt:
                 raise ValueError("Chat template did not preserve the prompt as a sequence prefix")
-            # Preserve the structured header at the beginning of the prompt.
-            # Inference uses the same policy so train/eval see identical inputs.
-            prompt_ids.append(full_prompt[:prompt_limit])
+            prompt_ids.append(packed.token_ids)
             completion_ids.append(full_sequence[len(full_prompt):len(full_prompt) + args.label_length])
         sequences = [prompt + completion for prompt, completion in zip(prompt_ids, completion_ids)]
         return left_pad_causal_batch(prompt_ids, sequences, tokenizer.pad_token_id)
@@ -187,6 +189,8 @@ def train():
     data_dir = Path(args.data_dir)
     output = Path(args.output_dir)
     output.mkdir(parents=True, exist_ok=True)
+    packer = ContextPacker(tokenizer, args.input_length - args.label_length,
+                           output / 'packed_context_cache')
     train_path = data_dir / "train.jsonl"
     full_train_dataset = JsonlDataset(train_path)
     train_dataset = select_training_samples(
@@ -197,7 +201,9 @@ def train():
         length_sample_count = len(train_dataset)
         train_stat = train_path.stat()
         cache_metadata = {
-            "version": 1,
+            "version": 2,
+            "packing_policy": PACKING_POLICY,
+            "packing_fingerprint": packer.fingerprint,
             "train_path": str(train_path.resolve()),
             "train_size": train_stat.st_size,
             "train_mtime_ns": train_stat.st_mtime_ns,
@@ -245,7 +251,7 @@ def train():
             train_lengths = []
             for sample_index, row in enumerate(train_dataset, start=1):
                 train_lengths.append(training_sequence_length(
-                    row, tokenizer, args.input_length, args.label_length
+                    row, tokenizer, args.input_length, args.label_length, packer=packer
                 ))
                 should_log = (
                     sample_index == length_sample_count
@@ -469,6 +475,7 @@ def train():
             if accelerator.is_main_process:
                 tokenizer.save_pretrained(output / "best")
     progress.close()
+    packer.close()
     return args, accelerator
 
 

@@ -1,5 +1,10 @@
 # TypePro Kaggle workflow: target masking rerun
 
+Sample-local evidence export now uses retrieval schema v18. Train/inference can
+pack these self-contained bundles with each model's tokenizer without loading
+project KBs. See [sample evidence packing](../docs/sample_evidence_packing.md)
+for the row contract, audit command, migration and first-15 launch procedure.
+
 Current workflow (2026-10-18): **21 independent physical partitions**, generated
 from 10 logical shard templates, on three accounts. The table below supersedes
 the historical two-account workflow documented later in this file.

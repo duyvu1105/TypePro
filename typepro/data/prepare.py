@@ -116,7 +116,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--retrieval-schema-version",
-        default="typepro-project-kb-top10-generative-v17-catalog-fallback-audit",
+        default="typepro-project-kb-top10-generative-v18-sample-evidence",
         help="Invalidates restored raw slices when recommendation logic changes",
     )
     parser.add_argument(
@@ -1162,6 +1162,10 @@ def finalize_dataset(args: argparse.Namespace, work_dir: Path, output_dir: Path,
         "--output-dir", str(output_dir), "--label-field", "gttype",
         "--recommendation-limit", "10",
     ]
+    runtime_path = work_dir / 'runtime_manifest.json'
+    runtime = json.loads(runtime_path.read_text(encoding='utf-8')) if runtime_path.exists() else {}
+    if runtime.get('retrieval_schema_version') == 'typepro-project-kb-top10-generative-v18-sample-evidence':
+        command.append('--require-evidence')
     fixed_split = getattr(args, "test_project_list", None)
     fixed_split_manifest = None
     if fixed_split:
@@ -1238,6 +1242,8 @@ def finalize_dataset(args: argparse.Namespace, work_dir: Path, output_dir: Path,
         raise ValueError(f"Dataset has {len(failures)} failed repositories and --strict-projects was requested")
     manifest = {
         "schema_version": SCHEMA_VERSION,
+        **({'evidence_schema': 'typepro-evidence-v1'} if runtime_manifest.get('retrieval_schema_version') ==
+           'typepro-project-kb-top10-generative-v18-sample-evidence' else {}),
         "created_at": datetime.now(timezone.utc).isoformat(),
         "language": "python",
         "source": {

@@ -73,9 +73,15 @@ def reuse_project_kb(source_build: Path | None, project: str, commit: str,
             raise ValueError('KB provenance path escapes source build')
     status = json.loads(status_path.read_text())
     runtime = json.loads(runtime_path.read_text())
+    from typepro.analysis.evidence_bundle import RETRIEVAL_SCHEMA
+    # v18 changes exported sample evidence only. KB v7 and the source/context
+    # contracts are unchanged, so v17 frozen KBs remain reusable (never rows).
+    compatible = {retrieval_schema}
+    if retrieval_schema == RETRIEVAL_SCHEMA:
+        compatible.add('typepro-project-kb-top10-generative-v17-catalog-fallback-audit')
     if (status.get('project') != project or status.get('commit') != commit
-            or runtime.get('retrieval_schema_version') != retrieval_schema
-            or status.get('retrieval_schema_version') != retrieval_schema
+            or runtime.get('retrieval_schema_version') not in compatible
+            or status.get('retrieval_schema_version') != runtime.get('retrieval_schema_version')
             or runtime.get('context_policy_version') != 'ast-context-v7-verified-signature-evidence'):
         return None
     payload = kb_path.read_bytes()

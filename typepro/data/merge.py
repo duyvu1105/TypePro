@@ -58,12 +58,21 @@ def main() -> None:
     if len(policies) != 1:
         raise ValueError('Shard candidate policies differ; rebuild with one policy before merging')
     runtime_policy = next(iter(policies))
+    from typepro.analysis.evidence_bundle import RETRIEVAL_SCHEMA, validate_bundle
+    schemas = {json.loads((build / 'runtime_manifest.json').read_text(encoding='utf-8'))
+               .get('retrieval_schema_version') for build in builds}
+    if RETRIEVAL_SCHEMA in schemas and schemas != {RETRIEVAL_SCHEMA}:
+        raise ValueError('Cannot merge sample-evidence shards with legacy shards')
     for build in builds:
         for raw_file in (build / 'raw_slices').glob('*.jsonl'):
             with raw_file.open(encoding='utf-8') as handle:
                 for line in handle:
-                    if line.strip() and json.loads(line).get('candidate_policy_version') != runtime_policy:
-                        raise ValueError(f'Candidate policy differs from runtime: {raw_file}')
+                    if line.strip():
+                        row = json.loads(line)
+                        if row.get('candidate_policy_version') != runtime_policy:
+                            raise ValueError(f'Candidate policy differs from runtime: {raw_file}')
+                        if RETRIEVAL_SCHEMA in schemas or 'evidence_bundle' in row:
+                            validate_bundle(row.get('evidence_bundle'))
     if args.expected_retrieval_schema:
         for build in builds:
             runtime = json.loads((build / 'runtime_manifest.json').read_text(encoding='utf-8'))

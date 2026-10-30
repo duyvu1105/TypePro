@@ -76,11 +76,14 @@ def package_shard(work_dir: Path, payload_dir: Path) -> tuple[Path, dict[str, An
     if runtime.get('retrieval_schema_version') in {
         'typepro-project-kb-top10-generative-v16-verified-signature-evidence',
         'typepro-project-kb-top10-generative-v17-catalog-fallback-audit',
+        'typepro-project-kb-top10-generative-v18-sample-evidence',
     } and runtime.get('context_policy_version') != 'ast-context-v7-verified-signature-evidence':
         raise RuntimeError('Missing retained-type-evidence context policy for shard')
     if runtime.get('context_policy_version') == 'ast-context-v7-verified-signature-evidence':
         from typepro.audit.context import audit
-        report = audit(work_dir / 'raw_slices')
+        from typepro.analysis.evidence_bundle import RETRIEVAL_SCHEMA
+        report = audit(work_dir / 'raw_slices', require_evidence=
+                       runtime.get('retrieval_schema_version') == RETRIEVAL_SCHEMA)
         (work_dir / 'context_audit.json').write_text(json.dumps(report, indent=2), encoding='utf-8')
         print(json.dumps({k: v for k, v in report.items() if k != 'largest_inputs'}, indent=2), flush=True)
     shard_index = manifest.get("shard_index")

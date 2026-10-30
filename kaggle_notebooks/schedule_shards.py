@@ -218,6 +218,9 @@ def main():
                     save(args.state, state)
                     output = run_push(Path(job['payload']), credential, Path(auth_dir))
                     job.update(status='submitted', cli_output=output, submitted_at=datetime.now(timezone.utc).isoformat())
+                    version = re.search(r'Kernel version\s+(\d+)\b', output, re.IGNORECASE)
+                    if version:
+                        job['kernel_version'] = int(version.group(1))
                     save(args.state, state)
                     job['remote_status'] = status_name(api.kernels_status(job['kernel']))
                     slots -= 1  # Reserve the slot even if status propagation is delayed.

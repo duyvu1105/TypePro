@@ -56,6 +56,13 @@ def main() -> None:
                 if not line.strip():
                     continue
                 row = json.loads(line)
+                if manifest.get('evidence_schema') or 'evidence_bundle' in row:
+                    from typepro.analysis.evidence_bundle import validate_bundle
+                    try:
+                        validate_bundle(row.get('evidence_bundle'))
+                    except ValueError as exc:
+                        errors.append(f'{split}:{line_number}: {exc}')
+                        break
                 if row.get("project"):
                     split_projects[split].add(row["project"].casefold())
                 if row.get("split") != split:
