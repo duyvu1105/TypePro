@@ -83,3 +83,19 @@ uv run --with kaggle==1.7.4.2 python kaggle_notebooks/schedule_shards.py --revis
 Submission does not establish dataset completion. Verify actual kernel versions,
 statuses and published manifests before merging. No final merge/train job is
 started by this launch.
+
+## Merge disk usage
+
+Merge v34 reached preprocessing but exhausted the Kaggle working disk while
+writing final JSONL. The merge notebook now stages immutable raw/KB inputs with
+`--link-inputs`: hardlinks on one filesystem, symlinks across mounted filesystems.
+Metadata remains copied. Finalization moves retained KB files without expanding
+linked inputs; final publishing reads and compresses every KB into its archive.
+Keep input mounts available until publication finishes.
+
+Final splits use `--compress-output` and are stored as `train.jsonl.gz`,
+`validation.jsonl.gz`, and `test.jsonl.gz`. The manifest records the actual files
+and hashes of their compressed bytes. Training, inference, verification, previews,
+packing audits and notebook analysis read them directly without an expanded disk
+copy. Uncompressed datasets remain supported. JSON records, evidence, project
+splits and KB contents are unchanged; this repair requires only a new merge run.

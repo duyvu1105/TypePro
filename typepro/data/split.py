@@ -3,6 +3,7 @@
 import hashlib
 import json
 import re
+from typepro.shared.jsonl_io import open_text, split_path
 from collections import Counter
 
 SPLITS = ('train', 'validation', 'test')
@@ -49,7 +50,7 @@ def assign_projects(projects, test_projects, seed, validation_ratio):
 
 def iter_output_rows(output_dir):
     for split in SPLITS:
-        with (output_dir / f'{split}.jsonl').open(encoding='utf-8') as handle:
+        with open_text(split_path(output_dir, split)) as handle:
             for line in handle:
                 if line.strip():
                     yield json.loads(line)

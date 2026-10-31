@@ -15,6 +15,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Iterable
 from typepro.shared.type_labels import normalize_type_label
+from typepro.shared.jsonl_io import open_text
 
 
 SPLITS = ("train", "validation", "test")
@@ -26,9 +27,9 @@ from typepro.analysis.candidate_policy import (
 
 
 def iter_records(path: Path) -> Iterable[dict[str, Any]]:
-    paths = sorted(path.glob("*.jsonl")) if path.is_dir() else [path]
+    paths = sorted([*path.glob('*.jsonl'), *path.glob('*.jsonl.gz')]) if path.is_dir() else [path]
     for source in paths:
-        with source.open(encoding="utf-8") as handle:
+        with open_text(source) as handle:
             for line in handle:
                 if line.strip():
                     yield json.loads(line)
@@ -135,6 +136,7 @@ def main() -> None:
     parser.add_argument("--validation-ratio", type=float, default=0.10)
     parser.add_argument("--project-split-map", type=Path)
     parser.add_argument('--require-evidence', action='store_true')
+    parser.add_argument('--compress-output', action='store_true')
     args = parser.parse_args()
     if args.recommendation_limit != 10:
         parser.error("The dataset contract requires exactly a top-10 limit")
@@ -142,8 +144,9 @@ def main() -> None:
     output = Path(args.output_dir)
     split_map = json.loads(args.project_split_map.read_text(encoding="utf-8")) if args.project_split_map else None
     output.mkdir(parents=True, exist_ok=True)
-    temporary = {split: output / f"{split}.jsonl.tmp" for split in SPLITS}
-    handles = {split: path.open("w", encoding="utf-8") for split, path in temporary.items()}
+    suffix = '.jsonl.gz' if args.compress_output else '.jsonl'
+    temporary = {split: output / f'{split}{suffix}.tmp' for split in SPLITS}
+    handles = {split: open_text(path, 'wt') for split, path in temporary.items()}
     stats: Counter[str] = Counter()
     try:
         for index, row in enumerate(iter_records(Path(args.input))):
@@ -184,14 +187,18 @@ def main() -> None:
                 **({"context_policy_version": row["context_policy_version"]}
                    if row.get("context_policy_version") else {}),
             }
-            handles[split].write(json.dumps(item, ensure_ascii=False) + "\n")
+            handles[split].write(json.dumps(item, ensure_ascii=False, separators=(',', ':')) + "\n")
             stats[f"{split}_written"] += 1
             stats["written"] += 1
     finally:
         for handle in handles.values():
             handle.close()
     for split, path in temporary.items():
-        os.replace(path, output / f"{split}.jsonl")
+        os.replace(path, output / f'{split}{suffix}')
+    # A successful format switch must not leave duplicate, stale split files.
+    old_suffix = '.jsonl' if args.compress_output else '.jsonl.gz'
+    for split in SPLITS:
+        (output / f'{split}{old_suffix}').unlink(missing_ok=True)
     (output / "preprocess_stats.json").write_text(
         json.dumps(dict(stats), indent=2, ensure_ascii=False), encoding="utf-8"
     )

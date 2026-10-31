@@ -67,7 +67,8 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     data_dir = Path(args.data_dir).resolve()
-    required = [data_dir / name for name in ("train.jsonl", "validation.jsonl", "test.jsonl", "manifest.json")]
+    from typepro.shared.jsonl_io import split_path
+    required = [data_dir / 'manifest.json'] + [split_path(data_dir, split) for split in ('train', 'validation', 'test')]
     missing = [str(path) for path in required if not path.exists()]
     if missing:
         raise FileNotFoundError(f"Missing processed dataset files: {missing}")

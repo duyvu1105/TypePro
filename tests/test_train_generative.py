@@ -40,6 +40,8 @@ def test_finetune_handoff_releases_training_memory_and_reuses_configuration(tmp_
         torch=SimpleNamespace(cuda=SimpleNamespace(
             is_available=lambda: True, empty_cache=lambda: events.append("cuda"))),
     )
+    from typepro.shared.jsonl_io import split_path
+    scope['split_path'] = split_path
     source = ROOT / "typepro/training/generative.py"
     main = next(n for n in ast.parse(source.read_text(encoding="utf-8")).body
                 if isinstance(n, ast.FunctionDef) and n.name == "main")

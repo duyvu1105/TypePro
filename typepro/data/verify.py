@@ -9,6 +9,7 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+from typepro.shared.jsonl_io import open_text
 from typepro.analysis.candidate_policy import (
     SUPPORTED_POLICIES, DEFINITION_CHARS, MIN_SCORE, TOTAL_CHARS, candidate_section,
 )
@@ -46,12 +47,13 @@ def main() -> None:
             errors.append(f"missing {path}")
             continue
         actual_hash = sha256(path)
-        actual_rows = sum(1 for line in path.open(encoding="utf-8") if line.strip())
+        with open_text(path) as handle:
+            actual_rows = sum(1 for line in handle if line.strip())
         if actual_hash != expected["sha256"]:
             errors.append(f"{split}: sha256 mismatch")
         if actual_rows != expected["rows"]:
             errors.append(f"{split}: row count {actual_rows} != {expected['rows']}")
-        with path.open(encoding="utf-8") as handle:
+        with open_text(path) as handle:
             for line_number, line in enumerate(handle, start=1):
                 if not line.strip():
                     continue

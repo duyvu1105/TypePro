@@ -7,6 +7,7 @@ import random
 import re
 from pathlib import Path
 from typing import Any, Iterable
+from typepro.shared.jsonl_io import open_text
 
 
 PROMPT_START_MARKERS = (
@@ -33,11 +34,11 @@ BUILTIN_TYPE_NAMES = {
 def iter_records(path: str | Path):
     path = Path(path)
     if path.is_dir():
-        for child in sorted(path.rglob("*.jsonl")):
+        for child in sorted([*path.rglob('*.jsonl'), *path.rglob('*.jsonl.gz')]):
             yield from iter_records(child)
         return
-    if path.suffix.lower() == ".jsonl":
-        with path.open(encoding="utf-8") as handle:
+    if path.suffix.lower() == '.jsonl' or path.name.endswith('.jsonl.gz'):
+        with open_text(path) as handle:
             for line in handle:
                 if line.strip():
                     yield json.loads(line)

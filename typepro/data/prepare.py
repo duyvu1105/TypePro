@@ -16,6 +16,7 @@ import argparse
 import hashlib
 import json
 import os
+import errno
 import re
 import queue
 import signal
@@ -35,6 +36,7 @@ from typing import Any, Iterable
 from typepro.shared.data_utils import is_builtin_annotation, iter_records, json_preview, print_jsonl_samples
 from tqdm.auto import tqdm
 from typepro.analysis.candidate_policy import POLICY as CANDIDATE_POLICY, DEFINITION_CHARS
+from typepro.shared.jsonl_io import open_text
 
 
 TYPEGEN_URL = "https://github.com/JohnnyPeng18/TypeGen/releases/download/data/data.zip"
@@ -55,6 +57,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--typepro-root", default=str(Path(__file__).resolve().parents[2]))
     parser.add_argument("--work-dir", default="/kaggle/working/typepro_build")
     parser.add_argument("--output-dir", default="/kaggle/working/typepro_python_generative")
+    parser.add_argument('--compress-output', action='store_true', help='Write gzip JSONL final splits')
     parser.add_argument("--archive", help="Use an existing TypeGen data.zip instead of downloading")
     parser.add_argument("--split-profile", choices=("paper_project", "typegen_release"), default="paper_project")
     parser.add_argument("--validation-project-ratio", type=float, default=0.10)
@@ -1140,7 +1143,7 @@ def slice_projects(args: argparse.Namespace, work_dir: Path, typepro_root: Path)
 def count_jsonl(path: Path) -> int:
     if not path.exists():
         return 0
-    with path.open(encoding="utf-8") as handle:
+    with open_text(path) as handle:
         return sum(1 for line in handle if line.strip())
 
 
@@ -1162,6 +1165,9 @@ def finalize_dataset(args: argparse.Namespace, work_dir: Path, output_dir: Path,
         "--output-dir", str(output_dir), "--label-field", "gttype",
         "--recommendation-limit", "10",
     ]
+    suffix = '.jsonl.gz' if getattr(args, 'compress_output', False) else '.jsonl'
+    if getattr(args, 'compress_output', False):
+        command.append('--compress-output')
     runtime_path = work_dir / 'runtime_manifest.json'
     runtime = json.loads(runtime_path.read_text(encoding='utf-8')) if runtime_path.exists() else {}
     if runtime.get('retrieval_schema_version') == 'typepro-project-kb-top10-generative-v18-sample-evidence':
@@ -1191,17 +1197,24 @@ def finalize_dataset(args: argparse.Namespace, work_dir: Path, output_dir: Path,
         raise ValueError(f"No project knowledge bases found in {source_kb}")
     if destination_kb.exists():
         shutil.rmtree(destination_kb)
-    # Stream the KBs project-by-project and free each source immediately so
-    # the working disk never holds the whole KB tree twice at once.
+    # Move only retained files, preserving hardlinks/symlinks to immutable
+    # mounted inputs. Moving consumes no second full KB copy on the working disk.
     for project_kb_dir in sorted(source_kb.iterdir()):
         if not project_kb_dir.is_dir():
             continue
         if not (project_kb_dir / "knowledge_base.json").exists():
             continue
-        shutil.copytree(
-            project_kb_dir, destination_kb / project_kb_dir.name,
-            ignore=shutil.ignore_patterns("imports", "*.log"),
-        )
+        target = destination_kb / project_kb_dir.name
+        target.mkdir(parents=True, exist_ok=True)
+        source_file = project_kb_dir / 'knowledge_base.json'
+        target_file = target / 'knowledge_base.json'
+        try:
+            os.replace(source_file, target_file)
+        except OSError as exc:
+            if exc.errno != errno.EXDEV:
+                raise
+            shutil.copy2(source_file, target_file)
+            source_file.unlink()
         shutil.rmtree(project_kb_dir, ignore_errors=True)
     # The final Dataset now holds every immutable KB copy.
     shutil.rmtree(source_kb, ignore_errors=True)
@@ -1274,9 +1287,9 @@ def finalize_dataset(args: argparse.Namespace, work_dir: Path, output_dir: Path,
         },
         "output": {
             split: {
-                "file": f"{split}.jsonl",
-                "rows": count_jsonl(output_dir / f"{split}.jsonl"),
-                "sha256": sha256_file(output_dir / f"{split}.jsonl"),
+                "file": f'{split}{suffix}',
+                "rows": count_jsonl(output_dir / f'{split}{suffix}'),
+                "sha256": sha256_file(output_dir / f'{split}{suffix}'),
             }
             for split in ("train", "validation", "test")
         },
@@ -1333,7 +1346,7 @@ See `manifest.json` and `preprocess_stats.json` for provenance and checksums.
     print(f"\n[dataset:full-counts]\n{json.dumps(final_counts, indent=2, ensure_ascii=False)}", flush=True)
     for split in ("train", "validation", "test"):
         print_jsonl_samples(
-            output_dir / f"{split}.jsonl",
+            output_dir / f'{split}{suffix}',
             args.preview_samples,
             args.preview_max_chars,
             title=f"final {split}",

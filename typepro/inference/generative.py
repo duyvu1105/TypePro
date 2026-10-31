@@ -15,6 +15,7 @@ from peft import PeftModel
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
 from typepro.shared.context_packing import ContextPacker
+from typepro.shared.jsonl_io import open_text
 from typepro.shared.type_labels import normalize_type_label
 
 
@@ -52,7 +53,7 @@ def main(argv=None) -> None:
     )
     model = PeftModel.from_pretrained(base_model, args.checkpoint).to(device).eval()
     model.config.pad_token_id = tokenizer.pad_token_id
-    with Path(args.input).open(encoding="utf-8") as handle:
+    with open_text(args.input) as handle:
         rows = [json.loads(line) for line in handle if line.strip()]
     predictions = []
     correct = 0

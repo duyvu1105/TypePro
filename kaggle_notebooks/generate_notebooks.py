@@ -1425,6 +1425,7 @@ def merge_notebook(
             "--shard-build-dirs", *shard_builds,
             "--work-dir", MERGED_BUILD,
             "--expected-retrieval-schema", "typepro-project-kb-top10-generative-v18-sample-evidence",
+            "--link-inputs",
         ])
         """),
         markdown("## Finalize generative train/validation/test and retain project KBs"),
@@ -1438,6 +1439,7 @@ def merge_notebook(
         run([
             sys.executable, "-u", prepare,
             "--stage", "finalize",
+            "--compress-output",
             "--typepro-root", REPO_DIR,
             "--work-dir", MERGED_BUILD,
             "--output-dir", FINAL_DIR,
@@ -1458,6 +1460,8 @@ def merge_notebook(
         """),
         markdown("## Display exact counts and examples"),
         code("""
+        sys.path.insert(0, str(REPO_DIR))
+        from typepro.shared.jsonl_io import open_text, split_path
         manifest = json.loads((FINAL_DIR / "manifest.json").read_text(encoding="utf-8"))
         stats = json.loads((FINAL_DIR / "preprocess_stats.json").read_text(encoding="utf-8"))
         print(json.dumps({
@@ -1476,7 +1480,7 @@ def merge_notebook(
         }, indent=2, ensure_ascii=False))
         for split in ("train", "validation", "test"):
             print(f"\\n===== {split.upper()} SAMPLES =====")
-            with (FINAL_DIR / f"{split}.jsonl").open(encoding="utf-8") as handle:
+            with open_text(split_path(FINAL_DIR, split)) as handle:
                 for _, line in zip(range(2), handle):
                     print(json.dumps(json.loads(line), indent=2, ensure_ascii=False)[:3000])
         """),
@@ -1519,6 +1523,8 @@ def republish_final_notebook(merge: dict) -> dict:
         # A completion marker from an older publisher must not survive a retry.
         (FINAL_DIR / "MERGE_COMPLETE.json").unlink(missing_ok=True)
         run([sys.executable, PIPELINE_DIR / "data" / "verify.py", "--data-dir", FINAL_DIR])
+        sys.path.insert(0, str(REPO_DIR))
+        from typepro.shared.jsonl_io import open_text, split_path
         manifest = json.loads((FINAL_DIR / "manifest.json").read_text(encoding="utf-8"))
         """),
         merge["cells"][-2],
@@ -1592,6 +1598,7 @@ def train_notebook(repository: str, branch: str) -> dict:
         if pipeline_path not in sys.path:
             sys.path.insert(0, pipeline_path)
         from typepro.shared.generative_chat import chat_token_ids
+        from typepro.shared.jsonl_io import open_text, split_path
 
         tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
         # Measurement intentionally keeps long sequences untruncated.
@@ -1650,7 +1657,7 @@ def train_notebook(repository: str, branch: str) -> dict:
                 update_token_stats(input_stats, [len(ids) for ids in input_ids])
                 update_token_stats(label_stats, [len(ids) for ids in label_ids])
 
-            with path.open(encoding="utf-8") as handle:
+            with open_text(path) as handle:
                 for line in handle:
                     if not line.strip():
                         continue
@@ -1667,7 +1674,7 @@ def train_notebook(repository: str, branch: str) -> dict:
             "label": empty_token_stats(LABEL_LENGTH),
         }
         for split in ("train", "validation", "test"):
-            raw_token_stats[split] = measure_split(DATA_DIR / f"{split}.jsonl")
+            raw_token_stats[split] = measure_split(split_path(DATA_DIR, split))
             print(json.dumps({
                 "split": split,
                 "input": finalized_token_stats(raw_token_stats[split]["input"]),
@@ -1735,7 +1742,7 @@ def train_notebook(repository: str, branch: str) -> dict:
                 sys.executable, "-u", PIPELINE_DIR / "inference" / "generative.py",
                 "--checkpoint", OUTPUT_DIR / "best",
                 "--model-name", MODEL_NAME,
-                "--input", DATA_DIR / "test.jsonl",
+                "--input", split_path(DATA_DIR, 'test'),
                 "--output", predictions,
                 "--input-length", INPUT_LENGTH,
                 "--label-length", LABEL_LENGTH,
@@ -1833,6 +1840,7 @@ def data_analysis_notebook(repository: str, branch: str) -> dict:
         from transformers import AutoTokenizer
 
         from typepro.shared.generative_chat import chat_token_ids
+        from typepro.shared.jsonl_io import open_text, split_path
 
         tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
         # Disable implicit tokenizer truncation: this cell measures raw lengths.
@@ -1859,9 +1867,9 @@ def data_analysis_notebook(repository: str, branch: str) -> dict:
         longest = []
         pool_limit = 40
         for split in ("train", "validation", "test"):
-            path = DATA_DIR / f"{split}.jsonl"
+            path = split_path(DATA_DIR, split)
             expected = MANIFEST.get("output", {}).get(split, {}).get("rows")
-            with path.open(encoding="utf-8") as handle:
+            with open_text(path) as handle:
                 progress = tqdm(total=expected, desc=f"Tokenizing {split}", unit="sample")
                 for line_number, line in enumerate(handle, start=1):
                     if not line.strip():
@@ -2154,13 +2162,14 @@ def test_retrieval_ablation_notebook(repository: str) -> dict:
         markdown("## Compare exact top-10 recall and save evidence"),
         code("""
         import csv
+        from typepro.shared.jsonl_io import open_text, split_path
 
         def load_rows(path):
-            with path.open(encoding="utf-8") as handle:
+            with open_text(path) as handle:
                 return {row["id"]: row for line in handle if line.strip() for row in [json.loads(line)]}
 
-        baseline = load_rows(BASELINE_DIR / "test.jsonl")
-        rebuilt = load_rows(NEW_DATA_DIR / "test.jsonl")
+        baseline = load_rows(split_path(BASELINE_DIR, 'test'))
+        rebuilt = load_rows(split_path(NEW_DATA_DIR, 'test'))
         common_ids = sorted(baseline.keys() & rebuilt.keys())
 
         def hit(row):

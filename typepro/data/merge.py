@@ -9,6 +9,8 @@ import argparse
 import hashlib
 import json
 import shutil
+import errno
+import os
 from pathlib import Path
 
 
@@ -17,6 +19,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--shard-build-dirs", nargs="+", required=True)
     parser.add_argument("--work-dir", required=True)
     parser.add_argument('--expected-retrieval-schema')
+    parser.add_argument('--link-inputs', action='store_true',
+                        help='Reference immutable mounted raw/KB files instead of copying their bytes')
     return parser.parse_args()
 
 
@@ -28,13 +32,22 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def copy_checked(source: Path, destination: Path) -> None:
+def copy_checked(source: Path, destination: Path, *, link=False) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
     if destination.exists():
         if sha256(source) != sha256(destination):
             raise ValueError(f"Conflicting shard file: {destination.name}")
         return
-    shutil.copy2(source, destination)
+    if link:
+        try:
+            os.link(source, destination)
+        except OSError as exc:
+            if exc.errno != errno.EXDEV:
+                raise
+            # Kaggle input and working directories are on different mounts.
+            destination.symlink_to(source.resolve())
+    else:
+        shutil.copy2(source, destination)
 
 
 def locate_build_dir(path: Path) -> Path:
@@ -125,9 +138,13 @@ def main() -> None:
         ):
             for source in (build / directory).glob(pattern):
                 relative = source.relative_to(build / directory)
-                copy_checked(source, destination / directory / relative)
+                copy_checked(source, destination / directory / relative,
+                             link=args.link_inputs and directory in {'raw_slices', 'project_kb'})
                 copied[directory] += 1
-    print(json.dumps({"merged_builds": [str(path) for path in builds], **copied}, indent=2))
+    print(json.dumps({"merged_builds": [str(path) for path in builds],
+                      'linked_inputs': args.link_inputs,
+                      'working_disk_free_bytes': shutil.disk_usage(destination).free,
+                      **copied}, indent=2))
 
 
 if __name__ == "__main__":

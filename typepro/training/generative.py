@@ -30,12 +30,13 @@ from tqdm.auto import tqdm
 from typepro.shared.data_utils import select_training_samples
 from typepro.shared.generative_chat import chat_token_ids, left_pad_causal_batch
 from typepro.shared.context_packing import ContextPacker, POLICY as PACKING_POLICY
+from typepro.shared.jsonl_io import open_text, split_path
 from typepro.training.length_grouping import LengthGroupedSampler
 
 
 class JsonlDataset(Dataset):
     def __init__(self, path: Path):
-        with path.open(encoding="utf-8") as handle:
+        with open_text(path) as handle:
             self.rows = [json.loads(line) for line in handle if line.strip()]
 
     def __len__(self):
@@ -128,7 +129,7 @@ def train():
         parser.error("--epochs must be positive")
     if args.inference_batch_size < 1:
         parser.error("--inference-batch-size must be positive")
-    if args.infer_after_training and not (Path(args.data_dir) / "test.jsonl").is_file():
+    if args.infer_after_training and not split_path(args.data_dir, 'test').is_file():
         parser.error("Automatic inference requires test.jsonl in --data-dir")
     accelerator = Accelerator(
         mixed_precision=args.mixed_precision,
@@ -191,7 +192,7 @@ def train():
     output.mkdir(parents=True, exist_ok=True)
     packer = ContextPacker(tokenizer, args.input_length - args.label_length,
                            output / 'packed_context_cache')
-    train_path = data_dir / "train.jsonl"
+    train_path = split_path(data_dir, 'train')
     full_train_dataset = JsonlDataset(train_path)
     train_dataset = select_training_samples(
         full_train_dataset, args.train_samples, args.seed
@@ -297,7 +298,7 @@ def train():
         collate_fn=collate,
     )
     valid_loader = DataLoader(
-        JsonlDataset(data_dir / "validation.jsonl"), batch_size=args.batch_size,
+        JsonlDataset(split_path(data_dir, 'validation')), batch_size=args.batch_size,
         collate_fn=collate,
     )
     trainable_parameters = [
@@ -503,7 +504,7 @@ def main() -> None:
         infer([
             "--checkpoint", str(checkpoint),
             "--model-name", args.model_name,
-            "--input", str(Path(args.data_dir) / "test.jsonl"),
+            "--input", str(split_path(args.data_dir, 'test')),
             "--output", str(predictions),
             "--input-length", str(args.input_length),
             "--label-length", str(args.label_length),
