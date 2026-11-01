@@ -64,6 +64,7 @@ def main(argv=None) -> None:
             generated = model.generate(
                 **encoded, max_new_tokens=args.label_length,
                 pad_token_id=tokenizer.pad_token_id,
+                do_sample=False, num_beams=1,
             )
         prompt_length = encoded["input_ids"].shape[1]
         values = tokenizer.batch_decode(

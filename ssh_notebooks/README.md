@@ -38,6 +38,9 @@ tmux attach -t typepro_train
 
 Nhấn `Ctrl-b`, `d` để detach. Launcher tự infer toàn bộ test split sau khi
 fine-tune thành công, dùng checkpoint `best` và ghi `test_predictions.jsonl`.
+Inference dùng greedy (`do_sample=False`, `num_beams=1`) tường minh, kể cả
+khi generation config của base model bật sampling. Quy tắc này áp dụng cho
+cả infer tự động sau train và launcher infer riêng.
 Xem log train và infer trong `train_tmux.log`. Đặt
 `TYPEPRO_INFERENCE_BATCH_SIZE` để đổi batch infer (mặc định 1).
 Để chạy lại infer riêng với checkpoint đã có:
