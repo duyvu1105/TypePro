@@ -13,7 +13,11 @@ import time
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from typepro.training.type_changing import POLICY, build, sha256
+from typepro.training.type_changing import POLICY as EXPRESSION_POLICY, sha256
+from typepro.training.contract_changing import POLICY as CONTRACT_POLICY, build
+
+CODE_FILES = {EXPRESSION_POLICY: 'typepro/training/type_changing.py',
+              CONTRACT_POLICY: 'typepro/training/contract_changing.py'}
 
 
 def process_identity(pid):
@@ -34,11 +38,11 @@ def gpu_busy():
 
 def validate_data(data, baseline, code_path=None):
     audit = json.loads((data / 'type_intervention_audit.json').read_text())
-    if audit['policy'] != POLICY or audit['seed'] != baseline['seed']:
+    if audit['policy'] not in CODE_FILES or audit['seed'] != baseline['seed']:
         raise ValueError('Augmentation policy/seed mismatch')
     if audit['source_splits'] != baseline['dataset_splits']:
         raise ValueError('Source differs from baseline')
-    if audit['code_sha256'] != sha256(code_path or ROOT / 'typepro/training/type_changing.py'):
+    if audit['code_sha256'] != sha256(code_path or ROOT / CODE_FILES[audit['policy']]):
         raise ValueError('Dataset was generated with different augmentation code')
     if audit['counts']['original_rows'] != baseline['dataset_splits']['train']['rows']:
         raise ValueError('Original training row count changed')
@@ -51,7 +55,25 @@ def validate_data(data, baseline, code_path=None):
             raise ValueError('Validation/test must be byte-identical to baseline')
         if sha256(Path(baseline['data_dir']) / f'{split}.jsonl') != baseline['dataset_splits'][split]['sha256']:
             raise ValueError('Baseline source changed')
+    verification = data / 'contract_transport_verification.json'
+    if audit['policy'] == CONTRACT_POLICY and verification.is_file():
+        report = json.loads(verification.read_text())
+        if not report.get('passed') or report.get('output_hashes') != audit['output_hashes']:
+            raise ValueError('Independent dataset verification failed or is stale')
+        audit['independent_verification'] = report
     return audit
+
+
+def require_training_ready(audit, baseline):
+    """Do not repeat the cancelled, under-covered 133-example pilot."""
+    if audit['policy'] != CONTRACT_POLICY or not audit.get('readiness', {}).get('passed'):
+        raise ValueError('Dataset has not passed the contract-transport coverage gate; prepare data only')
+    if audit['tokenizer'] != baseline['model'] or audit['limits']['prompt_limit'] != baseline['input_length'] - baseline['label_length']:
+        raise ValueError('Token audit differs from the requested model/context budget')
+    if not audit.get('independent_verification', {}).get('passed'):
+        raise ValueError('Run the independent contract-changing dataset audit before training')
+    if audit['independent_verification'].get('label_length') != baseline['label_length']:
+        raise ValueError('Independent annotation budget differs from requested label length')
 
 
 def command_for(baseline, data, output):
@@ -73,9 +95,11 @@ def command_for(baseline, data, output):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--baseline-output', type=Path, default=ROOT / 'outputs/qwen25-coder-05b-v24-6k-2ep')
-    parser.add_argument('--data-dir', type=Path, default=ROOT / 'datasets/typepro-python-generative-v24-type-changing-c-s13')
+    parser.add_argument('--data-dir', type=Path, default=ROOT / 'datasets/typepro-python-generative-v24-contract-changing-c-s13')
     parser.add_argument('--output-dir', type=Path, default=ROOT / 'outputs/qwen25-coder-05b-v24-6k-2ep-type-changing-c')
     parser.add_argument('--wait-for-pid', type=int)
+    parser.add_argument('--wait-for-idle-gpu', action='store_true', help='Opt in to waiting for GPU 0; otherwise start immediately')
+    parser.add_argument('--data-workers', type=int, default=4, help='CPU workers used only if the derived dataset needs generating')
     parser.add_argument('--prepare-only', action='store_true', help='Generate and validate data, without reserving an output')
     args = parser.parse_args()
     baseline = json.loads((args.baseline_output / 'launch_config.json').read_text())
@@ -83,12 +107,16 @@ def main():
     if output.exists() and not args.prepare_only:
         raise FileExistsError(output)
     if not data.exists():
-        build(baseline['data_dir'], data, baseline['seed'])
+        from transformers import AutoTokenizer
+        tokenizer = AutoTokenizer.from_pretrained(baseline['model'], local_files_only=True)
+        build(baseline['data_dir'], data, baseline['seed'], tokenizer=tokenizer,
+              prompt_limit=baseline['input_length'] - baseline['label_length'],workers=args.data_workers)
     audit = validate_data(data, baseline)
     command = command_for(baseline, data, output)
     if args.prepare_only:
         print(json.dumps(dict(status='validated', counts=audit['counts'], command=command), indent=2))
         return
+    require_training_ready(audit, baseline)
     dirty = subprocess.check_output(['git', 'status', '--porcelain'], cwd=ROOT, text=True)
     if dirty.strip():
         raise ValueError('Commit source changes before launching the pinned experiment')
@@ -108,11 +136,11 @@ def main():
                                       rows=(audit['counts']['original_rows'] + audit['counts']['synthetic_rows']
                                             if s == 'train' else baseline['dataset_splits'][s]['rows']))
                                for s in ('train', 'validation', 'test')},
-               configuration='C: original + verified type-changing synthetic', augmentation=audit,
+               configuration='C: original + checked return-contract transport', augmentation=audit,
                baseline_output=str(args.baseline_output.resolve()), git_revision=revision,
                source_snapshot=str(snapshot), command=command, group_by_length=True, length_cache=True,
                decoding=dict(do_sample=False, num_beams=1), wait_for_pid=args.wait_for_pid,
-               wait_for_pid_birth=birth,
+               wait_for_pid_birth=birth, wait_for_idle_gpu=args.wait_for_idle_gpu,
                budget_note='Same two epochs and hyperparameters; extra rows increase steps/tokens versus baseline.')
     (output / 'launch_config.json').write_text(json.dumps(cfg, indent=2) + '\n')
 
@@ -126,12 +154,12 @@ def main():
     try:
         while True:
             predecessor = birth is not None and process_identity(args.wait_for_pid) == birth
-            busy = gpu_busy()
+            busy = args.wait_for_idle_gpu and gpu_busy()
             if not predecessor and not busy:
                 break
             status('waiting', predecessor_running=predecessor, gpu_busy=busy)
             time.sleep(30)
-        validate_data(data, baseline, snapshot / 'typepro/training/type_changing.py')
+        validate_data(data, baseline, snapshot / CODE_FILES[audit['policy']])
         status('training_and_inference')
         environment = dict(os.environ, CUDA_VISIBLE_DEVICES='0', TOKENIZERS_PARALLELISM='false',
                            PYTHONUNBUFFERED='1', PYTHONPATH=str(snapshot))

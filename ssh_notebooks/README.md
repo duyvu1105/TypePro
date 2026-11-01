@@ -81,47 +81,81 @@ cache trong output. Không commit checkpoint, Dataset hoặc credential.
 
 ## Type-changing augmentation, cấu hình C
 
-`typepro.training.type_changing` đọc train v24 đã export, giữ nguyên mọi mẫu
-gốc và thêm tối đa một mẫu synthetic cho mỗi parent đủ điều kiện. Chỉ biến đổi
-return target: bọc kết quả bằng list/dict, đổi string-list literal thành
-float-list literal, hoặc constructor class đơn giản thành tham chiếu class.
-Các phép biến đổi là chương trình tổng hợp mới; không phải refactor tương đương.
+`typepro.training.contract_changing` (`return-contract-transport-v2`) giữ nguyên
+mọi mẫu train gốc và thêm tối đa một synthetic cho mỗi parent đủ điều kiện.
+**Giả định label gốc là hợp đồng return hợp lệ**, không yêu cầu suy luận lại
+label từ code. Biến đổi mọi `return expr` thành `return [expr]` với label
+`List[T]`, hoặc `return {"value": expr}` với label `Dict[str, T]`.
+Đây là annotation chuyển từ hợp đồng gốc, không phải annotation duy nhất có
+thể suy ra từ code; lỗi label gốc có thể truyền sang synthetic.
 
-Type ban đầu phải khớp bộ suy luận tĩnh giới hạn (literal, builtin không bị
-shadow, tham số scalar có annotation, một số phép toán và class đơn giản).
-Chỉ xét hàm có return cuối tường minh và các return có cùng type. Bỏ qua
-decorator/async/generator, scope phức tạp, caller/reference cần sửa, candidate
-copy không xác minh được và evidence bundle chưa hỗ trợ. Docstring target được
-bỏ khỏi bản synthetic để không giữ mô tả return cũ. Các bản copy candidate
-khớp AST được sửa đồng bộ; ranking và candidate identities giữ nguyên.
-Không chạy source code của Dataset. Nhãn tổng hợp theo chính sách annotation
-cụ thể, không khẳng định đó là annotation duy nhất tác giả có thể chọn.
+Direct caller và recursion được resolve theo lexical binding bằng LibCST.
+Caller dùng `f(...)[0]` hoặc `f(...)["value"]` để tiếp tục nhận giá trị cũ.
+Explicit `Class.method(...)` chỉ được sửa khi class binding khớp; receiver
+instance/dynamic, alias và function reference thoát scope vẫn bị loại.
+Không unwrap call của một binding bị shadow trong scope khác.
+
+Các return trong nested helper không bị bọc. Bare return và implicit fallthrough
+chỉ được hỗ trợ khi source contract chấp nhận None; bản synthetic thêm wrapper
+cho đường None. Decorator, async/generator, special methods, fragment không
+compile được và source không resolve được bị loại. Không chạy Dataset code.
+
+Docstring target cũ được bỏ; literal và prose khác giữ nguyên. Candidate copy
+có mask được đồng bộ sau khi kiểm tra chữ ký. Copy definition đã bỏ return
+annotation, có sẵn trong JSONL,
+chỉ được nhận khi qualified name khớp đúng file nguồn (từ ID export) và chữ ký
+tham số khớp; không chỉ dựa vào tên class/function. Candidate ranking, identity
+và nội dung ngoài các thay đổi được khai báo giữ nguyên. Evidence bundle chưa
+được hỗ trợ bởi builder v24 này.
+
+Builder chỉ đọc `train.jsonl`, `validation.jsonl`, `test.jsonl` và manifest của
+dataset hiện tại. Các definition nằm sẵn trong `recommendation_types` được
+sửa đồng bộ; không nạp project KB, tải thêm source hoặc chạy lại Kaggle shard.
+
+Builder dùng hash(seed, parent ID) để chọn list/dict và chọn mẫu ổn định,
+mặc định tối đa 5.000 synthetic, 100/project. Đo prompt bằng tokenizer Qwen thực,
+gồm system/chat template; mẫu synthetic vượt 6.080 token bị loại. Không tăng
+độ phủ bằng cách lặp lại cùng parent nhiều lần.
 
 Sinh và kiểm tra dữ liệu, không train:
 
 ```bash
 .venv/bin/python ssh_notebooks/run_type_changing.py --prepare-only
+.venv/bin/python -m typepro.audit.contract_changing \
+  --source datasets/typepro-python-generative-v24 \
+  --data-dir datasets/typepro-python-generative-v24-contract-changing-c-s13
 ```
 
-Sau khi commit code, chạy trong tmux (bỏ `--wait-for-pid` nếu không có job trước):
+Audit độc lập so sánh AST để kiểm tra chỉ có wrapper, caller adapter và xóa
+docstring đã khai báo; kiểm tra mọi mẫu gốc, hashes, eval bytes, ID và token budget.
+Nó tạo `contract_transport_verification.json` cùng `review_samples.jsonl` để
+review thủ công. Audit không chứng minh label gốc đúng hoặc whole-project
+behavior. Trước train cần ít nhất 2.000 synthetic, 20 project, 20 source labels,
+đúng tokenizer/budget và audit độc lập pass. Đây là gate độ phủ, không bảo đảm gain.
+
+Chỉ khi quyết định train lại, commit code rồi chạy trong tmux:
 
 ```bash
 tmux new-session -d -s typepro_train_v24_type_changing_c \
-  '.venv/bin/python -u ssh_notebooks/run_type_changing.py --wait-for-pid PREDECESSOR_PID'
+  '.venv/bin/python -u ssh_notebooks/run_type_changing.py'
 ```
 
-Launcher đợi đúng process trước đó và GPU 0 rảnh, giữ snapshot từ Git commit
-để lần checkout sau không thay source của job đang đợi. Không dừng job khác.
+Launcher mặc định chạy ngay; chỉ đợi nếu truyền `--wait-for-pid PID` hoặc
+`--wait-for-idle-gpu`. Nó giữ snapshot từ Git commit để lần checkout sau không
+thay source của job. Không dừng job khác. `--prepare-only` không tạo job train.
 Nó dùng `launch_config.json` của `qwen25-coder-05b-v24-6k-2ep`, fresh base
 adapter, QLoRA rank 16, 6144 token, 2 epoch, batch 1, accumulation 16,
 LR 1e-4, seed 13, FP16, SDPA và length grouping/cache theo launcher baseline.
 Giữ nguyên hyperparameters/epochs; thêm mẫu làm tăng số bước và token so với
 baseline. Đây chưa phải so sánh công bằng ngân sách với cấu hình B.
 
-Dataset mặc định: `datasets/typepro-python-generative-v24-type-changing-c-s13`.
+Dataset mặc định: `datasets/typepro-python-generative-v24-contract-changing-c-s13`.
 Validation/test được copy nguyên byte; chỉ train có synthetic. Audit chứa
 source/output hashes, counts, skip reasons và hash code; `synthetic_pairs.jsonl`
 ghi liên kết parent. Không cần tạo lại shard Kaggle.
+
+Builder cũ `typepro.training.type_changing` (`type-changing-v1`) vẫn giữ để
+tái lập pilot 133 mẫu đã hủy. Launcher không cho train lại pilot thiếu độ phủ.
 
 Output: `outputs/qwen25-coder-05b-v24-6k-2ep-type-changing-c`. Xem
 `launch_config.json`, `run_status.json` và `train_tmux.log`. Sau train, checkpoint

@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from ssh_notebooks.run_type_changing import command_for, process_identity, validate_data
+from ssh_notebooks.run_type_changing import command_for, process_identity, validate_data, require_training_ready
 from typepro.training.type_changing import build
 from test_type_changing import row
 
@@ -46,3 +46,16 @@ def test_wait_uses_process_birth_identity():
     import os
     assert process_identity(os.getpid()) is not None
     assert process_identity(999999999) is None
+
+
+def test_training_coverage_gate_rejects_old_small_pilot_and_wrong_budget():
+    from typepro.training.contract_changing import POLICY
+    baseline=dict(model='Qwen/base',input_length=6144,label_length=64)
+    with pytest.raises(ValueError,match='coverage gate'):
+        require_training_ready(dict(policy='type-changing-v1',counts=dict(synthetic_rows=133)),baseline)
+    audit=dict(policy=POLICY,readiness=dict(passed=True),tokenizer='Qwen/base',limits=dict(prompt_limit=6080),
+               independent_verification=dict(passed=True,label_length=64))
+    require_training_ready(audit,baseline)
+    audit['limits']['prompt_limit']=8192
+    with pytest.raises(ValueError,match='budget'):
+        require_training_ready(audit,baseline)
